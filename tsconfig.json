@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    // "esModuleInterop": true, // Removed as it can sometimes conflict with NodeNext resolution
+    "outDir": "./build",
+    "rootDir": "./src",
+    // Removed baseUrl and paths to rely on standard NodeNext resolution
+    "strict": true,
+    "declaration": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": false, // Explicitly disallow .ts extensions in imports
+    "noEmit": false, // Explicitly ensure files are emitted (default is false anyway)
+    "types": ["vitest/globals"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "build"]
+}

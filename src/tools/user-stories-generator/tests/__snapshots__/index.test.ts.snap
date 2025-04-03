@@ -1,0 +1,24 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`User Stories Generator > should generate user stories content matching snapshot > User Stories Generator Content 1`] = `
+"# User Stories: A ticketing application for event management...
+
+# User Stories: Event Ticketing App
+
+## Epic: User Registration
+### User Story: Account Creation
+**ID:** US-101
+**Title:** Create User Account
+
+**Story:**
+> As a **new event attendee**,
+> I want to **create a personal account**
+> So that **I can purchase tickets and track my orders**.
+
+**Acceptance Criteria:**
+* GIVEN I am on the registration page WHEN I enter valid details THEN my account is created successfully.
+* GIVEN I am registering WHEN I enter a password THEN it is validated for minimum security requirements.
+
+**Priority:** High
+**Dependencies:** None"
+`;

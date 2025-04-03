@@ -1,0 +1,3 @@
+@echo off
+echo Testing LLM config loading and mapping...
+node scripts/test-config-loading.js
