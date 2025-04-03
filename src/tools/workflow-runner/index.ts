@@ -5,8 +5,11 @@ import { OpenRouterConfig } from '../../types/workflow.js'; // Import common con
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js'; // Import MCP result type
 import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js'; // Import registry functions and types (Added ToolExecutionContext)
 import { executeWorkflow, WorkflowResult } from '../../services/workflows/workflowExecutor.js'; // Import the core workflow execution function
-import { AppError } from '../../utils/errors.js'; // Import base error type
+import { AppError, ToolExecutionError } from '../../utils/errors.js'; // Import base error type, ToolExecutionError
 import logger from '../../logger.js'; // Import logger
+import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
+import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
+import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js'; // Import McpError, ErrorCode
 
 /**
  * Formats the result of a workflow execution into a user-friendly Markdown string.
@@ -64,6 +67,13 @@ export const runWorkflowTool: ToolExecutor = async (
   config: OpenRouterConfig,
   context?: ToolExecutionContext // Accept optional context
 ): Promise<CallToolResult> => {
+  // ---> Step 2.5(WF).2: Inject Dependencies & Get Session ID <---
+  // Note: sessionId is already extracted below, but ensure consistency
+  const sessionIdForSse = context?.sessionId || `no-session-${Math.random().toString(36).substring(2)}`;
+  if (sessionIdForSse.startsWith('no-session')) {
+     logger.warn({ tool: 'runWorkflowTool' }, 'Executing workflow tool without a valid sessionId. SSE progress updates might be limited.');
+  }
+
   // Log the config received by the executor
   logger.debug({
     configReceived: true,
@@ -75,46 +85,82 @@ export const runWorkflowTool: ToolExecutor = async (
   const validatedParams = params as WorkflowRunnerInput;
   const { workflowName, workflowInput } = validatedParams;
 
-  // Extract potential sessionId from context - Placeholder implementation
-  // TODO: Replace with actual sessionId extraction once available from MCP SDK 'extra' parameter
-  const sessionId = context?.sessionId || `temp-session-${Math.random().toString(36).substring(2)}`; // Placeholder ID
-  if (sessionId.startsWith('temp-session')) {
-     logger.debug(`Workflow runner using temporary session ID for context.`);
-  }
+  // ---> Step 2.5(WF).3: Create Job & Return Job ID <---
+  const jobId = jobManager.createJob('run-workflow', params);
+  logger.info({ jobId, tool: 'runWorkflowTool', sessionId: sessionIdForSse, workflowName }, 'Starting background job for workflow.');
 
-  logger.info({ workflowName, sessionId }, `Executing workflow tool request for: ${workflowName}`);
+  // Return immediately
+  const initialResponse: CallToolResult = {
+    content: [{ type: 'text', text: `Workflow '${workflowName}' execution started. Job ID: ${jobId}` }],
+    isError: false,
+  };
 
-  try {
-    // Execute the workflow using the central workflow executor service
-    const workflowResult = await executeWorkflow(
-        workflowName,
-        workflowInput || {}, // Pass empty object if workflowInput is null/undefined
-        config,
-        sessionId // Pass sessionId for potential logging within executeWorkflow
-    );
+  // ---> Step 2.5(WF).4: Wrap Logic in Async Block <---
+  setImmediate(async () => {
+    const logs: string[] = []; // Keep logs specific to this job execution
 
-    // Format the result for the MCP response
-    const formattedText = formatWorkflowResult(workflowResult);
+    // ---> Step 2.5(WF).7: Update Final Result/Error Handling (Try Block Start) <---
+    try {
+      // ---> Step 2.5(WF).6: Add Progress Updates (Initial) <---
+      jobManager.updateJobStatus(jobId, JobStatus.RUNNING, `Starting workflow '${workflowName}'...`);
+      sseNotifier.sendProgress(sessionIdForSse, jobId, JobStatus.RUNNING, `Starting workflow '${workflowName}'...`);
+      logs.push(`[${new Date().toISOString()}] Starting workflow '${workflowName}'.`);
 
-    // Return the result, setting isError based on workflow success
-    return {
-      content: [{ type: 'text', text: formattedText }],
-      isError: !workflowResult.success, // Set MCP error flag if workflow failed
-       // Pass through structured error details if the workflow failed
-      errorDetails: workflowResult.error
-    };
+      // Execute the workflow using the central workflow executor service
+      // Pass the original context which contains the sessionId
+      const workflowResult = await executeWorkflow(
+          workflowName,
+          workflowInput || {}, // Pass empty object if workflowInput is null/undefined
+          config,
+          context // Pass the original context
+      );
 
-  } catch (error) {
+      // ---> Step 2.5(WF).6: Add Progress Updates (Completion) <---
+      const completionStatus = workflowResult.success ? JobStatus.COMPLETED : JobStatus.FAILED;
+      const completionMessage = `Workflow '${workflowName}' finished with status: ${completionStatus}. ${workflowResult.message}`;
+      logger.info({ jobId, workflowName, status: completionStatus }, completionMessage);
+      logs.push(`[${new Date().toISOString()}] ${completionMessage}`);
+      sseNotifier.sendProgress(sessionIdForSse, jobId, completionStatus, completionMessage);
+
+      // Format the result for the MCP response
+      const formattedText = formatWorkflowResult(workflowResult);
+
+      // ---> Step 2.5(WF).7: Update Final Result/Error Handling (Set Success/Error Result) <---
+      const finalResult: CallToolResult = {
+        content: [{ type: 'text', text: formattedText }],
+        isError: !workflowResult.success, // Set MCP error flag if workflow failed
+         // Pass through structured error details if the workflow failed
+        errorDetails: workflowResult.error ? new McpError(ErrorCode.InternalError, workflowResult.error.message, workflowResult.error.details) : undefined
+      };
+      jobManager.setJobResult(jobId, finalResult);
+      // Optional explicit SSE handled by workflowExecutor's internal notifications
+
+    // ---> Step 2.5(WF).7: Update Final Result/Error Handling (Catch Block for unexpected errors) <---
+    } catch (error) {
      // Catch unexpected errors *from* executeWorkflow itself (e.g., if it throws unexpectedly)
-     logger.error({ err: error, tool: 'run-workflow', workflowName }, `Unexpected error running workflow tool.`);
-     const message = (error instanceof Error) ? error.message : `Unknown error running workflow tool '${workflowName}'.`;
-     return {
-        content: [{ type: 'text', text: `Workflow Runner Error: ${message}` }],
+     const errorMsg = error instanceof Error ? error.message : String(error);
+     logger.error({ err: error, jobId, tool: 'run-workflow', workflowName }, `Unexpected error running workflow tool: ${errorMsg}`);
+     logs.push(`[${new Date().toISOString()}] Unexpected Error: ${errorMsg}`);
+
+     const appError = error instanceof AppError
+        ? error
+        : new ToolExecutionError(`Unexpected error running workflow '${workflowName}': ${errorMsg}`, { workflowName }, error instanceof Error ? error : undefined);
+
+     const mcpError = new McpError(ErrorCode.InternalError, appError.message, appError.context);
+     const errorResult: CallToolResult = {
+        content: [{ type: 'text', text: `Error during background job ${jobId}: ${mcpError.message}\n\nLogs:\n${logs.join('\n')}` }],
         isError: true,
-         // Provide error details based on the caught error
-         errorDetails: { type: (error instanceof AppError) ? error.name : 'WorkflowRunnerError', message: message }
+        errorDetails: mcpError
      };
-  }
+
+     // Store error result in Job Manager
+     jobManager.setJobResult(jobId, errorResult);
+     // Send final failed status via SSE (optional if jobManager handles it)
+     sseNotifier.sendProgress(sessionIdForSse, jobId, JobStatus.FAILED, `Job failed: ${mcpError.message}`);
+    }
+  }); // ---> END OF setImmediate WRAPPER <---
+
+  return initialResponse; // Return the initial response with Job ID
 };
 
 // Tool Definition - specifies metadata and implementation details

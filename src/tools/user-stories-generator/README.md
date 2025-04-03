@@ -21,6 +21,13 @@ This tool accepts the following parameters via the MCP call:
   `[output_dir]/user-stories-generator/[timestamp]-[sanitized-name]-user-stories.md`
 * **MCP Response:** The generated content is returned as text content within the MCP `CallToolResult`.
 
+## Asynchronous Execution
+
+This tool executes asynchronously due to the time required for research and LLM generation.
+1.  When you call this tool, it will immediately return a **Job ID**.
+2.  The user stories generation process runs in the background.
+3.  Use the `get-job-result` tool with the received Job ID to retrieve the final user stories document once the job is complete.
+
 ## Workflow
 
 When invoked, this tool performs the following steps:

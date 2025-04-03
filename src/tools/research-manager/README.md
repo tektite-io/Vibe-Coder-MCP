@@ -17,6 +17,13 @@ Performs deep research on topics using Perplexity Sonar via OpenRouter. This too
   `[output_dir]/research-manager/[timestamp]-[sanitized-query]-research.md`
 * **MCP Response:** The generated content is returned as text content within the MCP `CallToolResult`.
 
+## Asynchronous Execution
+
+This tool executes asynchronously due to the time required for the underlying research API calls and subsequent LLM enhancement.
+1.  When you call this tool, it will immediately return a **Job ID**.
+2.  The research and report generation process runs in the background.
+3.  Use the `get-job-result` tool with the received Job ID to retrieve the final research report once the job is complete.
+
 ## Workflow
 
 ```mermaid

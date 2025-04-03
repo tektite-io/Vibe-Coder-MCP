@@ -86,8 +86,8 @@ echo   - Code Generation & Refactoring Tools
 echo   - Analysis Tools (Dependencies, Git Summary)
 echo   - Research Manager (using configured models)
 echo   - Workflow Runner (using workflows.json)
-echo   - Semantic Routing & Sequential Thinking
-echo   - Asynchronous Job Handling Infrastructure (partially implemented)
+echo   - Semantic Routing & Sequential Thinking (for specific tools)
+echo   - Asynchronous Job Handling (JobManager, SSE Notifications) for long-running tools
 echo.
 echo IMPORTANT NEXT STEPS:
 echo 1. If you haven't already, **edit the .env file** to add your valid OPENROUTER_API_KEY.
@@ -96,4 +96,5 @@ echo 3. Review workflow definitions in `workflows.json` if you plan to use the `
 echo 4. To run the server (using stdio for Claude Desktop): npm start
 echo 5. To run the server (using SSE on http://localhost:3000): npm run start:sse
 echo 6. For Claude Desktop integration, update its MCP settings using the current `mcp-config.json` and ensure the path in Claude's config points to `build/index.js`.
+echo 7. Use the 'get-job-result' tool to retrieve outcomes from long-running asynchronous tasks.
 echo.

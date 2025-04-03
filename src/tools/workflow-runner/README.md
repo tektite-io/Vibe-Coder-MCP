@@ -19,6 +19,13 @@ This tool executes a predefined sequence of tool calls, known as a workflow, bas
 *   **File Storage:** This tool itself does not save files. However, the individual tools *called within* the workflow might save files to their respective directories under `workflow-agent-files/`.
 *   **Error Details:** If the workflow fails, the `CallToolResult` will have `isError: true` and may include `errorDetails` specifying the step and reason for failure.
 
+## Asynchronous Execution
+
+This tool executes asynchronously because it orchestrates multiple steps, some of which may themselves be long-running asynchronous tools.
+1.  When you call `run-workflow`, it will immediately return a **Job ID**.
+2.  The entire workflow execution process runs in the background, managed by the `WorkflowExecutor` service.
+3.  Use the `get-job-result` tool with the received Job ID to retrieve the final outcome (success message or error details) once the entire workflow job is complete.
+
 ## Workflow
 
 ```mermaid

@@ -2,12 +2,17 @@
 import fs from 'fs-extra';
 import path from 'path';
 import { fileURLToPath } from 'url'; // Need this for relative pathing in ES Modules
-// import { z } from 'zod'; // Removed unused import
-import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { executeTool } from '../routing/toolRegistry.js'; // Adjust path if necessary
-import { OpenRouterConfig } from '../../types/workflow.js'; // Adjust path if necessary
-import logger from '../../logger.js'; // Adjust path if necessary
-import { AppError, ToolExecutionError, ConfigurationError, ParsingError } from '../../utils/errors.js'; // Adjust path if necessary
+import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js'; // Import McpError, ErrorCode
+import { executeTool, ToolExecutionContext } from '../routing/toolRegistry.js'; // Import ToolExecutionContext
+import { OpenRouterConfig } from '../../types/workflow.js';
+import logger from '../../logger.js';
+import { AppError, ToolExecutionError, ConfigurationError, ParsingError } from '../../utils/errors.js';
+import { jobManager, Job, JobStatus } from '../job-manager/index.js'; // Import Job Manager
+import { sseNotifier } from '../sse-notifier/index.js'; // Import SSE Notifier
+
+// --- Constants for Job Polling ---
+const POLLING_INTERVAL_MS = 2000; // Check job status every 2 seconds
+const MAX_POLLING_ATTEMPTS = 150; // Max ~5 minutes (150 * 2s)
 
 // --- Interfaces ---
 
@@ -125,8 +130,8 @@ export function loadWorkflowDefinitions(filePath: string = defaultWorkflowPath):
  * @throws {ParsingError} if the template syntax is invalid or the referenced data cannot be found.
  */
 function resolveParamValue(
-  valueTemplate: unknown, 
-  workflowInput: Record<string, unknown>, 
+  valueTemplate: unknown,
+  workflowInput: Record<string, unknown>,
   stepOutputs: Map<string, CallToolResult>
 ): unknown {
   if (typeof valueTemplate !== 'string') {
@@ -204,24 +209,93 @@ function resolveParamValue(
   return valueTemplate; // Fallback to literal
 }
 
+/**
+ * Checks if a CallToolResult indicates a background job was started.
+ * @param result The CallToolResult from executeTool.
+ * @returns The Job ID if found, otherwise null.
+ */
+function getJobIdFromResult(result: CallToolResult): string | null {
+    if (result.isError || !result.content || result.content.length === 0) {
+        return null;
+    }
+    const textContent = result.content[0]?.text;
+    if (typeof textContent === 'string') {
+        const match = textContent.match(/Job ID: (\S+)/);
+        if (match && match[1]) {
+            return match[1];
+        }
+    }
+    return null;
+}
+
+/**
+ * Waits for a background job to complete by polling the JobManager.
+ * Sends progress updates via SSE.
+ * @param jobId The ID of the job to wait for.
+ * @param stepId The ID of the workflow step associated with this job.
+ * @param sessionId The session ID for SSE notifications.
+ * @returns The final CallToolResult from the completed or failed job.
+ * @throws {ToolExecutionError} if the job is not found, polling times out, or the job fails unexpectedly.
+ */
+async function waitForJobCompletion(jobId: string, stepId: string, sessionId: string): Promise<CallToolResult> {
+    logger.info({ jobId, stepId, sessionId }, `Waiting for background job to complete...`);
+    let attempts = 0;
+
+    while (attempts < MAX_POLLING_ATTEMPTS) {
+        await new Promise(resolve => setTimeout(resolve, POLLING_INTERVAL_MS));
+        attempts++;
+
+        const job = jobManager.getJob(jobId);
+
+        if (!job) {
+            logger.error({ jobId, stepId, sessionId }, `Job not found during polling.`);
+            throw new ToolExecutionError(`Background job ${jobId} for step ${stepId} was not found.`);
+        }
+
+        if (job.status === JobStatus.COMPLETED || job.status === JobStatus.FAILED) {
+            logger.info({ jobId, stepId, sessionId, status: job.status }, `Job finished with status: ${job.status}.`);
+            if (!job.result) {
+                 logger.error({ jobId, stepId, sessionId, status: job.status }, `Job finished but has no result stored.`);
+                 throw new ToolExecutionError(`Background job ${jobId} for step ${stepId} finished with status ${job.status} but has no result.`);
+            }
+            // Send final SSE update before returning
+            sseNotifier.sendProgress(sessionId, jobId, job.status, `Job ${job.status.toLowerCase()}.`);
+            return job.result;
+        }
+
+        // Still running or pending
+        logger.debug({ jobId, stepId, sessionId, status: job.status, attempt: attempts }, `Polling job status: ${job.status}`);
+        // Send intermediate progress update via SSE - Use status as message base
+        const progressMessage = `Job status: ${job.status}... (Polling attempt ${attempts}/${MAX_POLLING_ATTEMPTS})`;
+        sseNotifier.sendProgress(sessionId, jobId, job.status, progressMessage);
+
+    }
+
+    // If loop finishes, it means timeout
+    logger.error({ jobId, stepId, sessionId, attempts }, `Polling timed out for job.`);
+    throw new ToolExecutionError(`Timed out waiting for background job ${jobId} for step ${stepId} to complete after ${attempts} attempts.`);
+}
+
 
 /**
  * Executes a predefined workflow by its name.
- * Iterates through the steps, resolves parameters, executes tools, and handles errors.
+ * Iterates through the steps, resolves parameters, executes tools, handles potential background jobs, and manages errors.
  *
  * @param workflowName The name of the workflow (must be loaded).
  * @param workflowInput Input data for the workflow, matching its inputSchema.
  * @param config OpenRouter configuration passed to tools.
- * @param sessionId Optional session ID for potential future state logging (currently unused).
+ * @param context Optional ToolExecutionContext containing sessionId for SSE.
  * @returns A promise resolving to the WorkflowResult.
  */
 export async function executeWorkflow(
   workflowName: string,
   workflowInput: Record<string, unknown>,
   config: OpenRouterConfig,
-  sessionId?: string // Optional for logging/state
+  context?: ToolExecutionContext // Accept context
 ): Promise<WorkflowResult> {
   const workflow = loadedWorkflows.get(workflowName);
+  const sessionId = context?.sessionId || `no-session-${Math.random().toString(36).substring(2)}`; // Get sessionId or generate placeholder
+
   if (!workflow) {
     logger.error(`Workflow "${workflowName}" not found.`);
     return { success: false, message: `Workflow "${workflowName}" not found.`, error: { message: `Workflow "${workflowName}" not found.`} };
@@ -239,7 +313,10 @@ export async function executeWorkflow(
     for (const step of workflow.steps) {
       currentStep = step; // Keep track of the current step for error reporting
       currentStepIndex++;
-      logger.info({ workflowName, sessionId, stepId: step.id, toolName: step.toolName, stepNum: currentStepIndex }, `Executing workflow step ${currentStepIndex}/${workflow.steps.length}`);
+      const stepLogContext = { workflowName, sessionId, stepId: step.id, toolName: step.toolName, stepNum: currentStepIndex };
+      logger.info(stepLogContext, `Executing workflow step ${currentStepIndex}/${workflow.steps.length}`);
+      // Use sendProgress for step start notification - use step.id as identifier since jobId isn't known yet
+      sseNotifier.sendProgress(sessionId, step.id, JobStatus.RUNNING, `Workflow '${workflowName}': Starting step ${currentStepIndex} ('${step.id}' - ${step.toolName}).`);
 
       // Resolve parameters for this step
       const resolvedParams: Record<string, unknown> = {};
@@ -249,27 +326,48 @@ export async function executeWorkflow(
             logger.debug(`Resolved param '${key}' for step '${step.id}'`);
          } catch (resolveError) {
              // If a parameter cannot be resolved, fail the workflow immediately
-              logger.error({ err: resolveError, workflowName, sessionId, stepId: step.id, paramKey: key, template }, `Failed to resolve parameter`);
+              logger.error({ err: resolveError, ...stepLogContext, paramKey: key, template }, `Failed to resolve parameter`);
               throw new AppError(`Failed to resolve parameter '${key}' for step '${step.id}': ${(resolveError as Error).message}`, { stepId: step.id, paramKey: key }, resolveError instanceof Error ? resolveError : undefined);
          }
       }
 
-      // Execute the tool for this step
-      // Note: We are NOT passing conversational context (ToolExecutionContext) here.
-      // Workflow execution context (stepOutputs) is managed separately.
-      const stepResult = await executeTool(step.toolName, resolvedParams, config);
+      // Execute the tool for this step, passing the context
+      let stepResult = await executeTool(step.toolName, resolvedParams, config, context);
 
-      // Store the result, keyed by step ID
+      // --- Handle potential background job ---
+      const jobId = getJobIdFromResult(stepResult);
+      if (jobId) {
+          logger.info({ ...stepLogContext, jobId }, `Tool returned a background job ID. Waiting for completion...`);
+          // Use sendProgress for step update notification
+          sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Workflow '${workflowName}' step '${step.id}': Waiting for background job ${jobId}...`);
+          try {
+              // Wait for the job and get its final result
+              stepResult = await waitForJobCompletion(jobId, step.id, sessionId);
+              logger.info({ ...stepLogContext, jobId, finalStatus: stepResult.isError ? 'FAILED' : 'COMPLETED' }, `Background job finished.`);
+          } catch (jobError) {
+               logger.error({ err: jobError, ...stepLogContext, jobId }, `Error waiting for background job.`);
+               // Propagate the job waiting error, adding workflow context
+               throw new ToolExecutionError(`Step '${step.id}' failed while waiting for background job ${jobId}: ${jobError instanceof Error ? jobError.message : String(jobError)}`, { stepId: step.id, toolName: step.toolName, jobId });
+          }
+      }
+      // --- End Job Handling ---
+
+      // Store the final result (either immediate or from the job), keyed by step ID
       stepOutputs.set(step.id, stepResult);
 
-      // Check for errors from the tool execution
+      // Check for errors from the final tool execution result
       if (stepResult.isError) {
-        logger.error({ workflowName, sessionId, stepId: step.id, toolName: step.toolName, errorResult: stepResult }, `Workflow step failed.`);
+        const stepErrorMessage = stepResult.content[0]?.text || 'Unknown tool error';
+        logger.error({ ...stepLogContext, errorResult: stepResult }, `Workflow step failed.`);
+        // Use sendProgress for step failure notification
+        sseNotifier.sendProgress(sessionId, jobId || step.id, JobStatus.FAILED, `Workflow '${workflowName}' step '${step.id}' failed: ${stepErrorMessage}`);
          // Propagate the error, adding workflow context
-         throw new ToolExecutionError(`Step '${step.id}' (Tool: ${step.toolName}) failed: ${stepResult.content[0]?.text || 'Unknown tool error'}`, { stepId: step.id, toolName: step.toolName, toolResult: stepResult });
+         throw new ToolExecutionError(`Step '${step.id}' (Tool: ${step.toolName}) failed: ${stepErrorMessage}`, { stepId: step.id, toolName: step.toolName, toolResult: stepResult });
       }
 
-      logger.debug({ stepId: step.id, toolName: step.toolName }, `Workflow step completed successfully.`);
+      logger.debug(stepLogContext, `Workflow step completed successfully.`);
+      // Use sendProgress for step success notification
+      sseNotifier.sendProgress(sessionId, jobId || step.id, JobStatus.COMPLETED, `Workflow '${workflowName}' step '${step.id}' completed successfully.`);
     } // End loop through steps
 
     // Process final output if defined
@@ -282,7 +380,7 @@ export async function executeWorkflow(
             try {
                  finalOutputData[key] = resolveParamValue(template, workflowInput, stepOutputs);
                  if (key === 'summary' && typeof finalOutputData[key] === 'string') {
-                    finalMessage = finalOutputData[key]; // Use template summary if available
+                    finalMessage = finalOutputData[key] as string; // Use template summary if available
                  }
             } catch (resolveError) {
                  logger.warn({ err: resolveError, key, template }, `Could not resolve output template key '${key}' for workflow ${workflowName}. Skipping.`);
@@ -302,7 +400,7 @@ export async function executeWorkflow(
     };
 
   } catch (error) {
-     // Catch errors from parameter resolution or tool execution
+     // Catch errors from parameter resolution or tool execution/job waiting
      logger.error({ err: error, workflowName, sessionId, failedStepId: currentStep?.id, failedToolName: currentStep?.toolName }, `Workflow execution failed.`);
      const errDetails = {
         stepId: currentStep?.id,
@@ -310,6 +408,10 @@ export async function executeWorkflow(
         message: error instanceof Error ? error.message : 'Unknown workflow execution error',
         details: error instanceof AppError ? error.context : undefined,
      };
+     // Ensure SSE notification for the failed step if it wasn't sent already (using sendProgress)
+     if (currentStep) {
+        sseNotifier.sendProgress(sessionId, currentStep.id, JobStatus.FAILED, `Workflow '${workflowName}' failed at step '${currentStep.id}': ${errDetails.message}`);
+     }
 
      return {
        success: false,

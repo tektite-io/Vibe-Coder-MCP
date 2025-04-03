@@ -7,8 +7,10 @@ import { OpenRouterConfig } from '../../types/workflow.js';
 import { performResearchQuery } from '../../utils/researchHelper.js';
 import { performDirectLlmCall } from '../../utils/llmHelper.js'; // Import the new helper
 import logger from '../../logger.js';
-import { registerTool, ToolDefinition, ToolExecutor } from '../../services/routing/toolRegistry.js';
+import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js'; // Import ToolExecutionContext
 import { AppError, ApiError, ConfigurationError, ToolExecutionError } from '../../utils/errors.js'; // Import necessary errors
+import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
+import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
 
 // Helper function to get the base output directory
 function getBaseOutputDir(): string {
@@ -108,32 +110,68 @@ Process the initial research findings (provided as context) related to the user'
  * @param config OpenRouter configuration.
  * @returns A Promise resolving to a CallToolResult object.
  */
-// Change signature to match ToolExecutor, but we know 'params' is validated
+// Change signature to match ToolExecutor
 export const performResearch: ToolExecutor = async (
   params: Record<string, unknown>,
-  config: OpenRouterConfig
+  config: OpenRouterConfig,
+  context?: ToolExecutionContext // Add context parameter
 ): Promise<CallToolResult> => {
+  // ---> Step 2.5(RM).2: Inject Dependencies & Get Session ID <---
+  const sessionId = context?.sessionId || 'unknown-session';
+  if (sessionId === 'unknown-session') {
+      logger.warn({ tool: 'performResearch' }, 'Executing tool without a valid sessionId. SSE progress updates will not be sent.');
+  }
+
   // We can safely access 'query' because executeTool validated it
   const query = params.query as string;
-  try {
-    // Ensure directories are initialized before writing
-    await initDirectories();
+
+  // ---> Step 2.5(RM).3: Create Job & Return Job ID <---
+  const jobId = jobManager.createJob('research', params); // Use original tool name 'research'
+  logger.info({ jobId, tool: 'research', sessionId }, 'Starting background job.');
+
+  // Return immediately
+  const initialResponse: CallToolResult = {
+    content: [{ type: 'text', text: `Research job started for query "${query.substring(0, 50)}...". Job ID: ${jobId}` }],
+    isError: false,
+  };
+
+  // ---> Step 2.5(RM).4: Wrap Logic in Async Block <---
+  setImmediate(async () => {
+    const logs: string[] = []; // Keep logs specific to this job execution
+    let filePath: string = ''; // Define filePath in outer scope for catch block
+
+    // ---> Step 2.5(RM).7: Update Final Result/Error Handling (Try Block Start) <---
+    try {
+      // ---> Step 2.5(RM).6: Add Progress Updates (Initial) <---
+      jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Starting research process...');
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Starting research process...');
+      logs.push(`[${new Date().toISOString()}] Starting research for: ${query.substring(0, 50)}...`);
+
+      // Ensure directories are initialized before writing
+      await initDirectories();
 
     // Generate a filename for storing research (using the potentially configured RESEARCH_DIR)
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const sanitizedQuery = query.substring(0, 30).toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    const filename = `${timestamp}-${sanitizedQuery}-research.md`;
-    const filePath = path.join(RESEARCH_DIR, filename);
-    
-    // Process the research request
-    logger.info(`Performing research on: ${query.substring(0, 50)}...`);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const sanitizedQuery = query.substring(0, 30).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const filename = `${timestamp}-${sanitizedQuery}-research.md`;
+      filePath = path.join(RESEARCH_DIR, filename); // Assign to outer scope variable
 
-    // Use Perplexity model for research via centralized helper
-    const researchResult = await performResearchQuery(query, config);
+      // ---> Step 2.5(RM).6: Add Progress Updates (Perplexity Call Start) <---
+      logger.info({ jobId }, `Performing initial research query via Perplexity: ${query.substring(0, 50)}...`);
+      jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Performing initial research query via Perplexity...');
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Performing initial research query via Perplexity...');
+      logs.push(`[${new Date().toISOString()}] Calling Perplexity for initial research.`);
 
-    // Enhance the research using a direct LLM call
-    logger.info("Research Manager: Enhancing research results using direct LLM call...");
-    const enhancementPrompt = `Synthesize and structure the following initial research findings based on the original query.\n\nOriginal Query: ${query}\n\nInitial Research Findings:\n${researchResult}`;
+      // Use Perplexity model for research via centralized helper
+      const researchResult = await performResearchQuery(query, config);
+
+      // ---> Step 2.5(RM).6: Add Progress Updates (Perplexity Call End / LLM Call Start) <---
+      logger.info({ jobId }, "Research Manager: Initial research complete. Enhancing results using direct LLM call...");
+      jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Initial research complete. Enhancing results via LLM...');
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Initial research complete. Enhancing results via LLM...');
+      logs.push(`[${new Date().toISOString()}] Perplexity research complete. Calling LLM for enhancement.`);
+
+      const enhancementPrompt = `Synthesize and structure the following initial research findings based on the original query.\n\nOriginal Query: ${query}\n\nInitial Research Findings:\n${researchResult}`;
 
     const enhancedResearch = await performDirectLlmCall(
       enhancementPrompt,
@@ -143,56 +181,72 @@ export const performResearch: ToolExecutor = async (
       0.4 // Slightly higher temp for synthesis might be okay
     );
 
-    logger.info("Research Manager: Enhancement completed.");
+    // ---> Step 2.5(RM).6: Add Progress Updates (LLM Call End) <---
+    logger.info({ jobId }, "Research Manager: Enhancement completed.");
+    jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Processing enhanced research...');
+    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Processing enhanced research...');
+    logs.push(`[${new Date().toISOString()}] LLM enhancement complete.`);
 
     // Basic validation
     if (!enhancedResearch || typeof enhancedResearch !== 'string' || !enhancedResearch.trim().startsWith('# Research Report:')) {
-      logger.warn({ markdown: enhancedResearch }, 'Research enhancement returned empty or potentially invalid Markdown format.');
+      logger.warn({ jobId, markdown: enhancedResearch?.substring(0, 100) }, 'Research enhancement returned empty or potentially invalid Markdown format.');
+      logs.push(`[${new Date().toISOString()}] Validation Error: LLM output invalid format.`);
       throw new ToolExecutionError('Research enhancement returned empty or invalid Markdown content.');
     }
 
     // Format the research (already should be formatted by LLM, just add timestamp)
     const formattedResult = `${enhancedResearch}\n\n_Generated: ${new Date().toLocaleString()}_`;
 
+    // ---> Step 2.5(RM).6: Add Progress Updates (Saving File) <---
+    logger.info({ jobId }, `Saving research to ${filePath}...`);
+    jobManager.updateJobStatus(jobId, JobStatus.RUNNING, `Saving research to file...`);
+    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Saving research to file...`);
+    logs.push(`[${new Date().toISOString()}] Saving research to ${filePath}.`);
+
     // Save the result
     await fs.writeFile(filePath, formattedResult, 'utf8');
-    logger.info(`Research result saved to ${filePath}`);
+    logger.info({ jobId }, `Research result saved to ${filePath}`);
+    logs.push(`[${new Date().toISOString()}] Research saved successfully.`);
+    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Research saved successfully.`);
 
-    // Return CallToolResult structure for success
-    return {
-      content: [{ type: "text", text: formattedResult }],
+    // ---> Step 2.5(RM).7: Update Final Result/Error Handling (Set Success Result) <---
+    const finalResult: CallToolResult = {
+      // Include file path in success message
+      content: [{ type: "text", text: `Research completed successfully and saved to: ${filePath}\n\n${formattedResult}` }],
       isError: false
     };
-  } catch (error) {
-    logger.error({ err: error, query }, 'Research Manager Error');
+    jobManager.setJobResult(jobId, finalResult);
+    // Optional explicit SSE: sseNotifier.sendProgress(sessionId, jobId, JobStatus.COMPLETED, 'Research completed successfully.');
 
-    let errorMessage = `Error performing research for query: "${query}".`;
-    let errorType = 'ToolExecutionError'; // Default if it's not a recognized AppError
-    let errorContext: Record<string, unknown> = { query };
+    // ---> Step 2.5(RM).7: Update Final Result/Error Handling (Catch Block) <---
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error({ err: error, jobId, tool: 'research', query }, `Research Manager Error: ${errorMsg}`);
+      logs.push(`[${new Date().toISOString()}] Error: ${errorMsg}`);
 
-    // Check if it's one of our custom errors bubbled up from underlying calls
-    if (error instanceof AppError) {
-       errorMessage = `Research failed: ${error.message}`;
-       errorType = error.name; // e.g., 'ApiError', 'ParsingError'
-       errorContext = { ...errorContext, ...error.context }; // Merge contexts
-    } else if (error instanceof Error) {
-       // Generic error from researchQuery or sequentialThinking
-       errorMessage = `Unexpected error during research: ${error.message}`;
-       errorType = error.name;
-    } else {
-       errorMessage = `Unknown error during research.`;
-       errorType = 'UnknownError';
-       errorContext.originalValue = String(error);
+      let appError: AppError;
+      const cause = error instanceof Error ? error : undefined;
+      if (error instanceof AppError) {
+         appError = error; // Use existing AppError
+      } else {
+         appError = new ToolExecutionError(`Failed to perform research for query "${query}": ${errorMsg}`, { query, filePath }, cause);
+      }
+
+      const mcpError = new McpError(ErrorCode.InternalError, appError.message, appError.context);
+      const errorResult: CallToolResult = {
+        content: [{ type: 'text', text: `Error during background job ${jobId}: ${mcpError.message}\n\nLogs:\n${logs.join('\n')}` }],
+        isError: true,
+        errorDetails: mcpError
+      };
+
+      // Store error result in Job Manager
+      jobManager.setJobResult(jobId, errorResult);
+      // Send final failed status via SSE (optional if jobManager handles it)
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.FAILED, `Job failed: ${mcpError.message}`);
     }
+  }); // ---> END OF setImmediate WRAPPER <---
 
-    // Use McpError for structured error reporting
-    const mcpError = new McpError(ErrorCode.InternalError, errorMessage, errorContext);
-    return {
-      content: [{ type: "text", text: mcpError.message }],
-      isError: true,
-      errorDetails: mcpError // Pass the structured McpError
-    };
-  }
+  return initialResponse; // Return the initial response with Job ID
 };
 
 // --- Tool Registration ---

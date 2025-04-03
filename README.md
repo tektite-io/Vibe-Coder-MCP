@@ -1,4 +1,4 @@
-# Vibe Coder MCP Server
+check if sequential thinking # Vibe Coder MCP Server
 
 Vibe Coder is an MCP (Model Context Protocol) server designed to supercharge your AI assistant (like Cursor, Cline AI, or Claude Desktop) with powerful tools for software development. It helps with research, planning, generating requirements, creating starter projects, and more!
 
@@ -16,6 +16,7 @@ Vibe Coder MCP integrates with MCP-compatible clients to provide the following c
 *   **Git Integration**: Summarizes current Git changes (`git-summary`).
 *   **Research & Planning**: Performs deep research (`research-manager`) and generates planning documents like PRDs (`generate-prd`), user stories (`generate-user-stories`), task lists (`generate-task-list`), and development rules (`generate-rules`).
 *   **Project Scaffolding**: Generates full-stack starter kits (`generate-fullstack-starter-kit`).
+*   **Asynchronous Execution**: Many long-running tools (generators, research, workflows) now run asynchronously. They return a Job ID immediately, and the final result is retrieved using the `get-job-result` tool.
 *   **Session State Management**: Maintains basic state across requests within a session (in-memory).
 *   **Standardized Error Handling**: Consistent error patterns across all tools.
 

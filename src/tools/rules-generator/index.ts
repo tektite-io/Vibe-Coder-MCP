@@ -7,8 +7,10 @@ import { OpenRouterConfig } from '../../types/workflow.js';
 import { performDirectLlmCall } from '../../utils/llmHelper.js'; // Import the new helper
 import { performResearchQuery } from '../../utils/researchHelper.js';
 import logger from '../../logger.js';
-import { registerTool, ToolDefinition, ToolExecutor } from '../../services/routing/toolRegistry.js';
+import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js'; // Import ToolExecutionContext
 import { AppError, ApiError, ConfigurationError, ToolExecutionError } from '../../utils/errors.js'; // Import necessary errors
+import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
+import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
 
 // Helper function to get the base output directory
 function getBaseOutputDir(): string {
@@ -134,8 +136,15 @@ const rulesInputSchemaShape = {
  */
 export const generateRules: ToolExecutor = async (
   params: Record<string, unknown>, // More type-safe than 'any'
-  config: OpenRouterConfig
+  config: OpenRouterConfig,
+  context?: ToolExecutionContext // Add context parameter
 ): Promise<CallToolResult> => {
+  // ---> Step 2.5(Rules).2: Inject Dependencies & Get Session ID <---
+  const sessionId = context?.sessionId || 'unknown-session';
+  if (sessionId === 'unknown-session') {
+      logger.warn({ tool: 'generateRules' }, 'Executing tool without a valid sessionId. SSE progress updates will not be sent.');
+  }
+
   // Log the config received by the executor
   logger.debug({
     configReceived: true,
@@ -147,21 +156,45 @@ export const generateRules: ToolExecutor = async (
   const productDescription = params.productDescription as string;
   const userStories = params.userStories as string | undefined;
   const ruleCategories = params.ruleCategories as string[] | undefined;
-  try {
-    // Ensure directories are initialized before writing
-    await initDirectories();
+
+  // ---> Step 2.5(Rules).3: Create Job & Return Job ID <---
+  const jobId = jobManager.createJob('generate-rules', params);
+  logger.info({ jobId, tool: 'generateRules', sessionId }, 'Starting background job.');
+
+  // Return immediately
+  const initialResponse: CallToolResult = {
+    content: [{ type: 'text', text: `Development rules generation started. Job ID: ${jobId}` }],
+    isError: false,
+  };
+
+  // ---> Step 2.5(Rules).4: Wrap Logic in Async Block <---
+  setImmediate(async () => {
+    const logs: string[] = []; // Keep logs specific to this job execution
+    let filePath: string = ''; // Define filePath in outer scope for catch block
+
+    // ---> Step 2.5(Rules).7: Update Final Result/Error Handling (Try Block Start) <---
+    try {
+      // ---> Step 2.5(Rules).6: Add Progress Updates (Initial) <---
+      jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Starting rules generation process...');
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Starting rules generation process...');
+      logs.push(`[${new Date().toISOString()}] Starting rules generation for: ${productDescription.substring(0, 50)}...`);
+
+      // Ensure directories are initialized before writing
+      await initDirectories();
 
     // Generate a filename for storing the rules (using the potentially configured RULES_DIR)
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const sanitizedName = productDescription.substring(0, 30).toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    const filename = `${timestamp}-${sanitizedName}-rules.md`;
-    const filePath = path.join(RULES_DIR, filename);
-    
-    // Config is now guaranteed by the caller (executeTool)
-    // Perform pre-generation research using Perplexity
-    logger.info({ inputs: { productDescription: productDescription.substring(0, 50), userStories: userStories?.substring(0, 50), ruleCategories } }, "Rules Generator: Starting pre-generation research...");
-    
-    let researchContext = '';
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const sanitizedName = productDescription.substring(0, 30).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const filename = `${timestamp}-${sanitizedName}-rules.md`;
+      filePath = path.join(RULES_DIR, filename); // Assign to outer scope variable
+
+      // ---> Step 2.5(Rules).6: Add Progress Updates (Research Start) <---
+      logger.info({ jobId, inputs: { productDescription: productDescription.substring(0, 50), userStories: userStories?.substring(0, 50), ruleCategories } }, "Rules Generator: Starting pre-generation research...");
+      jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Performing pre-generation research...');
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Performing pre-generation research...');
+      logs.push(`[${new Date().toISOString()}] Starting pre-generation research.`);
+
+      let researchContext = '';
     try {
       // Define relevant research queries
       const query1 = `Best development practices and coding standards for building: ${productDescription}`;
@@ -205,13 +238,21 @@ export const generateRules: ToolExecutor = async (
           researchContext += `### ${queryLabels[index]}:\n*Research on this topic failed.*\n\n`;
         }
       });
-      
-      logger.info("Rules Generator: Pre-generation research completed.");
+
+      // ---> Step 2.5(Rules).6: Add Progress Updates (Research End) <---
+      logger.info({ jobId }, "Rules Generator: Pre-generation research completed.");
+      jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Research complete. Starting main rules generation...');
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Research complete. Starting main rules generation...');
+      logs.push(`[${new Date().toISOString()}] Pre-generation research completed.`);
+
     } catch (researchError) {
-      logger.error({ err: researchError }, "Rules Generator: Error during research aggregation");
+      logger.error({ jobId, err: researchError }, "Rules Generator: Error during research aggregation");
+      logs.push(`[${new Date().toISOString()}] Error during research aggregation: ${researchError instanceof Error ? researchError.message : String(researchError)}`);
+      // Include error in context but continue
       researchContext = "## Pre-Generation Research Context:\n*Error occurred during research phase.*\n\n";
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Warning: Error during research phase. Continuing generation...');
     }
-    
+
     // Create the main generation prompt with combined research and inputs
     let mainGenerationPrompt = `Create a comprehensive set of development rules for the following product:\n\n${productDescription}`;
     
@@ -227,8 +268,11 @@ export const generateRules: ToolExecutor = async (
     // Add research context to the prompt
     mainGenerationPrompt += `\n\n${researchContext}`;
 
-    // Process the rules generation using a direct LLM call
-    logger.info("Rules Generator: Starting main generation using direct LLM call...");
+    // ---> Step 2.5(Rules).6: Add Progress Updates (LLM Call Start) <---
+    logger.info({ jobId }, "Rules Generator: Starting main generation using direct LLM call...");
+    jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating rules content via LLM...');
+    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating rules content via LLM...');
+    logs.push(`[${new Date().toISOString()}] Calling LLM for main rules generation.`);
 
     const rulesMarkdown = await performDirectLlmCall(
       mainGenerationPrompt,
@@ -238,45 +282,73 @@ export const generateRules: ToolExecutor = async (
       0.2 // Low temperature for structured rules
     );
 
-    logger.info("Rules Generator: Main generation completed.");
+    // ---> Step 2.5(Rules).6: Add Progress Updates (LLM Call End) <---
+    logger.info({ jobId }, "Rules Generator: Main generation completed.");
+    jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Processing LLM response...');
+    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Processing LLM response...');
+    logs.push(`[${new Date().toISOString()}] Received response from LLM.`);
 
     // Basic validation: Check if the output looks like Markdown and contains expected elements
     if (!rulesMarkdown || typeof rulesMarkdown !== 'string' || !rulesMarkdown.trim().startsWith('# Development Rules:')) {
-      logger.warn({ markdown: rulesMarkdown }, 'Rules generation returned empty or potentially invalid Markdown format.');
-      // Consider if this should be a hard error or just a warning
+      logger.warn({ jobId, markdown: rulesMarkdown?.substring(0, 100) }, 'Rules generation returned empty or potentially invalid Markdown format.');
+      logs.push(`[${new Date().toISOString()}] Validation Error: LLM output invalid format.`);
       throw new ToolExecutionError('Rules generation returned empty or invalid Markdown content.');
     }
 
     // Format the rules (already should be formatted by LLM, just add timestamp)
     const formattedResult = `${rulesMarkdown}\n\n_Generated: ${new Date().toLocaleString()}_`;
-    
+
+    // ---> Step 2.5(Rules).6: Add Progress Updates (Saving File) <---
+    logger.info({ jobId }, `Saving rules to ${filePath}...`);
+    jobManager.updateJobStatus(jobId, JobStatus.RUNNING, `Saving rules to file...`);
+    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Saving rules to file...`);
+    logs.push(`[${new Date().toISOString()}] Saving rules to ${filePath}.`);
+
     // Save the result
     await fs.writeFile(filePath, formattedResult, 'utf8');
-    logger.info(`Rules generated and saved to ${filePath}`);
+    logger.info({ jobId }, `Rules generated and saved to ${filePath}`);
+    logs.push(`[${new Date().toISOString()}] Rules saved successfully.`);
+    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Rules saved successfully.`);
 
-    // Return success result
-    return {
-      content: [{ type: "text", text: formattedResult }],
+    // ---> Step 2.5(Rules).7: Update Final Result/Error Handling (Set Success Result) <---
+    const finalResult: CallToolResult = {
+      // Include file path in success message
+      content: [{ type: "text", text: `Development rules generated successfully and saved to: ${filePath}\n\n${formattedResult}` }],
       isError: false
     };
-  } catch (error) {
-    logger.error({ err: error, params }, 'Rules Generator Error');
-    // Handle specific errors from direct call or research
-    let appError: AppError;
-    if (error instanceof AppError) {
-      appError = error;
-    } else if (error instanceof Error) {
-      appError = new ToolExecutionError('Failed to generate development rules.', { originalError: error.message }, error);
-    } else {
-      appError = new ToolExecutionError('An unknown error occurred while generating development rules.', { thrownValue: String(error) });
+    jobManager.setJobResult(jobId, finalResult);
+    // Optional explicit SSE: sseNotifier.sendProgress(sessionId, jobId, JobStatus.COMPLETED, 'Rules generation completed successfully.');
+
+    // ---> Step 2.5(Rules).7: Update Final Result/Error Handling (Catch Block) <---
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error({ err: error, jobId, tool: 'generate-rules', params }, `Rules Generator Error: ${errorMsg}`);
+      logs.push(`[${new Date().toISOString()}] Error: ${errorMsg}`);
+
+      // Handle specific errors from direct call or research
+      let appError: AppError;
+      const cause = error instanceof Error ? error : undefined;
+      if (error instanceof AppError) {
+        appError = error;
+      } else {
+        appError = new ToolExecutionError(`Failed to generate development rules: ${errorMsg}`, { params, filePath }, cause);
+      }
+
+      const mcpError = new McpError(ErrorCode.InternalError, appError.message, appError.context);
+      const errorResult: CallToolResult = {
+        content: [{ type: 'text', text: `Error during background job ${jobId}: ${mcpError.message}\n\nLogs:\n${logs.join('\n')}` }],
+        isError: true,
+        errorDetails: mcpError
+      };
+
+      // Store error result in Job Manager
+      jobManager.setJobResult(jobId, errorResult);
+      // Send final failed status via SSE (optional if jobManager handles it)
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.FAILED, `Job failed: ${mcpError.message}`);
     }
-    const mcpError = new McpError(ErrorCode.InternalError, appError.message, appError.context);
-    return {
-      content: [{ type: 'text', text: `Error: ${mcpError.message}` }],
-      isError: true,
-      errorDetails: mcpError
-    };
-  }
+  }); // ---> END OF setImmediate WRAPPER <---
+
+  return initialResponse; // Return the initial response with Job ID
 };
 
 // --- Tool Registration ---

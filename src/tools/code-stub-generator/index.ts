@@ -2,12 +2,14 @@
 import axios from 'axios';
 import { CodeStubInput, codeStubInputSchema } from './schema.js'; // Import schema/type
 import { OpenRouterConfig } from '../../types/workflow.js';
-import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js'; // Import McpError, ErrorCode
 import { registerTool, ToolDefinition, ToolExecutor } from '../../services/routing/toolRegistry.js';
 import { ApiError, ParsingError, ToolExecutionError, AppError, ConfigurationError } from '../../utils/errors.js'; // Import custom errors, Added ConfigurationError
 import { readFileContent } from '../../utils/fileReader.js'; // Import file reader utility
 import logger from '../../logger.js';
 import { selectModelForTask } from '../../utils/configLoader.js'; // Import the new utility
+import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
+import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
 
 const CODE_STUB_SYSTEM_PROMPT = `You are an expert code generation assistant. Your task is to generate a clean, syntactically correct code stub based ONLY on the user's specifications.
 
@@ -86,6 +88,12 @@ export const generateCodeStub: ToolExecutor = async (
   config: OpenRouterConfig,
   context?: ToolExecutionContext // Add context parameter
 ): Promise<CallToolResult> => {
+  // ---> Step 2.5(CSG).2: Inject Dependencies & Get Session ID <---
+  const sessionId = context?.sessionId || 'unknown-session';
+  if (sessionId === 'unknown-session') {
+      logger.warn({ tool: 'generateCodeStub' }, 'Executing tool without a valid sessionId. SSE progress updates will not be sent.');
+  }
+
   // Log the config received by the executor
   logger.debug({
     configReceived: true,
@@ -95,47 +103,75 @@ export const generateCodeStub: ToolExecutor = async (
 
   // Validation happens in executeTool, but we cast here for type safety
   const validatedParams = params as CodeStubInput;
-  logger.info(`Generating ${validatedParams.language} ${validatedParams.stubType} stub: ${validatedParams.name}`);
 
-  let fileContext = '';
-  if (validatedParams.contextFilePath) {
-      logger.debug(`Reading context file: ${validatedParams.contextFilePath}`);
-      try {
-          fileContext = await readFileContent(validatedParams.contextFilePath);
-          logger.info(`Successfully added context from file: ${validatedParams.contextFilePath}`);
-      } catch (readError) {
-          logger.warn({ err: readError }, `Could not read context file '${validatedParams.contextFilePath}'. Proceeding without file context.`);
-          // Optionally include the error message in the context string
-          fileContext = `\n\n[Warning: Failed to read context file '${validatedParams.contextFilePath}'. Error: ${readError instanceof Error ? readError.message : String(readError)}]`;
-          // Or, decide if this should be a hard error:
-          // throw new ToolExecutionError(`Failed to read context file: ${readError.message}`, { path: validatedParams.contextFilePath }, readError);
+  // ---> Step 2.5(CSG).3: Create Job & Return Job ID <---
+  const jobId = jobManager.createJob('generate-code-stub', params);
+  logger.info({ jobId, tool: 'generateCodeStub', sessionId }, 'Starting background job.');
+
+  // Return immediately
+  const initialResponse: CallToolResult = {
+    content: [{ type: 'text', text: `Code stub generation started. Job ID: ${jobId}` }],
+    isError: false,
+  };
+
+  // ---> Step 2.5(CSG).4: Wrap Logic in Async Block <---
+  setImmediate(async () => {
+    // Define variables needed within the async scope
+    let fileContext = '';
+    // let previousText: string | undefined = undefined; // Removed - context.previousResponse is not reliable here
+    const logicalTaskName = 'code_stub_generation';
+    const defaultModel = config.geminiModel || "google/gemini-2.0-flash-001"; // Or a better default code model
+    const logs: string[] = []; // Keep logs specific to this job execution
+    let modelToUse: string = defaultModel; // Declare modelToUse here
+
+    // ---> Step 2.5(CSG).7: Update Final Result/Error Handling (Try Block Start) <---
+    try {
+      // ---> Step 2.5(CSG).6: Add Progress Updates (Initial) <---
+      jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Starting code stub generation...');
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Starting code stub generation...');
+      logger.info({ jobId }, `Generating ${validatedParams.language} ${validatedParams.stubType} stub: ${validatedParams.name}`);
+      logs.push(`[${new Date().toISOString()}] Generating ${validatedParams.language} ${validatedParams.stubType} stub: ${validatedParams.name}`);
+
+      if (validatedParams.contextFilePath) {
+          logger.debug({ jobId }, `Reading context file: ${validatedParams.contextFilePath}`);
+          // ---> Step 2.5(CSG).6: Add Progress Updates (Context Reading) <---
+          jobManager.updateJobStatus(jobId, JobStatus.RUNNING, `Reading context file: ${validatedParams.contextFilePath}`);
+          sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Reading context file: ${validatedParams.contextFilePath}`);
+          try {
+              fileContext = await readFileContent(validatedParams.contextFilePath);
+              logger.info({ jobId }, `Successfully added context from file: ${validatedParams.contextFilePath}`);
+              logs.push(`[${new Date().toISOString()}] Successfully read context file.`);
+              sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Context file read successfully.`);
+          } catch (readError) {
+              const errorMsg = readError instanceof Error ? readError.message : String(readError);
+              logger.warn({ jobId, err: readError }, `Could not read context file '${validatedParams.contextFilePath}'. Proceeding without file context.`);
+              logs.push(`[${new Date().toISOString()}] Warning: Failed to read context file: ${errorMsg}`);
+              sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Warning: Could not read context file: ${errorMsg}`);
+              fileContext = `\n\n[Warning: Failed to read context file '${validatedParams.contextFilePath}'. Error: ${errorMsg}]`;
+          }
       }
-  }
 
-  // Safely access previous response text from context and ensure it's a string
-  let previousText: string | undefined = undefined;
-  const potentialText = context?.previousResponse?.content?.[0]?.text;
-  if (typeof potentialText === 'string' && potentialText.trim()) {
-      previousText = potentialText;
-      logger.debug("Using context from previous tool response.");
-  }
+      // Removed previousText logic as context.previousResponse is not reliable in setImmediate
 
-  const userPrompt = createLLMPrompt(validatedParams, fileContext, previousText); // Pass fileContext and validated previousText
+      const userPrompt = createLLMPrompt(validatedParams, fileContext /*, previousText */); // Pass fileContext
 
-  // Select the model
-  const logicalTaskName = 'code_stub_generation';
-  const defaultModel = config.geminiModel || "google/gemini-2.0-flash-001"; // Or a better default code model
-  const modelToUse = selectModelForTask(config, logicalTaskName, defaultModel);
+      // Select the model (assign to variable declared outside try)
+      modelToUse = selectModelForTask(config, logicalTaskName, defaultModel);
+      logs.push(`[${new Date().toISOString()}] Selected model: ${modelToUse}`);
 
-  // Check for API key
-  if (!config.apiKey) {
-    throw new ConfigurationError("OpenRouter API key (OPENROUTER_API_KEY) is not configured.");
-  }
+      // Check for API key
+      if (!config.apiKey) {
+        throw new ConfigurationError("OpenRouter API key (OPENROUTER_API_KEY) is not configured.");
+      }
 
-  try {
-    // Add Code Stub Generator header
-    const response = await axios.post(
-      `${config.baseUrl}/chat/completions`,
+      // ---> Step 2.5(CSG).6: Add Progress Updates (LLM Call) <---
+      logger.info({ jobId, modelToUse }, `Calling LLM for code stub generation...`);
+      jobManager.updateJobStatus(jobId, JobStatus.RUNNING, `Calling LLM (${modelToUse}) for stub generation...`);
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Calling LLM (${modelToUse}) for stub generation...`);
+
+      // Add Code Stub Generator header
+      const response = await axios.post(
+        `${config.baseUrl}/chat/completions`,
       {
         model: modelToUse, // Use selected model
         messages: [
@@ -150,53 +186,73 @@ export const generateCodeStub: ToolExecutor = async (
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${config.apiKey}`,
-          "HTTP-Referer": "https://vibe-coder-mcp.local" // Optional
-        }
+          "HTTP-Referer": "https://vibe-coder-mcp.local", // Optional - Added comma
+        },
       }
     );
 
-    if (response.data?.choices?.[0]?.message?.content) {
-      const rawCode = response.data.choices[0].message.content;
-      const cleanCode = cleanCodeOutput(rawCode);
+      // ---> Step 2.5(CSG).6: Add Progress Updates (Processing Response) <---
+      jobManager.updateJobStatus(jobId, JobStatus.RUNNING, `Received response from LLM. Processing...`);
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Received response from LLM. Processing...`);
 
-      if (!cleanCode) {
-          throw new ParsingError("LLM returned empty code content after cleanup.", { rawCode, modelUsed: modelToUse });
+      if (response.data?.choices?.[0]?.message?.content) {
+        const rawCode = response.data.choices[0].message.content;
+        const cleanCode = cleanCodeOutput(rawCode);
+
+        if (!cleanCode) {
+             throw new ParsingError("LLM returned empty code content after cleanup.", { rawCode, modelUsed: modelToUse });
+        }
+
+        logger.info({ jobId, modelUsed: modelToUse }, `Successfully generated code stub for ${validatedParams.name}`);
+        logs.push(`[${new Date().toISOString()}] Successfully generated code stub.`);
+        sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Stub generation complete.`);
+
+        // ---> Step 2.5(CSG).7: Update Final Result/Error Handling (Set Success Result) <---
+        const finalResult: CallToolResult = {
+          content: [{ type: 'text', text: cleanCode }], // Return the cleaned code
+          isError: false,
+        };
+        jobManager.setJobResult(jobId, finalResult);
+        // Optional explicit SSE: sseNotifier.sendProgress(sessionId, jobId, JobStatus.COMPLETED, 'Code stub generation completed successfully.');
+
+      } else {
+        logger.warn({ jobId, responseData: response.data, modelUsed: modelToUse }, "Received empty or unexpected response from LLM for code stub generation");
+         throw new ParsingError("No valid content received from LLM for code stub generation", { responseData: response.data, modelUsed: modelToUse });
       }
 
-      logger.debug({ modelUsed: modelToUse }, `Successfully generated code stub for ${validatedParams.name}`);
-      return {
-        content: [{ type: 'text', text: cleanCode }], // Return the cleaned code
-        isError: false,
-      };
-    } else {
-      logger.warn({ responseData: response.data, modelUsed: modelToUse }, "Received empty or unexpected response from LLM for code stub generation");
-      throw new ParsingError("No valid content received from LLM for code stub generation", { responseData: response.data, modelUsed: modelToUse });
-    }
+    // ---> Step 2.5(CSG).7: Update Final Result/Error Handling (Catch Block) <---
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error({ err: error, jobId, tool: 'generate-code-stub', params: validatedParams, modelUsed: modelToUse }, `Error generating code stub for ${validatedParams.name}`);
+      logs.push(`[${new Date().toISOString()}] Error: ${errorMsg}`);
 
-  } catch (error) {
-    logger.error({ err: error, tool: 'generate-code-stub', params: validatedParams, modelUsed: modelToUse }, `Error generating code stub for ${validatedParams.name}`);
-     let specificError: AppError;
-    // Wrap errors in custom types
-     if (axios.isAxiosError(error)) {
-        const status = error.response?.status;
-        specificError = new ApiError(`Code stub generation API Error: Status ${status || 'N/A'}. ${error.message}`, status, { params: validatedParams, modelUsed: modelToUse }, error);
-     } else if (error instanceof AppError) {
-         // Create a new context object including the model info
-         const newContext = { ...(error.context || {}), modelUsed: modelToUse };
-         // Re-create the error with the new context
-         specificError = new ToolExecutionError(error.message, newContext, error.originalError);
-     } else if (error instanceof Error) {
-         specificError = new ToolExecutionError(`Failed to generate code stub: ${error.message}`, { params: validatedParams, modelUsed: modelToUse }, error);
-     } else {
-          specificError = new ToolExecutionError(`Unknown error during code stub generation.`, { params: validatedParams, modelUsed: modelToUse });
-     }
-     // Return CallToolResult with error
-     return {
-        content: [{ type: 'text', text: specificError.message }],
+      let appError: AppError;
+      const cause = error instanceof Error ? error : undefined;
+
+      if (axios.isAxiosError(error)) {
+          const status = error.response?.status;
+          appError = new ApiError(`Code stub generation API Error: Status ${status || 'N/A'}. ${error.message}`, status, { params: validatedParams, modelUsed: modelToUse }, error);
+      } else if (error instanceof AppError) {
+          appError = error; // Use existing AppError
+      } else {
+          appError = new ToolExecutionError(`Failed to generate code stub: ${errorMsg}`, { params: validatedParams, modelUsed: modelToUse }, cause);
+      }
+
+      const mcpError = new McpError(ErrorCode.InternalError, appError.message, appError.context); // Corrected McpError class name
+      const errorResult: CallToolResult = {
+        content: [{ type: 'text', text: `Error during background job ${jobId}: ${mcpError.message}\n\nLogs:\n${logs.join('\n')}` }],
         isError: true,
-        errorDetails: { type: specificError.name, message: specificError.message },
-     };
-  }
+        errorDetails: mcpError
+      };
+
+      // Store error result in Job Manager
+      jobManager.setJobResult(jobId, errorResult);
+      // Send final failed status via SSE (optional if jobManager handles it)
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.FAILED, `Job failed: ${mcpError.message}`);
+    }
+  }); // ---> END OF setImmediate WRAPPER <---
+
+  return initialResponse; // Return the initial response with Job ID
 };
 
 // Define and Register Tool

@@ -12,8 +12,15 @@ This tool uses the `simple-git` library to retrieve a summary of the current Git
 
 ## Outputs
 
-*   **Primary Output:** A formatted string containing the Git diff summary. This string is returned within the `CallToolResult.content` array (type `text`).
+*   **Primary Output:** A summary string describing the Git repository status (branch, recent commits, status).
 *   **File Storage:** This tool does not save any files.
+
+## Asynchronous Execution
+
+This tool executes asynchronously as fetching Git history, especially diffs, can take time for larger repositories.
+1.  When you call this tool, it will immediately return a **Job ID**.
+2.  The Git analysis process runs in the background.
+3.  Use the `get-job-result` tool with the received Job ID to retrieve the final summary once the job is complete.
 
 ## Workflow
 
