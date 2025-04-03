@@ -31,18 +31,18 @@ if [ $? -ne 0 ]; then
 fi
 echo "Dependencies installed successfully."
 
-# Create required workflow output directories (for tools that save files)
-echo "Creating required workflow output directories..."
-mkdir -p workflow-agent-files # Ensure base dir exists
+# Create required VibeCoderOutput directories (for tools that save files)
+echo "Creating required VibeCoderOutput directories..."
+mkdir -p VibeCoderOutput # Ensure base dir exists
 # Original tool output dirs:
-mkdir -p workflow-agent-files/research-manager
-mkdir -p workflow-agent-files/rules-generator
-mkdir -p workflow-agent-files/prd-generator
-mkdir -p workflow-agent-files/user-stories-generator
-mkdir -p workflow-agent-files/task-list-generator
-mkdir -p workflow-agent-files/fullstack-starter-kit-generator
+mkdir -p VibeCoderOutput/research-manager
+mkdir -p VibeCoderOutput/rules-generator
+mkdir -p VibeCoderOutput/prd-generator
+mkdir -p VibeCoderOutput/user-stories-generator
+mkdir -p VibeCoderOutput/task-list-generator
+mkdir -p VibeCoderOutput/fullstack-starter-kit-generator
 # Additional tool output dirs:
-mkdir -p workflow-agent-files/workflow-runner
+mkdir -p VibeCoderOutput/workflow-runner
 # New tools (code-gen, git, etc.) generally don't save files here by default.
 
 # Build TypeScript
@@ -85,13 +85,15 @@ fi
 echo ""
 echo "Setup script completed successfully!"
 echo "=================================================="
-echo "Vibe Coder MCP Server is now set up with enhanced features:"
-echo "  - Core Generators (PRD, User Stories, Tasks, Rules, Starter Kits)"
-echo "  - Research Manager (using Perplexity)"
+echo "Vibe Coder MCP Server is now set up with core features:"
+echo "  - Planning & Documentation Tools (PRD, User Stories, Tasks, Rules)"
+echo "  - Project Scaffolding (Fullstack Starter Kit)"
 echo "  - Code Generation & Refactoring Tools"
-echo "  - Dependency Analysis & Git Summary Tools"
+echo "  - Analysis Tools (Dependencies, Git Summary)"
+echo "  - Research Manager (using configured models)"
 echo "  - Workflow Runner (using workflows.json)"
 echo "  - Semantic Routing & Sequential Thinking"
+echo "  - Asynchronous Job Handling Infrastructure (partially implemented)"
 echo ""
 echo "IMPORTANT NEXT STEPS:"
 echo "1. If you haven't already, **edit the .env file** to add your valid OPENROUTER_API_KEY."

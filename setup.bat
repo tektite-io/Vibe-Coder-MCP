@@ -31,18 +31,18 @@ if %ERRORLEVEL% neq 0 (
 )
 echo Dependencies installed successfully.
 
-REM Create required workflow output directories (for tools that save files)
-echo Creating required workflow output directories...
-if not exist "workflow-agent-files" mkdir "workflow-agent-files"
+REM Create required VibeCoderOutput directories (for tools that save files)
+echo Creating required VibeCoderOutput directories...
+if not exist "VibeCoderOutput" mkdir "VibeCoderOutput"
 REM Original tool output dirs:
-if not exist "workflow-agent-files\research-manager" mkdir "workflow-agent-files\research-manager"
-if not exist "workflow-agent-files\rules-generator" mkdir "workflow-agent-files\rules-generator"
-if not exist "workflow-agent-files\prd-generator" mkdir "workflow-agent-files\prd-generator"
-if not exist "workflow-agent-files\user-stories-generator" mkdir "workflow-agent-files\user-stories-generator"
-if not exist "workflow-agent-files\task-list-generator" mkdir "workflow-agent-files\task-list-generator"
-if not exist "workflow-agent-files\fullstack-starter-kit-generator" mkdir "workflow-agent-files\fullstack-starter-kit-generator"
+if not exist "VibeCoderOutput\research-manager" mkdir "VibeCoderOutput\research-manager"
+if not exist "VibeCoderOutput\rules-generator" mkdir "VibeCoderOutput\rules-generator"
+if not exist "VibeCoderOutput\prd-generator" mkdir "VibeCoderOutput\prd-generator"
+if not exist "VibeCoderOutput\user-stories-generator" mkdir "VibeCoderOutput\user-stories-generator"
+if not exist "VibeCoderOutput\task-list-generator" mkdir "VibeCoderOutput\task-list-generator"
+if not exist "VibeCoderOutput\fullstack-starter-kit-generator" mkdir "VibeCoderOutput\fullstack-starter-kit-generator"
 REM Additional tool output dirs:
-if not exist "workflow-agent-files\workflow-runner" mkdir "workflow-agent-files\workflow-runner"
+if not exist "VibeCoderOutput\workflow-runner" mkdir "VibeCoderOutput\workflow-runner"
 REM New tools (code-gen, git, etc.) generally don't save files here by default.
 
 REM Build TypeScript using PowerShell
@@ -79,13 +79,15 @@ if not exist .env (
 echo.
 echo Setup script completed successfully!
 echo ==================================================
-echo Vibe Coder MCP Server is now set up with enhanced features:
-echo   - Core Generators (PRD, User Stories, Tasks, Rules, Starter Kits)
-echo   - Research Manager (using Perplexity)
-echo   - Code Generation ^& Refactoring Tools
-echo   - Dependency Analysis ^& Git Summary Tools
+echo Vibe Coder MCP Server is now set up with core features:
+echo   - Planning & Documentation Tools (PRD, User Stories, Tasks, Rules)
+echo   - Project Scaffolding (Fullstack Starter Kit)
+echo   - Code Generation & Refactoring Tools
+echo   - Analysis Tools (Dependencies, Git Summary)
+echo   - Research Manager (using configured models)
 echo   - Workflow Runner (using workflows.json)
-echo   - Semantic Routing ^& Sequential Thinking
+echo   - Semantic Routing & Sequential Thinking
+echo   - Asynchronous Job Handling Infrastructure (partially implemented)
 echo.
 echo IMPORTANT NEXT STEPS:
 echo 1. If you haven't already, **edit the .env file** to add your valid OPENROUTER_API_KEY.

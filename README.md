@@ -362,7 +362,7 @@ flowchart TD
 ```
 vibe-coder-mcp/
 ├── .env                  # Environment configuration
-├── mcp-config.json       # Example MCP configuration 
+├── mcp-config.json       # Example MCP configuration
 ├── package.json          # Project dependencies
 ├── README.md             # This documentation
 ├── setup.bat             # Windows setup script
@@ -372,7 +372,7 @@ vibe-coder-mcp/
 ├── workflows.json        # Workflow definitions
 ├── build/                # Compiled JavaScript (after build)
 ├── docs/                 # Additional documentation
-├── workflow-agent-files/ # Tool output directory
+├── VibeCoderOutput/      # Tool output directory
 │   ├── research-manager/
 │   ├── rules-generator/
 │   ├── prd-generator/
@@ -693,11 +693,11 @@ Refer to these individual READMEs for in-depth information:
 
 ## Generated File Storage
 
-By default, outputs from the generator tools are stored for historical reference in the `workflow-agent-files/` directory within the project. This location can be overridden by setting the `VIBE_CODER_OUTPUT_DIR` environment variable in your `.env` file or AI assistant configuration.
+By default, outputs from the generator tools are stored for historical reference in the `VibeCoderOutput/` directory within the project. This location can be overridden by setting the `VIBE_CODER_OUTPUT_DIR` environment variable in your `.env` file or AI assistant configuration.
 
 Example structure (default location):
 ```
-workflow-agent-files/
+VibeCoderOutput/
   ├── research-manager/         # Research reports
   │   └── TIMESTAMP-QUERY-research.md
   ├── rules-generator/          # Development rules
