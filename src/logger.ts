@@ -25,6 +25,21 @@ const streams = [
 const configuredLogger = pino(
   {
     level: effectiveLogLevel, // Set level here for filtering before transport/multistream
+    // --- Add Redaction ---
+    redact: {
+      paths: [
+        'apiKey', // Redact any top-level apiKey
+        '*.apiKey', // Redact apiKey in any nested object
+        'receivedConfig.apiKey', // Specifically target the observed log structure
+        'config.apiKey', // Common config pattern
+        'openRouterConfig.apiKey', // Specific object name from index.ts
+        'env.OPENROUTER_API_KEY', // If env vars are logged directly
+        'env.PERPLEXITY_API_KEY' // Handle other potential keys
+        // Add other sensitive keys if necessary, e.g., 'headers.Authorization'
+      ],
+      censor: '[REDACTED]', // Replace sensitive value with this string
+    },
+    // --- End Redaction ---
     // Transport is applied *after* multistream, only affects console output here
     transport: isDevelopment
       ? {

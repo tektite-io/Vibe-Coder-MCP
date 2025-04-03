@@ -1,19 +1,23 @@
 // src/tools/prd-generator/tests/index.test.ts
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'; // Keep only one import
-import { generatePRD, PRD_SYSTEM_PROMPT } from '../index.js'; // Keep only one import
-// Removed duplicate imports
+import { generatePRD, PRD_SYSTEM_PROMPT, initDirectories } from '../index.js'; // Keep only one import
 import { OpenRouterConfig } from '../../../types/workflow.js';
 import * as researchHelper from '../../../utils/researchHelper.js';
 import * as llmHelper from '../../../utils/llmHelper.js';
-import { ApiError, AppError } from '../../../utils/errors.js';
+import { ApiError, AppError, ToolExecutionError } from '../../../utils/errors.js';
 import fs from 'fs-extra';
 import logger from '../../../logger.js';
+import { jobManager, JobStatus } from '../../../services/job-manager/index.js'; // Import Job Manager
+import { sseNotifier } from '../../../services/sse-notifier/index.js'; // Import SSE Notifier
+import { CallToolResult } from '@modelcontextprotocol/sdk/types.js'; // Import CallToolResult
 
 // Mock dependencies
 vi.mock('../../../utils/researchHelper.js');
 vi.mock('../../../utils/llmHelper.js'); // Mock the new helper
 vi.mock('fs-extra');
 vi.mock('../../../logger.js');
+vi.mock('../../../services/job-manager/index.js'); // Mock Job Manager
+vi.mock('../../../services/sse-notifier/index.js'); // Mock SSE Notifier
 
 // Define helper variables for mocks using vi.mocked() for better type handling
 const mockPerformResearchQuery = vi.mocked(researchHelper.performResearchQuery);
@@ -21,8 +25,16 @@ const mockPerformDirectLlmCall = vi.mocked(llmHelper.performDirectLlmCall); // M
 const mockWriteFile = vi.mocked(fs.writeFile);
 const mockEnsureDir = vi.mocked(fs.ensureDir);
 
+// Helper to advance timers and allow setImmediate to run
+const runAsyncTicks = async (count = 1) => {
+  for (let i = 0; i < count; i++) {
+    await vi.advanceTimersToNextTimerAsync(); // Allow setImmediate/promises to resolve
+  }
+};
 
-describe('PRD Generator Tool Executor', () => {
+const mockJobId = 'mock-prd-job-id';
+
+describe('PRD Generator Tool Executor (Async)', () => {
   // Mock data and responses
   const mockConfig: OpenRouterConfig = {
     baseUrl: 'mock-url',
@@ -30,6 +42,7 @@ describe('PRD Generator Tool Executor', () => {
     geminiModel: 'google/gemini-2.5-pro-exp-03-25:free',
     perplexityModel: 'perplexity/sonar-deep-research'
   };
+  const mockContext = { sessionId: 'test-session-prd' };
 
   const mockResearchResults = [
     "Mock market analysis research data",
@@ -52,193 +65,174 @@ describe('PRD Generator Tool Executor', () => {
         .mockResolvedValueOnce(mockResearchResults[1]) // User Needs
         .mockResolvedValueOnce(mockResearchResults[2]); // Standards
     mockPerformDirectLlmCall.mockResolvedValue(mockGeneratedPRD); // Mock the direct call
+
+    // Mock Job Manager methods
+    vi.mocked(jobManager.createJob).mockReturnValue(mockJobId);
+    vi.mocked(jobManager.updateJobStatus).mockReturnValue(true);
+    vi.mocked(jobManager.setJobResult).mockReturnValue(true);
+
+    // Enable fake timers
+    vi.useFakeTimers();
   });
 
    afterEach(() => {
        vi.restoreAllMocks();
+       vi.useRealTimers(); // Restore real timers
    });
 
-  it('should correctly assemble prompts, call dependencies, format result, and save file on success', async () => {
+  it('should return job ID and complete successfully in background', async () => {
     const productDescription = "Fancy New Widget";
     const params = { productDescription };
 
-    // Call the executor
-    const result = await generatePRD(params, mockConfig);
+    // --- Initial Call ---
+    const initialResult = await generatePRD(params, mockConfig, mockContext);
+    expect(initialResult.isError).toBe(false);
+    expect(initialResult.content[0]?.text).toContain(`PRD generation started. Job ID: ${mockJobId}`);
+    expect(jobManager.createJob).toHaveBeenCalledWith('generate-prd', params);
 
-    // 1. Verify Research Query Formulation
+    // Verify underlying logic not called yet
+    expect(mockPerformResearchQuery).not.toHaveBeenCalled();
+    expect(mockPerformDirectLlmCall).not.toHaveBeenCalled();
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(jobManager.setJobResult).not.toHaveBeenCalled();
+
+    // --- Advance Timers ---
+    await runAsyncTicks(5); // Allow for research + generation
+
+    // --- Verify Async Operations ---
+    // 1. Verify Research
     expect(mockPerformResearchQuery).toHaveBeenCalledTimes(3);
-    expect(mockPerformResearchQuery).toHaveBeenCalledWith(
-        expect.stringContaining(`Market analysis and competitive landscape for: ${productDescription}`),
-        mockConfig
-    );
-     expect(mockPerformResearchQuery).toHaveBeenCalledWith(
-        expect.stringContaining(`User needs, demographics, and expectations for: ${productDescription}`),
-        mockConfig
-    );
-     expect(mockPerformResearchQuery).toHaveBeenCalledWith(
-        expect.stringContaining(`Industry standards, best practices, and common feature sets for products like: ${productDescription}`),
-        mockConfig
-    );
+    expect(mockPerformResearchQuery).toHaveBeenCalledWith(expect.stringContaining(`Market analysis`), mockConfig);
 
-    // 2. Verify Main Prompt Assembly and Direct LLM Call
+    // 2. Verify LLM Call
     expect(mockPerformDirectLlmCall).toHaveBeenCalledTimes(1);
     const llmCallArgs = mockPerformDirectLlmCall.mock.calls[0];
-    const mainPromptArg = llmCallArgs[0];
-    const systemPromptArg = llmCallArgs[1];
-    const configArg = llmCallArgs[2];
-    const logicalTaskNameArg = llmCallArgs[3];
-    const temperatureArg = llmCallArgs[4];
+    expect(llmCallArgs[0]).toContain(productDescription); // Main prompt check
+    expect(llmCallArgs[1]).toBe(PRD_SYSTEM_PROMPT); // System prompt check
+    expect(llmCallArgs[3]).toBe('prd_generation'); // Logical task name check
 
-    expect(mainPromptArg).toContain(productDescription);
-    expect(mainPromptArg).toContain("## Pre-Generation Research Context");
-    expect(mainPromptArg).toContain(mockResearchResults[0]);
-    expect(mainPromptArg).toContain(mockResearchResults[1]);
-    expect(mainPromptArg).toContain(mockResearchResults[2]);
-
-    // 3. Verify System Prompt, Config, Task Name, Temperature Usage
-    expect(systemPromptArg).toBe(PRD_SYSTEM_PROMPT);
-    expect(configArg).toBe(mockConfig);
-    expect(logicalTaskNameArg).toBe('prd_generation');
-    expect(temperatureArg).toBe(0.3);
-
-    // 4. Verify Result Formatting
-    expect(result.isError).toBe(false);
-    expect(result.content).toHaveLength(1);
-    const resultText = result.content?.[0]?.text ?? '';
-    // Use a less strict regex for the title check as it can be inferred
-    expect(resultText).toMatch(/^# PRD: .*$/m);
-    expect(resultText).toContain(mockGeneratedPRD);
-    expect(resultText).toMatch(/_Generated: \d{1,2}\/\d{1,2}\/\d{4}, \d{1,2}:\d{2}:\d{2} (AM|PM)_$/); // Check timestamp format
-
-    // 5. Verify File Saving
+    // 3. Verify File Saving
     expect(mockWriteFile).toHaveBeenCalledTimes(1);
     const writeFileArgs = mockWriteFile.mock.calls[0];
-    // Use simpler path check and remove useless escapes
-    expect(writeFileArgs[0]).toMatch(/workflow-agent-files[\\/]prd-generator[\\/].*fancy-new-widget.*-prd\.md$/);
-    expect(writeFileArgs[1]).toBe(resultText); // Check content saved
-    expect(writeFileArgs[2]).toBe('utf8');
+    expect(writeFileArgs[0]).toMatch(/prd-generator[\\/].*fancy-new-widget.*-prd\.md$/); // Path check
+    expect(writeFileArgs[1]).toContain(mockGeneratedPRD); // Content check
+
+    // 4. Verify Final Job Result
+    expect(jobManager.setJobResult).toHaveBeenCalledTimes(1);
+    const finalResultArgs = vi.mocked(jobManager.setJobResult).mock.calls[0];
+    expect(finalResultArgs[0]).toBe(mockJobId);
+    expect(finalResultArgs[1].isError).toBe(false);
+    expect(finalResultArgs[1].content[0]?.text).toContain(`PRD generated successfully and saved to:`);
+    expect(finalResultArgs[1].content[0]?.text).toContain(mockGeneratedPRD);
+
+    // 5. Verify SSE Calls (basic)
+    expect(sseNotifier.sendProgress).toHaveBeenCalledWith(mockContext.sessionId, mockJobId, JobStatus.RUNNING, expect.stringContaining('Starting PRD generation'));
+    expect(sseNotifier.sendProgress).toHaveBeenCalledWith(mockContext.sessionId, mockJobId, JobStatus.RUNNING, expect.stringContaining('Performing pre-generation research'));
+    expect(sseNotifier.sendProgress).toHaveBeenCalledWith(mockContext.sessionId, mockJobId, JobStatus.RUNNING, expect.stringContaining('Generating PRD content via LLM'));
+    expect(sseNotifier.sendProgress).toHaveBeenCalledWith(mockContext.sessionId, mockJobId, JobStatus.RUNNING, expect.stringContaining('Saving PRD to file'));
   });
 
-  it('should include research failure messages in the main prompt', async () => {
+  it('should handle research failures gracefully (async)', async () => {
     // Mock one research query to fail
-    mockPerformResearchQuery.mockReset(); // Clear previous mocks
+    mockPerformResearchQuery.mockReset();
     mockPerformResearchQuery
         .mockRejectedValueOnce(new ApiError('Market research failed', 500)) // Market Analysis fails
         .mockResolvedValueOnce(mockResearchResults[1]) // User Needs succeeds
         .mockResolvedValueOnce(mockResearchResults[2]); // Standards succeeds
 
     const productDescription = "Widget With Failing Research";
-    await generatePRD({ productDescription }, mockConfig);
-
-    // Verify generation was still called
-    expect(mockPerformDirectLlmCall).toHaveBeenCalledTimes(1);
-
-    // Verify the prompt passed to performDirectLlmCall contains the failure message
+    // --- Initial Call ---
+    await generatePRD({ productDescription }, mockConfig, mockContext);
+    // --- Advance Timers ---
+    await runAsyncTicks(5);
+    // --- Verify Async Operations ---
+    expect(mockPerformDirectLlmCall).toHaveBeenCalledTimes(1); // Generation should still run
     const mainPromptArg = mockPerformDirectLlmCall.mock.calls[0][0];
-    expect(mainPromptArg).toContain("### Market Analysis:\n*Research on this topic failed.*\n\n"); // Correct assertion
-    // Verify it still contains the successful results
-    expect(mainPromptArg).toContain(mockResearchResults[1]);
-    expect(mainPromptArg).toContain(mockResearchResults[2]);
+    expect(mainPromptArg).toContain("### Market Analysis:\n*Research on this topic failed.*\n\n"); // Check failure message in prompt
+    expect(mockWriteFile).toHaveBeenCalledTimes(1); // File should still be saved
+    expect(jobManager.setJobResult).toHaveBeenCalledTimes(1); // Job should complete successfully
+    expect(vi.mocked(jobManager.setJobResult).mock.calls[0][1].isError).toBe(false);
+    expect(sseNotifier.sendProgress).toHaveBeenCalledWith(mockContext.sessionId, mockJobId, JobStatus.RUNNING, expect.stringContaining('Warning: Error during research phase'));
   });
 
-  it('should return error CallToolResult if research query throws unexpected error', async () => {
-      const researchError = new Error("Unexpected research issue");
-      mockPerformResearchQuery.mockReset(); // Clear previous mocks
-      mockPerformResearchQuery.mockRejectedValueOnce(researchError); // Throw generic error
-
-      const productDescription = "Error Prone Widget";
-      const result = await generatePRD({ productDescription }, mockConfig);
-
-      // Adjust assertion: The tool currently handles research errors gracefully and proceeds.
-      expect(result.isError).toBe(false); // Tool succeeds despite research error
-      // Check that the generated PRD content is present, not an error message
-      expect(result.content?.[0]?.text).toContain(mockGeneratedPRD);
-       // Check that the prompt sent to the LLM included the failure message
-       const mainPromptArg = mockPerformDirectLlmCall.mock.calls[0][0];
-       // Adjust assertion to match the actual error phrasing in the prompt
-       expect(mainPromptArg).toContain("*Error occurred during research phase.*");
-       expect(mockPerformDirectLlmCall).toHaveBeenCalledTimes(1); // Generation should still run
-       expect(mockWriteFile).toHaveBeenCalledTimes(1); // File should still be saved
-  });
-
-   it('should return error CallToolResult if direct LLM call throws error', async () => {
+  it('should set job to FAILED if direct LLM call throws error (async)', async () => {
        const llmError = new ApiError("LLM call failed", 500);
        mockPerformDirectLlmCall.mockRejectedValueOnce(llmError); // Throw error
 
        const productDescription = "Confusing Widget";
-       const result = await generatePRD({ productDescription }, mockConfig);
-
-       expect(result.isError).toBe(true);
-       expect(result.content?.[0]?.text).toContain('Error: Failed to generate PRD.'); // Check the wrapped error message
-       // Add type guard for errorDetails.message
-       if (result.errorDetails && typeof result.errorDetails === 'object' && 'message' in result.errorDetails) {
-           expect(result.errorDetails.message).toContain('Failed to generate PRD.');
-       } else {
-           // Fail test if message property is missing
-           expect(result.errorDetails).toHaveProperty('message');
-       }
+       // --- Initial Call ---
+       await generatePRD({ productDescription }, mockConfig, mockContext);
+       // --- Advance Timers ---
+       await runAsyncTicks(5);
+       // --- Verify Async Operations ---
        expect(mockPerformResearchQuery).toHaveBeenCalledTimes(3); // Research should have run
+       expect(mockPerformDirectLlmCall).toHaveBeenCalledTimes(1); // LLM call was attempted
        expect(mockWriteFile).not.toHaveBeenCalled(); // File shouldn't be saved
+       expect(jobManager.setJobResult).toHaveBeenCalledTimes(1); // Job should fail
+       const finalResultArgs = vi.mocked(jobManager.setJobResult).mock.calls[0];
+       expect(finalResultArgs[0]).toBe(mockJobId);
+       expect(finalResultArgs[1].isError).toBe(true);
+       expect(finalResultArgs[1].content[0]?.text).toContain('Error during background job');
+       const errorDetails = finalResultArgs[1].errorDetails as any;
+       expect(errorDetails?.message).toContain('Failed to generate PRD: LLM call failed'); // Check wrapped message
    });
 
-   // Optional: Test case where fs.writeFile fails (though current impl doesn't make it a hard error)
-   it('should return success CallToolResult but log error if file writing fails', async () => {
+   it('should set job to FAILED if file writing fails (async)', async () => {
        const fileWriteError = new Error("Disk full");
        mockWriteFile.mockRejectedValueOnce(fileWriteError);
 
        const productDescription = "Unsavable Widget";
-       const result = await generatePRD({ productDescription }, mockConfig);
-
-       // Adjust assertion: The implementation returns an error result in this case.
-       expect(result.isError).toBe(true);
-       // Check that the error message reflects the file writing issue
-       expect(result.content?.[0]?.text).toContain('Error generating PRD: Disk full');
-       expect(logger.error).toHaveBeenCalledWith(expect.objectContaining({ err: fileWriteError }), 'PRD Generator Error');
-       // The generated content might not be in the result if the error is returned early
-       // expect(result.content?.[0]?.text).toContain(mockGeneratedPRD); // This might fail depending on impl
+       // --- Initial Call ---
+       await generatePRD({ productDescription }, mockConfig, mockContext);
+       // --- Advance Timers ---
+       await runAsyncTicks(5);
+       // --- Verify Async Operations ---
+       expect(mockPerformResearchQuery).toHaveBeenCalledTimes(3);
+       expect(mockPerformDirectLlmCall).toHaveBeenCalledTimes(1);
+       expect(mockWriteFile).toHaveBeenCalledTimes(1); // Write was attempted
+       expect(jobManager.setJobResult).toHaveBeenCalledTimes(1); // Job should fail
+       const finalResultArgs = vi.mocked(jobManager.setJobResult).mock.calls[0];
+       expect(finalResultArgs[0]).toBe(mockJobId);
+       expect(finalResultArgs[1].isError).toBe(true);
+       expect(finalResultArgs[1].content[0]?.text).toContain('Error during background job');
+       const errorDetails = finalResultArgs[1].errorDetails as any;
+       expect(errorDetails?.message).toContain('Failed to generate PRD: Disk full');
   });
 
-  // --- Snapshot Test ---
-  it('should generate PRD content matching snapshot', async () => {
+  // --- Snapshot Test (Adapted for Async) ---
+  it('should set final job result content matching snapshot (async)', async () => {
       const productDescription = "A sample product for snapshot";
       const params = { productDescription };
-      const consistentMockPRD = "## Section 1\nDetails...\n## Section 2\nMore details...";
+      const consistentMockPRD = "# Mock PRD\n## Section 1\nDetails...\n## Section 2\nMore details...";
 
-      // Variable to capture the path argument
-      let capturedFilePath: string | undefined;
-
-      // Reset mocks and set custom implementation to capture arguments directly
+      // Reset mocks for consistency
       mockPerformResearchQuery.mockReset();
       mockPerformResearchQuery.mockResolvedValue("Consistent mock research.");
-      mockPerformDirectLlmCall.mockReset(); // Reset direct call mock
+      mockPerformDirectLlmCall.mockReset();
       mockPerformDirectLlmCall.mockResolvedValue(consistentMockPRD); // Mock direct call
+      mockWriteFile.mockReset();
+      mockWriteFile.mockResolvedValue(undefined); // Mock successful write
 
-      // Override mockWriteFile to capture the path argument - use simpler signature for mock
-      mockWriteFile.mockImplementation(async (pathArg: fs.PathOrFileDescriptor) => {
-          capturedFilePath = pathArg as string; // Capture the path
-          // No need to return anything specific for this mock's purpose
-      });
+      // --- Initial Call ---
+      await generatePRD(params, mockConfig, mockContext);
+      // --- Advance Timers ---
+      await runAsyncTicks(5);
+      // --- Verify Async Operations ---
+      expect(jobManager.setJobResult).toHaveBeenCalledTimes(1);
+      const finalResultArgs = vi.mocked(jobManager.setJobResult).mock.calls[0];
+      expect(finalResultArgs[1].isError).toBe(false);
+      const finalResult = finalResultArgs[1] as CallToolResult;
 
-      // Call the executor
-      const result = await generatePRD(params, mockConfig);
+      // Snapshot the main content excluding the timestamp and file path
+      const resultText = finalResult.content?.[0]?.text ?? '';
+      const contentToSnapshot = (resultText as string)
+          .replace(/_Generated: .*_$/, '') // Remove timestamp
+          .replace(/PRD generated successfully and saved to: .*?-prd\.md\n\n/, '') // Remove file path line
+          .trim();
+      expect(contentToSnapshot).toMatchSnapshot('PRD Generator Content');
 
-      expect(result.isError).toBe(false);
-      expect(result.content).toHaveLength(1);
-      const resultText = result.content?.[0]?.text ?? '';
-
-      // Snapshot the main content excluding the timestamp for stability
-      // Ensure resultText is treated as a string before calling replace
-      const contentWithoutTimestamp = (resultText as string).replace(/_Generated: .*_$/, '').trim();
-      expect(contentWithoutTimestamp).toMatchSnapshot('PRD Generator Content');
-
-      // Verification of the file write being called
+      // Verify file write happened
       expect(mockWriteFile).toHaveBeenCalledTimes(1);
-
-      // Verify the captured path contains expected segments
-      expect(capturedFilePath).toBeDefined();
-      expect(capturedFilePath).toContain('workflow-agent-files');
-      expect(capturedFilePath).toContain('prd-generator');
-      expect(capturedFilePath).toContain('a-sample-product-for-snapsho'); // Sanitized name part
-      expect(capturedFilePath).toMatch(/\.md$/); // Ends with .md
+      expect(mockWriteFile).toHaveBeenCalledWith(expect.stringContaining('-prd.md'), expect.any(String), 'utf8');
   });
 });

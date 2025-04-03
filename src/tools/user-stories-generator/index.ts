@@ -6,8 +6,10 @@ import { OpenRouterConfig } from '../../types/workflow.js';
 import { performDirectLlmCall } from '../../utils/llmHelper.js'; // Import the new helper
 import { performResearchQuery } from '../../utils/researchHelper.js';
 import logger from '../../logger.js';
-import { registerTool, ToolDefinition, ToolExecutor } from '../../services/routing/toolRegistry.js';
+import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js'; // Import ToolExecutionContext
 import { AppError, ApiError, ConfigurationError, ToolExecutionError } from '../../utils/errors.js'; // Import necessary errors
+import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
+import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
 
 // Helper function to get the base output directory
 function getBaseOutputDir(): string {
@@ -115,8 +117,15 @@ const userStoriesInputSchemaShape = {
  */
 export const generateUserStories: ToolExecutor = async (
   params: Record<string, unknown>, // More type-safe than 'any'
-  config: OpenRouterConfig
+  config: OpenRouterConfig,
+  context?: ToolExecutionContext // Add context parameter
 ): Promise<CallToolResult> => { // Return CallToolResult
+  // ---> Step 2.5(US).2: Inject Dependencies & Get Session ID <---
+  const sessionId = context?.sessionId || 'unknown-session';
+  if (sessionId === 'unknown-session') {
+      logger.warn({ tool: 'generateUserStories' }, 'Executing tool without a valid sessionId. SSE progress updates will not be sent.');
+  }
+
   // Log the config received by the executor
   logger.debug({
     configReceived: true,
@@ -125,20 +134,45 @@ export const generateUserStories: ToolExecutor = async (
   }, 'generateUserStories executor received config');
 
   const productDescription = params.productDescription as string; // Assert type after validation
-  try {
-    // Ensure directories are initialized before writing
-    await initDirectories();
+
+  // ---> Step 2.5(US).3: Create Job & Return Job ID <---
+  const jobId = jobManager.createJob('generate-user-stories', params);
+  logger.info({ jobId, tool: 'generateUserStories', sessionId }, 'Starting background job.');
+
+  // Return immediately
+  const initialResponse: CallToolResult = {
+    content: [{ type: 'text', text: `User stories generation started. Job ID: ${jobId}` }],
+    isError: false,
+  };
+
+  // ---> Step 2.5(US).4: Wrap Logic in Async Block <---
+  setImmediate(async () => {
+    const logs: string[] = []; // Keep logs specific to this job execution
+    let filePath: string = ''; // Define filePath in outer scope for catch block
+
+    // ---> Step 2.5(US).7: Update Final Result/Error Handling (Try Block Start) <---
+    try {
+      // ---> Step 2.5(US).6: Add Progress Updates (Initial) <---
+      jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Starting user stories generation process...');
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Starting user stories generation process...');
+      logs.push(`[${new Date().toISOString()}] Starting user stories generation for: ${productDescription.substring(0, 50)}...`);
+
+      // Ensure directories are initialized before writing
+      await initDirectories();
 
     // Generate a filename for storing the user stories (using the potentially configured USER_STORIES_DIR)
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const sanitizedName = productDescription.substring(0, 30).toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    const filename = `${timestamp}-${sanitizedName}-user-stories.md`;
-    const filePath = path.join(USER_STORIES_DIR, filename);
-    
-    // Perform pre-generation research using Perplexity
-    logger.info({ inputs: { productDescription: productDescription.substring(0, 50) } }, "User Stories Generator: Starting pre-generation research...");
-    
-    let researchContext = '';
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const sanitizedName = productDescription.substring(0, 30).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const filename = `${timestamp}-${sanitizedName}-user-stories.md`;
+      filePath = path.join(USER_STORIES_DIR, filename); // Assign to outer scope variable
+
+      // ---> Step 2.5(US).6: Add Progress Updates (Research Start) <---
+      logger.info({ jobId, inputs: { productDescription: productDescription.substring(0, 50) } }, "User Stories Generator: Starting pre-generation research...");
+      jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Performing pre-generation research...');
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Performing pre-generation research...');
+      logs.push(`[${new Date().toISOString()}] Starting pre-generation research.`);
+
+      let researchContext = '';
     try {
       // Define relevant research queries
       const query1 = `User personas and stakeholders for: ${productDescription}`;
@@ -165,18 +199,29 @@ export const generateUserStories: ToolExecutor = async (
           researchContext += `### ${queryLabels[index]}:\n*Research on this topic failed.*\n\n`;
         }
       });
-      
-      logger.info("User Stories Generator: Pre-generation research completed.");
+
+      // ---> Step 2.5(US).6: Add Progress Updates (Research End) <---
+      logger.info({ jobId }, "User Stories Generator: Pre-generation research completed.");
+      jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Research complete. Starting main user stories generation...');
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Research complete. Starting main user stories generation...');
+      logs.push(`[${new Date().toISOString()}] Pre-generation research completed.`);
+
     } catch (researchError) {
-      logger.error({ err: researchError }, "User Stories Generator: Error during research aggregation");
+      logger.error({ jobId, err: researchError }, "User Stories Generator: Error during research aggregation");
+      logs.push(`[${new Date().toISOString()}] Error during research aggregation: ${researchError instanceof Error ? researchError.message : String(researchError)}`);
+      // Include error in context but continue
       researchContext = "## Pre-Generation Research Context:\n*Error occurred during research phase.*\n\n";
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Warning: Error during research phase. Continuing generation...');
     }
-    
+
     // Create the main generation prompt with combined research and inputs
     const mainGenerationPrompt = `Create comprehensive user stories for the following product:\n\n${productDescription}\n\n${researchContext}`;
-    
-    // Process the user stories generation using a direct LLM call
-    logger.info("User Stories Generator: Starting main generation using direct LLM call...");
+
+    // ---> Step 2.5(US).6: Add Progress Updates (LLM Call Start) <---
+    logger.info({ jobId }, "User Stories Generator: Starting main generation using direct LLM call...");
+    jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating user stories content via LLM...');
+    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating user stories content via LLM...');
+    logs.push(`[${new Date().toISOString()}] Calling LLM for main user stories generation.`);
 
     const userStoriesMarkdown = await performDirectLlmCall(
       mainGenerationPrompt,
@@ -186,45 +231,73 @@ export const generateUserStories: ToolExecutor = async (
       0.3 // Slightly higher temp might be okay for creative text like stories
     );
 
-    logger.info("User Stories Generator: Main generation completed.");
+    // ---> Step 2.5(US).6: Add Progress Updates (LLM Call End) <---
+    logger.info({ jobId }, "User Stories Generator: Main generation completed.");
+    jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Processing LLM response...');
+    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Processing LLM response...');
+    logs.push(`[${new Date().toISOString()}] Received response from LLM.`);
 
     // Basic validation: Check if the output looks like Markdown and contains expected elements
     if (!userStoriesMarkdown || typeof userStoriesMarkdown !== 'string' || !userStoriesMarkdown.trim().startsWith('# User Stories:')) {
-      logger.warn({ markdown: userStoriesMarkdown }, 'User stories generation returned empty or potentially invalid Markdown format.');
-      // Consider if this should be a hard error or just a warning
+      logger.warn({ jobId, markdown: userStoriesMarkdown?.substring(0, 100) }, 'User stories generation returned empty or potentially invalid Markdown format.');
+      logs.push(`[${new Date().toISOString()}] Validation Error: LLM output invalid format.`);
       throw new ToolExecutionError('User stories generation returned empty or invalid Markdown content.');
     }
 
     // Format the user stories (already should be formatted by LLM, just add timestamp)
     const formattedResult = `${userStoriesMarkdown}\n\n_Generated: ${new Date().toLocaleString()}_`;
-    
+
+    // ---> Step 2.5(US).6: Add Progress Updates (Saving File) <---
+    logger.info({ jobId }, `Saving user stories to ${filePath}...`);
+    jobManager.updateJobStatus(jobId, JobStatus.RUNNING, `Saving user stories to file...`);
+    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Saving user stories to file...`);
+    logs.push(`[${new Date().toISOString()}] Saving user stories to ${filePath}.`);
+
     // Save the result
     await fs.writeFile(filePath, formattedResult, 'utf8');
-    logger.info(`User stories generated and saved to ${filePath}`);
+    logger.info({ jobId }, `User stories generated and saved to ${filePath}`);
+    logs.push(`[${new Date().toISOString()}] User stories saved successfully.`);
+    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `User stories saved successfully.`);
 
-    // Return success result
-    return {
-      content: [{ type: "text", text: formattedResult }],
+    // ---> Step 2.5(US).7: Update Final Result/Error Handling (Set Success Result) <---
+    const finalResult: CallToolResult = {
+      // Include file path in success message
+      content: [{ type: "text", text: `User stories generated successfully and saved to: ${filePath}\n\n${formattedResult}` }],
       isError: false
     };
-  } catch (error) {
-    logger.error({ err: error, params }, 'User Stories Generator Error');
-    // Handle specific errors from direct call or research
-    let appError: AppError;
-    if (error instanceof AppError) {
-      appError = error;
-    } else if (error instanceof Error) {
-      appError = new ToolExecutionError('Failed to generate user stories.', { originalError: error.message }, error);
-    } else {
-      appError = new ToolExecutionError('An unknown error occurred while generating user stories.', { thrownValue: String(error) });
+    jobManager.setJobResult(jobId, finalResult);
+    // Optional explicit SSE: sseNotifier.sendProgress(sessionId, jobId, JobStatus.COMPLETED, 'User stories generation completed successfully.');
+
+    // ---> Step 2.5(US).7: Update Final Result/Error Handling (Catch Block) <---
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger.error({ err: error, jobId, tool: 'generate-user-stories', params }, `User Stories Generator Error: ${errorMsg}`);
+      logs.push(`[${new Date().toISOString()}] Error: ${errorMsg}`);
+
+      // Handle specific errors from direct call or research
+      let appError: AppError;
+      const cause = error instanceof Error ? error : undefined;
+      if (error instanceof AppError) {
+        appError = error;
+      } else {
+        appError = new ToolExecutionError(`Failed to generate user stories: ${errorMsg}`, { params, filePath }, cause);
+      }
+
+      const mcpError = new McpError(ErrorCode.InternalError, appError.message, appError.context);
+      const errorResult: CallToolResult = {
+        content: [{ type: 'text', text: `Error during background job ${jobId}: ${mcpError.message}\n\nLogs:\n${logs.join('\n')}` }],
+        isError: true,
+        errorDetails: mcpError
+      };
+
+      // Store error result in Job Manager
+      jobManager.setJobResult(jobId, errorResult);
+      // Send final failed status via SSE (optional if jobManager handles it)
+      sseNotifier.sendProgress(sessionId, jobId, JobStatus.FAILED, `Job failed: ${mcpError.message}`);
     }
-    const mcpError = new McpError(ErrorCode.InternalError, appError.message, appError.context);
-    return {
-      content: [{ type: 'text', text: `Error: ${mcpError.message}` }],
-      isError: true,
-      errorDetails: mcpError
-    };
-  }
+  }); // ---> END OF setImmediate WRAPPER <---
+
+  return initialResponse; // Return the initial response with Job ID
 };
 
 // --- Tool Registration ---

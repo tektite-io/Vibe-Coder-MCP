@@ -18,6 +18,13 @@ This tool takes an existing code snippet and refactoring instructions, then uses
 *   **Primary Output:** The refactored code snippet as a string within the `CallToolResult.content` array (type `text`).
 *   **File Storage:** This tool does not save any files to the `workflow-agent-files` directory. The refactored code is returned directly in the MCP response.
 
+## Asynchronous Execution
+
+This tool executes asynchronously due to the potential time required for LLM processing.
+1.  When you call this tool, it will immediately return a **Job ID**.
+2.  The refactoring process runs in the background.
+3.  Use the `get-job-result` tool with the received Job ID to retrieve the final refactored code once the job is complete.
+
 ## Workflow
 
 ```mermaid

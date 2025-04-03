@@ -3,7 +3,7 @@ import { hybridMatch, getMatchExplanation, EnhancedMatchResult } from "../hybrid
 import { OpenRouterConfig } from "../../types/workflow.js";
 import { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import logger from '../../logger.js';
-import { registerTool, ToolDefinition, ToolExecutor, executeTool } from '../routing/toolRegistry.js'; // Import executeTool
+import { registerTool, ToolDefinition, ToolExecutor, executeTool, ToolExecutionContext } from '../routing/toolRegistry.js'; // Import executeTool, ToolExecutionContext
 
 /**
  * Result of processing a user request
@@ -35,7 +35,8 @@ const processRequestInputSchemaShape = {
  */
 export const processUserRequest: ToolExecutor = async (
   params: Record<string, unknown>, // Use unknown instead of any for better type safety
-  config: OpenRouterConfig
+  config: OpenRouterConfig,
+  context?: ToolExecutionContext // Add context parameter
 ): Promise<CallToolResult> => {
   const request = params.request as string; // Assert type after validation
   let matchResult: EnhancedMatchResult; // Use the enhanced type
@@ -64,7 +65,8 @@ export const processUserRequest: ToolExecutor = async (
     const toolResult = await executeTool(
       matchResult.toolName,
       matchResult.parameters, // Use parameters determined by hybridMatch
-      config
+      config,
+      context // Pass context down to executeTool
     );
 
     // Step 4: Combine explanation with the actual tool result
