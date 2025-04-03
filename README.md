@@ -1,4 +1,4 @@
-check if sequential thinking # Vibe Coder MCP Server
+# Vibe Coder MCP Server
 
 Vibe Coder is an MCP (Model Context Protocol) server designed to supercharge your AI assistant (like Cursor, Cline AI, or Claude Desktop) with powerful tools for software development. It helps with research, planning, generating requirements, creating starter projects, and more!
 
