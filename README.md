@@ -95,205 +95,128 @@ Choose the appropriate script for your operating system:
 The script performs these actions:
 * Checks Node.js version (v18+)
 * Installs all dependencies via npm
-* Creates necessary workflow-agent-files directories
-* Builds the TypeScript project
-* Creates a default `.env` file if one doesn't exist (you will populate this next).
-* Sets executable permissions (on Unix systems)
+* Creates necessary `VibeCoderOutput/` subdirectories (as defined in the script).
+* Builds the TypeScript project.
+* **Copies `.env.example` to `.env` if `.env` doesn't already exist.** You will need to edit this file.
+* Sets executable permissions (on Unix systems).
 
 ### Step 4: Configure Environment Variables (`.env`)
 
-1.  **Locate the `.env` File:**
-    *   Find the `.env` file created by the setup script in the main `vibe-coder-mcp` directory.
-    *   Open it with any text editor.
+The setup script (from Step 3) automatically creates a `.env` file in the project's root directory by copying the `.env.example` template, **only if `.env` does not already exist**.
 
-2.  **Add Your OpenRouter API Key:**
-    *   Find the line: `OPENROUTER_API_KEY=your_openrouter_api_key_here`
-    *   Replace `your_openrouter_api_key_here` with your actual OpenRouter API key.
-    *   Do not add quotes around the key.
+1.  **Locate and Open `.env`:** Find the `.env` file in the main `vibe-coder-mcp` directory and open it with a text editor.
+
+2.  **Add Your OpenRouter API Key (Required):**
+    *   The file contains a template based on `.env.example`:
+        ```dotenv
+        # OpenRouter Configuration
+        ## Specifies your unique API key for accessing OpenRouter services. 
+        ## Replace "Your OPENROUTER_API_KEY here" with your actual key obtained from OpenRouter.ai.
+        OPENROUTER_API_KEY="Your OPENROUTER_API_KEY here" 
+        
+        ## Defines the base URL for the OpenRouter API endpoints. 
+        ## The default value is usually correct and should not need changing unless instructed otherwise.
+        OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+        
+        ## Sets the specific Gemini model to be used via OpenRouter for certain AI tasks. 
+        ## ':free' indicates potential usage of a free tier model if available and supported by your key.
+        GEMINI_MODEL=google/gemini-2.0-flash-thinking-exp:free 
+        ```
+    *   **Crucially, replace `"Your OPENROUTER_API_KEY here"` with your actual OpenRouter API key.** Remove the quotes if your key doesn't require them.
 
 3.  **Configure Output Directory (Optional):**
-    *   To change where generated files are saved (default is `workflow-agent-files/` inside the project), add this line:
-        ```
+    *   To change where generated files are saved (default is `VibeCoderOutput/` inside the project), add this line to your `.env` file:
+        ```dotenv
         VIBE_CODER_OUTPUT_DIR=/path/to/your/desired/output/directory
         ```
-    *   Replace the path with your preferred absolute path. Use forward slashes (`/`). If this variable is not set, the default directory will be used.
+    *   Replace the path with your preferred **absolute path**. Use forward slashes (`/`) for paths. If this variable is not set, the default directory (`VibeCoderOutput/`) will be used.
 
 4.  **Review Other Settings (Optional):**
-    *   Review model names (`GEMINI_MODEL`, `PERPLEXITY_MODEL`) to ensure they're available on your OpenRouter plan. The `llm_config.json` file provides more granular control per task if needed.
-    *   Check `LOG_LEVEL` (default: info) - options include: 'fatal', 'error', 'warn', 'info', 'debug', 'trace'.
+    *   You can add other environment variables supported by the server, such as `LOG_LEVEL` (e.g., `LOG_LEVEL=debug`) or `NODE_ENV` (e.g., `NODE_ENV=development`).
 
 5.  **Save the `.env` File.**
 
-### Step 5: Integrate with Your AI Assistant
+### Step 5: Integrate with Your AI Assistant (MCP Settings)
 
-This crucial step connects Vibe Coder to your AI assistant. Each environment requires slightly different configuration.
+This crucial step connects Vibe Coder to your AI assistant by adding its configuration to the client's MCP settings file.
 
-#### 5.1: Find Your Project's Absolute Path
+#### 5.1: Locate Your Client's MCP Settings File
 
-You need the full, absolute path to the `build/index.js` file:
+The location varies depending on your AI assistant:
 
-**For Windows:**
-1. In your terminal, navigate to the build directory:
-   ```batch
-   cd build
-   ```
-2. Get the absolute path:
-   ```batch
-   echo %cd%\index.js
-   ```
-3. Copy the output (e.g., `C:\Users\YourName\Projects\vibe-coder-mcp\build\index.js`)
+*   **Cursor AI / Windsurf / RooCode (VS Code based):**
+    1.  Open the application.
+    2.  Open the Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P`).
+    3.  Type and select `Preferences: Open User Settings (JSON)`.
+    4.  This opens your `settings.json` file where the `mcpServers` object should reside.
 
-**For macOS/Linux:**
-1. In your terminal, navigate to the build directory:
-   ```bash
-   cd build
-   ```
-2. Get the absolute path:
-   ```bash
-   pwd
-   ```
-3. Append `/index.js` to the output and copy the result (e.g., `/Users/YourName/Projects/vibe-coder-mcp/build/index.js`)
+*   **Cline AI (VS Code Extension):**
+    *   **Windows**: `%APPDATA%\Cursor\User\globalStorage\saoudrizwan.claude-dev\settings\cline_mcp_settings.json`
+    *   **macOS**: `~/Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+    *   **Linux**: `~/.config/Cursor/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+    *   *(Note: If using standard VS Code instead of Cursor, replace `Cursor` with `Code` in the path)*
 
-#### 5.2: Prepare the Configuration Block
+*   **Claude Desktop:**
+    *   **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+    *   **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+    *   **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
-Create a configuration block by:
+#### 5.2: Add the Vibe Coder Configuration
 
-1. Copy this JSON template:
-   ```json
-   "vibe-coder-mcp": {
-     "command": "node",
-     "args": ["PATH_PLACEHOLDER"],
-     "env": {
-       "NODE_ENV": "production"
-       // API Keys and other sensitive config are now loaded via the .env file
-       // You can optionally set VIBE_CODER_OUTPUT_DIR here if you prefer it over .env
-       // "VIBE_CODER_OUTPUT_DIR": "/absolute/path/to/output"
-     },
-     "disabled": false,
-     "autoApprove": [
-       "research", 
-       "generate-rules", 
-       "generate-prd", 
-       "generate-user-stories", 
-       "generate-task-list",
-       "generate-fullstack-starter-kit",
-       "generate-code-stub",
-       "refactor-code",
-       "analyze-dependencies",
-       "git-summary",
-       "run-workflow"
-     ]
-   }
-   ```
+1.  Open the settings file identified above in a text editor.
+2.  Find the `"mcpServers": { ... }` JSON object. If it doesn't exist, you may need to create it (ensure the overall file remains valid JSON). For example, an empty file might become `{"mcpServers": {}}`.
+3.  Add the following configuration block **inside** the curly braces `{}` of the `mcpServers` object. If other servers are already listed, add a comma `,` after the previous server's closing brace `}` before pasting this block.
 
-2. Replace `PATH_PLACEHOLDER` with the absolute path you obtained in Step 5.1.
-   * Important: Use forward slashes `/` even on Windows (e.g., `C:/Users/...`)
-
-3. **Important:** Do NOT put your `OPENROUTER_API_KEY` directly in this configuration block anymore. It should only be in your `.env` file.
-
-#### 5.3: Configure Your Specific AI Assistant
-
-##### A. Cursor AI / Windsurf (VS Code-based)
-
-1. Open Cursor or Windsurf application.
-2. Open Command Palette:
-   * Windows/Linux: Press `Ctrl+Shift+P`
-   * macOS: Press `Cmd+Shift+P`
-3. Type and select: `Preferences: Open User Settings (JSON)`
-4. In the JSON file, find or add the `mcpServers` object:
-   * If it doesn't exist, add it: `"mcpServers": {}`
-   * If it exists, locate the closing brace of this object
-5. Add your configuration block inside the `mcpServers` object:
-   * If other servers are listed, add a comma after the last one
-   * Paste your configuration block from step 5.2
-6. Save the file (`Ctrl+S` or `Cmd+S`)
-7. Completely close and restart Cursor/Windsurf
-
-Example of a complete settings.json section:
-```json
-"mcpServers": {
-  "some-existing-server": {
-    // existing configuration...
-  },
-  "vibe-coder-mcp": {
-    "command": "node",
-    "args": ["C:/Users/YourName/Projects/vibe-coder-mcp/build/index.js"],
-    // Rest of your configuration...
-  }
-}
-```
-
-##### B. Cline AI (VS Code Extension)
-
-1. Locate the Cline settings file:
-   * **Windows**: `C:\Users\[YourUsername]\AppData\Roaming\Cursor\User\globalStorage\saoudrizwan.claude-dev\settings\cline_mcp_settings.json`
-   * **macOS**: `~/Library/Application Support/Cursor/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
-   * **Linux**: `~/.config/Cursor/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
-
-2. Open this file with a text editor.
-
-3. Find or add the `mcpServers` object:
-   * If the file is empty, add: `{"mcpServers": {}}`
-   * If it exists but has no `mcpServers`, add it at the root level
-
-4. Add your configuration block inside the `mcpServers` object:
-   * If other servers are listed, add a comma after the last one
-   * Paste your configuration block from step 5.2
-
-5. Save the file.
-
-6. Restart VS Code completely.
-
-##### C. RooCode (VS Code Fork)
-
-1. Open RooCode.
-2. Open Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P`).
-3. Search for and select `Preferences: Open User Settings (JSON)`.
-4. Follow the same steps as for Cursor AI (section A above).
-5. Save and restart RooCode.
-
-##### D. Claude Desktop
-
-1. Locate the Claude Desktop settings file:
-   * **Windows**: `C:\Users\[YourUsername]\AppData\Roaming\Claude\claude_desktop_config.json`
-   * **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-   * **Linux**: `~/.config/Claude/claude_desktop_config.json`
-
-2. Open this file with a text editor.
-
-3. Find or add the `mcpServers` object at the root level:
-   * If file has other content, find where to add `mcpServers`
-   * If it already has `mcpServers`, locate it
-
-4. Add your configuration block inside the `mcpServers` object:
-   * If other servers exist, add a comma after the last one
-   * Paste your configuration block from step 5.2
-
-5. Save the file.
-
-6. Close and reopen Claude Desktop.
-
-Example of a complete claude_desktop_config.json:
-```json
-{
-  "theme": "system",
-  "mcpServers": {
-    "vibe-coder-mcp": {
-      "command": "node",
-      "args": ["/Users/YourName/Projects/vibe-coder-mcp/build/index.js"],
-      "env": {
-        "NODE_ENV": "production",
-        "OPENROUTER_API_KEY": "your-openrouter-api-key",
-        // Rest of your configuration...
+    ```json
+    ## This is the unique identifier for this MCP server instance within your client's settings. You can name it descriptively.
+    "vibe-coder-mcp": { 
+      ## Specifies the command used to execute the server. Should be 'node' if Node.js is in your system's PATH.
+      "command": "node", 
+      ## Provides the arguments to the 'command'. The primary argument is the absolute path to the compiled server entry point (`build/index.js`). 
+      ## !! IMPORTANT: Replace the placeholder path below with the actual absolute path on YOUR system. Use forward slashes (/) even on Windows. !!
+      "args": ["/path/to/your/vibe-coder-mcp/build/index.js"], 
+      ## Sets the current working directory for the server process when it runs. Should be the absolute path to the root of the vibe-coder-mcp project directory.
+      ## !! IMPORTANT: Replace the placeholder path below with the actual absolute path on YOUR system. Use forward slashes (/) even on Windows. !!
+      "cwd": "/path/to/your/vibe-coder-mcp", 
+      ## Defines the communication transport protocol between the client and server. 'stdio' (standard input/output) is typical for local servers.
+      "transport": "stdio", 
+      ## An object containing environment variables to be passed specifically to the Vibe Coder server process when it starts.
+      ## API Keys should be in the .env file, NOT here.
+      "env": { 
+        ## Absolute path to the LLM configuration file used by Vibe Coder. This file defines model preferences.
+        ## !! IMPORTANT: Replace the placeholder path below with the actual absolute path on YOUR system. Use forward slashes (/) even on Windows. !!
+        "LLM_CONFIG_PATH": "/path/to/your/vibe-coder-mcp/llm_config.json", 
+        ## Sets the logging level for the server. Options typically include 'debug', 'info', 'warn', 'error'. 'debug' provides the most detailed logs.
+        "LOG_LEVEL": "debug", 
+        ## Specifies the runtime environment. 'production' is recommended for stable use, 'development' may enable more verbose logging or different behaviors.
+        "NODE_ENV": "production", 
+        ## Absolute path to the directory where Vibe Coder tools will save their output files (e.g., generated documents, code). Ensure this directory exists or the server has permission to create it.
+        ## This can also be set in the .env file (which takes precedence if both are set).
+        ## !! IMPORTANT: Replace the placeholder path below with the actual absolute path on YOUR system. Use forward slashes (/) even on Windows. !!
+        "VIBE_CODER_OUTPUT_DIR": "/path/to/your/VibeCoderOutput" 
       },
-      "disabled": false,
-      "autoApprove": [
-        // Your auto-approve tools...
+      ## A boolean flag to enable (false) or disable (true) this server configuration without deleting it. Set to 'false' to use the server.
+      "disabled": false, 
+      ## A list of tool names provided by this server that the MCP client is allowed to execute automatically without requiring explicit user approval for each use. Add or remove tool names based on your trust and workflow preferences.
+      "autoApprove": [ 
+        "research", 
+        "generate-rules", 
+        "generate-prd", 
+        "generate-user-stories", 
+        "generate-task-list",
+        "generate-fullstack-starter-kit",
+        "generate-code-stub",
+        "refactor-code",
+        "analyze-dependencies",
+        "git-summary", // Note: Corrected from 'git-summary' if the tool name is indeed 'git-summary'
+        "run-workflow"  
       ]
     }
-  }
-}
-```
+    ```
+
+4.  **CRUCIAL:** Replace **all placeholder paths** (like `/path/to/your/vibe-coder-mcp/...`) with the correct **absolute paths** on your system where you cloned the repository. Use forward slashes `/` for paths, even on Windows (e.g., `C:/Users/YourName/Projects/vibe-coder-mcp/build/index.js`). Incorrect paths are the most common reason the server fails to connect.
+5.  Save the settings file.
+6.  **Completely close and restart** your AI assistant application (Cursor, VS Code, Claude Desktop, etc.) for the changes to take effect.
 
 ### Step 6: Test Your Configuration
 

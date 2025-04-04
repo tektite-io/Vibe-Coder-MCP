@@ -59,25 +59,16 @@ echo "Setting executable permissions for build/index.js..."
 chmod +x build/index.js
 echo "Executable permissions set."
 
-# Check if .env file exists, create if not
+# Check if .env file exists, copy from .env.example if not
 echo "Checking for .env file..."
 if [ ! -f .env ]; then
-    echo "Creating default .env file..."
-    cat > .env << EOF
-# OpenRouter Configuration (REQUIRED)
-OPENROUTER_API_KEY=your_openrouter_api_key_here
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-# Model Selection (Defaults - check OpenRouter for availability/alternatives)
-GEMINI_MODEL=google/gemini-pro # Or another suitable generation model
-PERPLEXITY_MODEL=perplexity/sonar-small-online # Or another suitable research model
-
-# Server Configuration
-PORT=3000
-NODE_ENV=production
-# Log level: 'fatal', 'error', 'warn', 'info', 'debug', 'trace'
-LOG_LEVEL=info
-EOF
-    echo "IMPORTANT: Default .env file created. Please edit it now to add your required OPENROUTER_API_KEY."
+    if [ -f .env.example ]; then
+        echo "Creating .env file from template (.env.example)..."
+        cp .env.example .env
+        echo "IMPORTANT: .env file created from template. Please edit it now to add your required OPENROUTER_API_KEY."
+    else
+        echo "WARNING: .env file not found and .env.example template is missing. Cannot create .env. Please create it manually with your OPENROUTER_API_KEY."
+    fi
 else
      echo ".env file already exists. Skipping creation. (Ensure it contains OPENROUTER_API_KEY)"
 fi

@@ -53,25 +53,16 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-REM Check if .env file exists, create if not
+REM Check if .env file exists, copy from .env.example if not
 echo Checking for .env file...
-if not exist .env (
-    echo Creating default .env file...
-    (
-        echo # OpenRouter Configuration (REQUIRED)
-        echo OPENROUTER_API_KEY=your_openrouter_api_key_here
-        echo OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-        echo # Model Selection (Defaults - check OpenRouter for availability/alternatives)
-        echo GEMINI_MODEL=google/gemini-pro # Or another suitable generation model
-        echo PERPLEXITY_MODEL=perplexity/sonar-small-online # Or another suitable research model
-        echo.
-        echo # Server Configuration
-        echo PORT=3000
-        echo NODE_ENV=production
-        echo # Log level: 'fatal', 'error', 'warn', 'info', 'debug', 'trace'
-        echo LOG_LEVEL=info
-    ) > .env
-    echo IMPORTANT: Default .env file created. Please edit it now to add your required OPENROUTER_API_KEY.
+if not exist ".env" (
+    if exist ".env.example" (
+        echo Creating .env file from template (.env.example)...
+        copy ".env.example" ".env" > nul
+        echo IMPORTANT: .env file created from template. Please edit it now to add your required OPENROUTER_API_KEY.
+    ) else (
+        echo WARNING: .env file not found and .env.example template is missing. Cannot create .env. Please create it manually with your OPENROUTER_API_KEY.
+    )
 ) else (
     echo .env file already exists. Skipping creation. (Ensure it contains OPENROUTER_API_KEY)
 )
