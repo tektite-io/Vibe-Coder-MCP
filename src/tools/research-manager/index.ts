@@ -8,9 +8,10 @@ import { performResearchQuery } from '../../utils/researchHelper.js';
 import { performDirectLlmCall } from '../../utils/llmHelper.js'; // Import the new helper
 import logger from '../../logger.js';
 import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js'; // Import ToolExecutionContext
-import { AppError, ApiError, ConfigurationError, ToolExecutionError } from '../../utils/errors.js'; // Import necessary errors
+import { AppError, ToolExecutionError } from '../../utils/errors.js'; // Import necessary errors
 import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
 import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
+import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js';
 
 // Helper function to get the base output directory
 function getBaseOutputDir(): string {
@@ -130,10 +131,11 @@ export const performResearch: ToolExecutor = async (
   logger.info({ jobId, tool: 'research', sessionId }, 'Starting background job.');
 
   // Return immediately
-  const initialResponse: CallToolResult = {
-    content: [{ type: 'text', text: `Research job started for query "${query.substring(0, 50)}...". Job ID: ${jobId}` }],
-    isError: false,
-  };
+  const initialResponse = formatBackgroundJobInitiationResponse(
+    jobId,
+    'Research',
+    `Your research request for query "${query.substring(0, 50)}..." has been submitted. You can retrieve the result using the job ID.`
+  );
 
   // ---> Step 2.5(RM).4: Wrap Logic in Async Block <---
   setImmediate(async () => {

@@ -1,20 +1,19 @@
 import fs from 'fs-extra';
 import path from 'path';
 import { z } from 'zod';
-import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js'; // Added McpError, ErrorCode
+import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js'; 
 import { OpenRouterConfig } from '../../types/workflow.js';
-import { performDirectLlmCall } from '../../utils/llmHelper.js'; // Import the new helper
+import { performDirectLlmCall } from '../../utils/llmHelper.js'; 
 import { performResearchQuery } from '../../utils/researchHelper.js';
 import logger from '../../logger.js';
-import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js'; // Import ToolExecutionContext
-import { AppError, ApiError, ConfigurationError, ToolExecutionError } from '../../utils/errors.js'; // Import necessary errors
-import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
-import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
+import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js'; 
+import { AppError, ToolExecutionError } from '../../utils/errors.js'; 
+import { jobManager, JobStatus } from '../../services/job-manager/index.js'; 
+import { sseNotifier } from '../../services/sse-notifier/index.js'; 
+import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js'; 
 
 // Helper function to get the base output directory
 function getBaseOutputDir(): string {
-  // Prioritize environment variable, resolve to ensure it's treated as an absolute path if provided
-  // Fallback to default relative to CWD
   return process.env.VIBE_CODER_OUTPUT_DIR
     ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
     : path.join(process.cwd(), 'workflow-agent-files');
@@ -27,13 +26,12 @@ const USER_STORIES_DIR = path.join(getBaseOutputDir(), 'user-stories-generator')
 export async function initDirectories() {
   const baseOutputDir = getBaseOutputDir();
   try {
-    await fs.ensureDir(baseOutputDir); // Ensure base directory exists
+    await fs.ensureDir(baseOutputDir); 
     const toolDir = path.join(baseOutputDir, 'user-stories-generator');
-    await fs.ensureDir(toolDir); // Ensure tool-specific directory exists
+    await fs.ensureDir(toolDir); 
     logger.debug(`Ensured user stories directory exists: ${toolDir}`);
   } catch (error) {
     logger.error({ err: error, path: baseOutputDir }, `Failed to ensure base output directory exists for user-stories-generator.`);
-    // Decide if we should re-throw or just log. Logging might be safer.
   }
 }
 
@@ -116,57 +114,48 @@ const userStoriesInputSchemaShape = {
  * @returns A Promise resolving to a CallToolResult object.
  */
 export const generateUserStories: ToolExecutor = async (
-  params: Record<string, unknown>, // More type-safe than 'any'
+  params: Record<string, unknown>, 
   config: OpenRouterConfig,
-  context?: ToolExecutionContext // Add context parameter
-): Promise<CallToolResult> => { // Return CallToolResult
-  // ---> Step 2.5(US).2: Inject Dependencies & Get Session ID <---
+  context?: ToolExecutionContext 
+): Promise<CallToolResult> => { 
   const sessionId = context?.sessionId || 'unknown-session';
   if (sessionId === 'unknown-session') {
       logger.warn({ tool: 'generateUserStories' }, 'Executing tool without a valid sessionId. SSE progress updates will not be sent.');
   }
 
-  // Log the config received by the executor
   logger.debug({
     configReceived: true,
     hasLlmMapping: Boolean(config.llm_mapping),
     mappingKeys: config.llm_mapping ? Object.keys(config.llm_mapping) : []
   }, 'generateUserStories executor received config');
 
-  const productDescription = params.productDescription as string; // Assert type after validation
+  const productDescription = params.productDescription as string; 
 
-  // ---> Step 2.5(US).3: Create Job & Return Job ID <---
   const jobId = jobManager.createJob('generate-user-stories', params);
   logger.info({ jobId, tool: 'generateUserStories', sessionId }, 'Starting background job.');
 
-  // Return immediately
-  const initialResponse: CallToolResult = {
-    content: [{ type: 'text', text: `User stories generation started. Job ID: ${jobId}` }],
-    isError: false,
-  };
+  const initialResponse = formatBackgroundJobInitiationResponse(
+    jobId,
+    'generate-user-stories', 
+    'User Stories Generator' 
+  );
 
-  // ---> Step 2.5(US).4: Wrap Logic in Async Block <---
   setImmediate(async () => {
-    const logs: string[] = []; // Keep logs specific to this job execution
-    let filePath: string = ''; // Define filePath in outer scope for catch block
+    const logs: string[] = []; 
+    let filePath: string = ''; 
 
-    // ---> Step 2.5(US).7: Update Final Result/Error Handling (Try Block Start) <---
     try {
-      // ---> Step 2.5(US).6: Add Progress Updates (Initial) <---
       jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Starting user stories generation process...');
       sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Starting user stories generation process...');
       logs.push(`[${new Date().toISOString()}] Starting user stories generation for: ${productDescription.substring(0, 50)}...`);
 
-      // Ensure directories are initialized before writing
       await initDirectories();
 
-    // Generate a filename for storing the user stories (using the potentially configured USER_STORIES_DIR)
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const sanitizedName = productDescription.substring(0, 30).toLowerCase().replace(/[^a-z0-9]+/g, '-');
       const filename = `${timestamp}-${sanitizedName}-user-stories.md`;
-      filePath = path.join(USER_STORIES_DIR, filename); // Assign to outer scope variable
+      filePath = path.join(USER_STORIES_DIR, filename); 
 
-      // ---> Step 2.5(US).6: Add Progress Updates (Research Start) <---
       logger.info({ jobId, inputs: { productDescription: productDescription.substring(0, 50) } }, "User Stories Generator: Starting pre-generation research...");
       jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Performing pre-generation research...');
       sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Performing pre-generation research...');
@@ -174,22 +163,18 @@ export const generateUserStories: ToolExecutor = async (
 
       let researchContext = '';
     try {
-      // Define relevant research queries
       const query1 = `User personas and stakeholders for: ${productDescription}`;
       const query2 = `Common user workflows and use cases for: ${productDescription}`;
       const query3 = `User experience expectations and pain points for: ${productDescription}`;
       
-      // Execute research queries in parallel using Perplexity
       const researchResults = await Promise.allSettled([
-        performResearchQuery(query1, config), // Uses config.perplexityModel (perplexity/sonar-deep-research)
+        performResearchQuery(query1, config), 
         performResearchQuery(query2, config),
         performResearchQuery(query3, config)
       ]);
       
-      // Process research results
       researchContext = "## Pre-Generation Research Context (From Perplexity Sonar Deep Research):\n\n";
       
-      // Add results that were fulfilled
       researchResults.forEach((result, index) => {
         const queryLabels = ["User Personas & Stakeholders", "User Workflows & Use Cases", "User Experience Expectations & Pain Points"];
         if (result.status === "fulfilled") {
@@ -200,7 +185,6 @@ export const generateUserStories: ToolExecutor = async (
         }
       });
 
-      // ---> Step 2.5(US).6: Add Progress Updates (Research End) <---
       logger.info({ jobId }, "User Stories Generator: Pre-generation research completed.");
       jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Research complete. Starting main user stories generation...');
       sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Research complete. Starting main user stories generation...');
@@ -209,15 +193,12 @@ export const generateUserStories: ToolExecutor = async (
     } catch (researchError) {
       logger.error({ jobId, err: researchError }, "User Stories Generator: Error during research aggregation");
       logs.push(`[${new Date().toISOString()}] Error during research aggregation: ${researchError instanceof Error ? researchError.message : String(researchError)}`);
-      // Include error in context but continue
       researchContext = "## Pre-Generation Research Context:\n*Error occurred during research phase.*\n\n";
       sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Warning: Error during research phase. Continuing generation...');
     }
 
-    // Create the main generation prompt with combined research and inputs
     const mainGenerationPrompt = `Create comprehensive user stories for the following product:\n\n${productDescription}\n\n${researchContext}`;
 
-    // ---> Step 2.5(US).6: Add Progress Updates (LLM Call Start) <---
     logger.info({ jobId }, "User Stories Generator: Starting main generation using direct LLM call...");
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating user stories content via LLM...');
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating user stories content via LLM...');
@@ -225,56 +206,46 @@ export const generateUserStories: ToolExecutor = async (
 
     const userStoriesMarkdown = await performDirectLlmCall(
       mainGenerationPrompt,
-      USER_STORIES_SYSTEM_PROMPT, // Pass the system prompt
+      USER_STORIES_SYSTEM_PROMPT, 
       config,
-      'user_stories_generation', // Logical task name
-      0.3 // Slightly higher temp might be okay for creative text like stories
+      'user_stories_generation', 
+      0.3 
     );
 
-    // ---> Step 2.5(US).6: Add Progress Updates (LLM Call End) <---
     logger.info({ jobId }, "User Stories Generator: Main generation completed.");
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Processing LLM response...');
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Processing LLM response...');
     logs.push(`[${new Date().toISOString()}] Received response from LLM.`);
 
-    // Basic validation: Check if the output looks like Markdown and contains expected elements
     if (!userStoriesMarkdown || typeof userStoriesMarkdown !== 'string' || !userStoriesMarkdown.trim().startsWith('# User Stories:')) {
       logger.warn({ jobId, markdown: userStoriesMarkdown?.substring(0, 100) }, 'User stories generation returned empty or potentially invalid Markdown format.');
       logs.push(`[${new Date().toISOString()}] Validation Error: LLM output invalid format.`);
       throw new ToolExecutionError('User stories generation returned empty or invalid Markdown content.');
     }
 
-    // Format the user stories (already should be formatted by LLM, just add timestamp)
     const formattedResult = `${userStoriesMarkdown}\n\n_Generated: ${new Date().toLocaleString()}_`;
 
-    // ---> Step 2.5(US).6: Add Progress Updates (Saving File) <---
     logger.info({ jobId }, `Saving user stories to ${filePath}...`);
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, `Saving user stories to file...`);
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Saving user stories to file...`);
     logs.push(`[${new Date().toISOString()}] Saving user stories to ${filePath}.`);
 
-    // Save the result
     await fs.writeFile(filePath, formattedResult, 'utf8');
     logger.info({ jobId }, `User stories generated and saved to ${filePath}`);
     logs.push(`[${new Date().toISOString()}] User stories saved successfully.`);
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `User stories saved successfully.`);
 
-    // ---> Step 2.5(US).7: Update Final Result/Error Handling (Set Success Result) <---
     const finalResult: CallToolResult = {
-      // Include file path in success message
       content: [{ type: "text", text: `User stories generated successfully and saved to: ${filePath}\n\n${formattedResult}` }],
       isError: false
     };
     jobManager.setJobResult(jobId, finalResult);
-    // Optional explicit SSE: sseNotifier.sendProgress(sessionId, jobId, JobStatus.COMPLETED, 'User stories generation completed successfully.');
 
-    // ---> Step 2.5(US).7: Update Final Result/Error Handling (Catch Block) <---
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error({ err: error, jobId, tool: 'generate-user-stories', params }, `User Stories Generator Error: ${errorMsg}`);
       logs.push(`[${new Date().toISOString()}] Error: ${errorMsg}`);
 
-      // Handle specific errors from direct call or research
       let appError: AppError;
       const cause = error instanceof Error ? error : undefined;
       if (error instanceof AppError) {
@@ -290,25 +261,21 @@ export const generateUserStories: ToolExecutor = async (
         errorDetails: mcpError
       };
 
-      // Store error result in Job Manager
       jobManager.setJobResult(jobId, errorResult);
-      // Send final failed status via SSE (optional if jobManager handles it)
       sseNotifier.sendProgress(sessionId, jobId, JobStatus.FAILED, `Job failed: ${mcpError.message}`);
     }
-  }); // ---> END OF setImmediate WRAPPER <---
+  }); 
 
-  return initialResponse; // Return the initial response with Job ID
+  return initialResponse; 
 };
 
 // --- Tool Registration ---
 
-// Tool definition for the user stories generator tool
 const userStoriesToolDefinition: ToolDefinition = {
   name: "generate-user-stories",
   description: "Creates detailed user stories with acceptance criteria based on a product description and research.",
-  inputSchema: userStoriesInputSchemaShape, // Use the raw shape
-  executor: generateUserStories // Reference the adapted function
+  inputSchema: userStoriesInputSchemaShape, 
+  executor: generateUserStories 
 };
 
-// Register the tool with the central registry
 registerTool(userStoriesToolDefinition);
