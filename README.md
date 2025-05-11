@@ -10,9 +10,7 @@ Vibe Coder MCP integrates with MCP-compatible clients to provide the following c
 *   **Tool Registry Architecture**: Centralized tool management with self-registering tools.
 *   **Direct LLM Calls**: Generator tools now use direct LLM calls for improved reliability and structured output control.
 *   **Workflow Execution**: Runs predefined sequences of tool calls defined in `workflows.json`.
-*   **Code Generation**: Creates code stubs and boilerplate (`generate-code-stub`).
 *   **Code Refactoring**: Improves and modifies existing code snippets (`refactor-code`).
-*   **Dependency Analysis**: Lists dependencies from manifest files (`analyze-dependencies`).
 *   **Git Integration**: Summarizes current Git changes (`git-summary`).
 *   **Research & Planning**: Performs deep research (`research-manager`) and generates planning documents like PRDs (`generate-prd`), user stories (`generate-user-stories`), task lists (`generate-task-list`), and development rules (`generate-rules`).
 *   **Project Scaffolding**: Generates full-stack starter kits (`generate-fullstack-starter-kit`).
@@ -201,15 +199,13 @@ The location varies depending on your AI assistant:
       "autoApprove": [ 
         "research", 
         "generate-rules", 
-        "generate-prd", 
         "generate-user-stories", 
-        "generate-task-list",
+        "generate-task-list", 
+        "generate-prd", 
         "generate-fullstack-starter-kit",
-        "generate-code-stub",
         "refactor-code",
-        "analyze-dependencies",
-        "git-summary", // Note: Corrected from 'git-summary' if the tool name is indeed 'git-summary'
-        "run-workflow"  
+        "git-summary", 
+        "run-workflow"
       ]
     }
     ```
@@ -309,44 +305,23 @@ vibe-coder-mcp/
     ├── logger.ts         # Logging configuration (Pino)
     ├── server.ts         # MCP server setup
     ├── services/         # Core services
-    │   ├── hybrid-matcher/    # Request routing orchestration
-    │   ├── request-processor/ # Handles incoming requests
-    │   ├── routing/           # Semantic routing & registry
-    │   │   ├── embeddingStore.ts    # Tool embedding storage
-    │   │   ├── semanticMatcher.ts   # Semantic matching
-    │   │   └── toolRegistry.ts      # Tool registration/execution
-    │   ├── state/               # Session state management
-    │   │   └── sessionState.ts  # In-memory state storage
-    │   └── workflows/           # Workflow execution
-    │       └── workflowExecutor.ts  # Workflow engine
-    ├── testUtils/        # Testing utilities
-    │   └── mockLLM.ts    # Mock LLM for tests
-    ├── tools/            # Tool implementations
+    │   ├── AIService.ts  # AI model interaction (OpenRouter)
+    │   ├── JobManager.ts # Manages async jobs
+    │   └── ToolService.ts# Tool registration and routing
+    ├── tools/            # MCP Tools
     │   ├── index.ts      # Tool registration
     │   ├── sequential-thinking.ts  # Fallback routing
     │   ├── code-refactor-generator/  # Code refactoring
-    │   ├── code-stub-generator/      # Code stub creation
-    │   ├── dependency-analyzer/      # Dependency analysis
     │   ├── fullstack-starter-kit-generator/  # Project gen
     │   ├── git-summary-generator/    # Git integration
     │   ├── prd-generator/            # PRD creation
     │   ├── research-manager/         # Research tool
-    │   ├── rules-generator/          # Rules creation
-    │   ├── task-list-generator/      # Task lists
-    │   ├── user-stories-generator/   # User stories
-    │   └── workflow-runner/          # Workflow execution
-    ├── types/            # TypeScript definitions
-    │   ├── globals.d.ts
-    │   ├── sequentialThought.ts
-    │   ├── tools.ts
-    │   └── workflow.ts
-    └── utils/            # Shared utilities
-        ├── embeddingHelper.ts  # Embedding generation
-        ├── errors.ts           # Custom error classes
-        ├── fileReader.ts       # File I/O
-        ├── gitHelper.ts        # Git operations
-        └── researchHelper.ts   # Research functionality
-```
+    │   ├── rules-generator/          # Rule generation
+    │   ├── task-list-generator/      # Task list generation
+    │   ├── user-stories-generator/   # User story generation
+    │   └── workflow-runner/          # Workflow execution engine
+    ├── types/            # TypeScript type definitions
+{{ ... }}
 
 ## Semantic Routing System
 
@@ -576,8 +551,6 @@ Each tool in the `src/tools/` directory includes comprehensive documentation in 
 Refer to these individual READMEs for in-depth information:
 
 *   `src/tools/code-refactor-generator/README.md`
-*   `src/tools/code-stub-generator/README.md`
-*   `src/tools/dependency-analyzer/README.md`
 *   `src/tools/fullstack-starter-kit-generator/README.md`
 *   `src/tools/git-summary-generator/README.md`
 *   `src/tools/prd-generator/README.md`
@@ -591,12 +564,10 @@ Refer to these individual READMEs for in-depth information:
 
 ### Code Generation & Refactoring Tools
 
-*   **Code Stub Generator (`generate-code-stub`)**: Creates boilerplate code (functions, classes, etc.) based on a description and target language. Useful for quickly scaffolding new components.
 *   **Code Refactor Generator (`refactor-code`)**: Takes an existing code snippet and refactoring instructions (e.g., "convert to async/await", "improve readability", "add error handling") and returns the modified code.
 
 ### Analysis & Information Tools
 
-*   **Dependency Analyzer (`analyze-dependencies`)**: Parses manifest files like `package.json` or `requirements.txt` to list project dependencies.
 *   **Git Summary Generator (`git-summary`)**: Provides a summary of the current Git status, showing staged or unstaged changes (diff). Useful for quick checks before committing.
 *   **Research Manager (`research-manager`)**: Performs deep research on technical topics using Perplexity Sonar, providing summaries and sources.
 
@@ -649,9 +620,7 @@ Interact with the tools via your connected AI assistant:
 *   **Generate Task List:** `Create a task list for a weather app based on [user stories]`
 *   **Sequential Thinking:** `Think through the architecture for a microservices-based e-commerce platform`
 *   **Fullstack Starter Kit:** `Create a starter kit for a React/Node.js blog application with user authentication`
-*   **Generate Code Stub:** `Generate a python function stub named 'calculate_discount' that takes price and percentage`
 *   **Refactor Code:** `Refactor this code to use async/await: [paste code snippet]`
-*   **Analyze Dependencies:** `Analyze dependencies in package.json`
 *   **Git Summary:** `Show unstaged git changes`
 *   **Run Workflow:** `Run workflow newProjectSetup with input { "projectName": "my-new-app", "description": "A simple task manager" }`
 

@@ -102,3 +102,9 @@ docs/
 plan_docs/
 
 # Untracked file to ignore
+
+# Windsurf specific files
+.windsurf/
+
+# Planning documents
+plan_docs/
