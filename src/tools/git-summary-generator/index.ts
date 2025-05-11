@@ -8,6 +8,7 @@ import logger from '../../logger.js'; // Adjust path if necessary
 import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
 import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
 import { OpenRouterConfig } from '../../types/workflow.js'; // Import OpenRouterConfig for type consistency
+import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js';
 
 // Define the executor function
 export const generateGitSummary: ToolExecutor = async (
@@ -29,10 +30,11 @@ export const generateGitSummary: ToolExecutor = async (
   logger.info({ jobId, tool: 'generateGitSummary', sessionId }, 'Starting background job.');
 
   // Return immediately
-  const initialResponse: CallToolResult = {
-    content: [{ type: 'text', text: `Git summary generation started. Job ID: ${jobId}` }],
-    isError: false,
-  };
+  const initialResponse = formatBackgroundJobInitiationResponse(
+    jobId,
+    'Git Summary Generation',
+    'Your Git summary generation request has been submitted. You can retrieve the result using the job ID.'
+  );
 
   // ---> Step 2.5(GSG).4: Wrap Logic in Async Block <---
   setImmediate(async () => {

@@ -4,7 +4,7 @@ import { CallToolResult, McpError, ErrorCode, TextContent } from '@modelcontextp
 import { OpenRouterConfig } from '../../types/workflow.js'; // Although not used directly, keep for ToolExecutor signature
 import logger from '../../logger.js';
 import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js';
-import { jobManager, JobStatus, Job } from '../../services/job-manager/index.js'; // Import JobManager and types
+import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import JobManager and types
 
 // --- Zod Schema ---
 const getJobResultInputSchemaShape = {

@@ -44,6 +44,11 @@
       "description": "Runs a predefined sequence of tool calls (a workflow) based on a workflow name and input parameters.",
       "use_cases": ["run workflow", "execute plan", "start process", "automate sequence", "execute workflow", "run automation"],
       "input_patterns": ["run workflow {workflowName}", "start {workflowName} workflow with input {workflowInput}", "execute the {workflowName} plan"]
+    },
+    "get-job-result": {
+      "description": "Retrieves the status and result of a background job previously initiated by another tool.",
+      "use_cases": ["job status", "check job", "get job result", "task progress", "background task status"],
+      "input_patterns": ["get result for job {jobId}", "check status of job {jobId}", "what is the result of {jobId}"]
     }
   }
 }

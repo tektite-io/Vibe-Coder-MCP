@@ -10,6 +10,7 @@ import logger from '../../logger.js'; // Import logger
 import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
 import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js'; // Import McpError, ErrorCode
+import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js';
 
 /**
  * Formats the result of a workflow execution into a user-friendly Markdown string.
@@ -90,10 +91,11 @@ export const runWorkflowTool: ToolExecutor = async (
   logger.info({ jobId, tool: 'runWorkflowTool', sessionId: sessionIdForSse, workflowName }, 'Starting background job for workflow.');
 
   // Return immediately
-  const initialResponse: CallToolResult = {
-    content: [{ type: 'text', text: `Workflow '${workflowName}' execution started. Job ID: ${jobId}` }],
-    isError: false,
-  };
+  const initialResponse = formatBackgroundJobInitiationResponse(
+    jobId,
+    `Workflow '${workflowName}' Execution`,
+    `Your request to run workflow '${workflowName}' has been submitted. You can retrieve the result using the job ID.`
+  );
 
   // ---> Step 2.5(WF).4: Wrap Logic in Async Block <---
   setImmediate(async () => {

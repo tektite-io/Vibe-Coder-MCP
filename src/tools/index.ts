@@ -10,6 +10,7 @@ import './fullstack-starter-kit-generator/index.js';
 import './code-refactor-generator/index.js';
 import './git-summary-generator/index.js';
 import './workflow-runner/index.js'; // Add this line
+import './job-result-retriever/index.js'; // Added import for the job result retriever tool
 
 // Note: process-request is currently registered in src/services/request-processor/index.ts
 // If it were moved to src/tools/, its import would go here too.

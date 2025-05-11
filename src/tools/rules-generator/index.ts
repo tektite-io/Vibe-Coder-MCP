@@ -8,9 +8,10 @@ import { performDirectLlmCall } from '../../utils/llmHelper.js'; // Import the n
 import { performResearchQuery } from '../../utils/researchHelper.js';
 import logger from '../../logger.js';
 import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js'; // Import ToolExecutionContext
-import { AppError, ApiError, ConfigurationError, ToolExecutionError } from '../../utils/errors.js'; // Import necessary errors
+import { AppError, ToolExecutionError } from '../../utils/errors.js'; // Import necessary errors
 import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
 import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
+import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js'; // Import the new formatter
 
 // Helper function to get the base output directory
 function getBaseOutputDir(): string {
@@ -157,17 +158,18 @@ export const generateRules: ToolExecutor = async (
   const userStories = params.userStories as string | undefined;
   const ruleCategories = params.ruleCategories as string[] | undefined;
 
-  // ---> Step 2.5(Rules).3: Create Job & Return Job ID <---
+  // ---> Step 2.5(Rules).3: Create Job & Return Job ID <--- 
   const jobId = jobManager.createJob('generate-rules', params);
   logger.info({ jobId, tool: 'generateRules', sessionId }, 'Starting background job.');
 
-  // Return immediately
-  const initialResponse: CallToolResult = {
-    content: [{ type: 'text', text: `Development rules generation started. Job ID: ${jobId}` }],
-    isError: false,
-  };
+  // Use the shared service to format the initial response
+  const initialResponse = formatBackgroundJobInitiationResponse(
+    jobId,
+    'generate-rules', // Internal tool name
+    'Rules Generator' // User-friendly display name
+  );
 
-  // ---> Step 2.5(Rules).4: Wrap Logic in Async Block <---
+  // ---> Step 2.5(Rules).4: Wrap Logic in Async Block <--- 
   setImmediate(async () => {
     const logs: string[] = []; // Keep logs specific to this job execution
     let filePath: string = ''; // Define filePath in outer scope for catch block

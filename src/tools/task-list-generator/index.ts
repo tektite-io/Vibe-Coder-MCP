@@ -2,19 +2,19 @@
 import fs from 'fs-extra';
 import path from 'path';
 import { z } from 'zod';
-import { CallToolResult, McpError, ErrorCode, TextContent } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
 import { performDirectLlmCall } from '../../utils/llmHelper.js';
 import { performResearchQuery } from '../../utils/researchHelper.js';
 import logger from '../../logger.js';
 import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js';
-import { AppError, ParsingError, ToolExecutionError } from '../../utils/errors.js';
+import { AppError, ToolExecutionError } from '../../utils/errors.js';
 import { jobManager, JobStatus } from '../../services/job-manager/index.js';
 import { sseNotifier } from '../../services/sse-notifier/index.js';
+import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js';
 
 // --- Constants ---
-const TASK_ID_PREFIX = 'T-';
-const SUBTASK_ID_SEPARATOR = '.';
+const TASK_LIST_DIR_NAME = 'generated_task_lists';
 
 // Helper function to get the base output directory
 function getBaseOutputDir(): string {
@@ -24,23 +24,21 @@ function getBaseOutputDir(): string {
 }
 
 // Define tool-specific directory using the helper
-const TASK_LIST_DIR = path.join(getBaseOutputDir(), 'task-list-generator');
+const TASK_LIST_DIR = path.join(getBaseOutputDir(), TASK_LIST_DIR_NAME);
 
 // Ensure directories exist
 export async function initDirectories() {
   const baseOutputDir = getBaseOutputDir();
   try {
     await fs.ensureDir(baseOutputDir);
-    const toolDir = path.join(baseOutputDir, 'task-list-generator');
+    const toolDir = path.join(baseOutputDir, TASK_LIST_DIR_NAME);
     await fs.ensureDir(toolDir);
-    logger.debug(`Ensured task list directory exists: ${toolDir}`);
   } catch (error) {
     logger.error({ err: error, path: baseOutputDir }, `Failed to ensure base output directory exists for task-list-generator.`);
   }
 }
 
 // --- System Prompts ---
-// (INITIAL_TASK_LIST_SYSTEM_PROMPT and TASK_DECOMPOSITION_SYSTEM_PROMPT remain the same as before)
 const INITIAL_TASK_LIST_SYSTEM_PROMPT = `
 # Task List Generator - High-Level Tasks
 
@@ -147,7 +145,6 @@ You will receive the details of a SINGLE high-level task (the Parent Task), incl
 - **IMPORTANT:** Your thought must contain ONLY the properly formatted Markdown sub-task list.
 `;
 
-
 // --- Zod Schema ---
 const taskListInputSchemaShape = {
   productDescription: z.string().min(10, { message: "Product description must be at least 10 characters." }).describe("Description of the product"),
@@ -155,142 +152,135 @@ const taskListInputSchemaShape = {
 };
 
 // --- Helper Functions ---
-
 interface ParsedTask {
-    id: string;
-    title: string;
-    description: string;
-    userStory: string;
-    priority: string;
-    dependencies: string;
-    effort: string;
-    markdownLine: string;
-    subTasksMarkdown?: string;
+  id: string;
+  title: string;
+  description: string;
+  userStory: string;
+  priority: string;
+  dependencies: string;
+  effort: string;
+  markdownLine: string;
+  subTasksMarkdown?: string;
 }
 
 function parseHighLevelTasks(markdownContent: string): ParsedTask[] {
-    const tasks: ParsedTask[] = [];
-    const lines = markdownContent.split('\n');
-    let currentTask: Partial<ParsedTask> | null = null;
-    let currentTaskLines: string[] = [];
-    const idRegex = /^\s*-\s+\*\*ID:\*\*\s*(T-\d+)/;
-    const titleRegex = /^\s+\*\*Title:\*\*\s*(.*)/;
-    const fieldRegex = /^\s+\*\(([\w\s.]+)\):\*\s*(.*)/;
+  const tasks: ParsedTask[] = [];
+  const lines = markdownContent.split('\n');
+  let currentTask: Partial<ParsedTask> | null = null;
+  let currentTaskLines: string[] = [];
+  const idRegex = /^\s*-\s+\*\*ID:\*\*\s*(T-\d+)/;
+  const titleRegex = /^\s+\*\*Title:\*\*\s*(.*)/;
+  const fieldRegex = /^\s+\*\(([\w\s.]+)\):\*\s*(.*)/;
 
-    function finalizeCurrentTask() {
-        if (currentTask && currentTask.id && currentTask.title) {
-            currentTask.markdownLine = currentTaskLines.join('\n');
-            tasks.push(currentTask as ParsedTask);
-            logger.debug(`Finalized task: ${currentTask.id}`);
-        } else if (currentTask) {
-            logger.warn({ task: currentTask }, "Discarding incomplete task block during parsing.");
-        }
-        currentTask = null;
-        currentTaskLines = [];
+  function finalizeCurrentTask() {
+    if (currentTask && currentTask.id && currentTask.title) {
+      currentTask.markdownLine = currentTaskLines.join('\n');
+      tasks.push(currentTask as ParsedTask);
+    } else if (currentTask) {
+      logger.warn({ task: currentTask }, "Discarding incomplete task block during parsing.");
     }
+    currentTask = null;
+    currentTaskLines = [];
+  }
 
-    for (const line of lines) {
-        const idMatch = line.match(idRegex);
-        if (idMatch) {
-            finalizeCurrentTask();
-            currentTask = { id: idMatch[1] };
-            currentTaskLines.push(line);
-            logger.debug(`Started parsing task: ${currentTask.id}`);
-            continue;
-        }
-        if (currentTask) {
-            currentTaskLines.push(line);
-            const titleMatch = line.match(titleRegex);
-            const fieldMatch = line.match(fieldRegex);
-            if (titleMatch) {
-                currentTask.title = titleMatch[1].trim();
-            } else if (fieldMatch) {
-                const key = fieldMatch[1].trim().toLowerCase();
-                const value = fieldMatch[2].trim();
-                switch (key) {
-                    case 'description': currentTask.description = value; break;
-                    case 'user story': currentTask.userStory = value; break;
-                    case 'priority': currentTask.priority = value; break;
-                    case 'dependencies': currentTask.dependencies = value; break;
-                    case 'est. effort': currentTask.effort = value; break;
-                    default: logger.warn(`Unknown field key found in task ${currentTask.id}: ${key}`);
-                }
-            }
-        }
+  for (const line of lines) {
+    const idMatch = line.match(idRegex);
+    if (idMatch) {
+      finalizeCurrentTask();
+      currentTask = { id: idMatch[1] };
+      currentTaskLines.push(line);
+      continue;
     }
-    finalizeCurrentTask();
-    logger.info(`Parsed ${tasks.length} high-level tasks.`);
-    if (tasks.length === 0 && markdownContent.trim().length > 0) {
-        logger.warn("Parsing completed, but no tasks were successfully extracted.");
+    if (currentTask) {
+      currentTaskLines.push(line);
+      const titleMatch = line.match(titleRegex);
+      const fieldMatch = line.match(fieldRegex);
+      if (titleMatch) {
+        currentTask.title = titleMatch[1].trim();
+      } else if (fieldMatch) {
+        const key = fieldMatch[1].trim().toLowerCase();
+        const value = fieldMatch[2].trim();
+        switch (key) {
+          case 'description': currentTask.description = value; break;
+          case 'user story': currentTask.userStory = value; break;
+          case 'priority': currentTask.priority = value; break;
+          case 'dependencies': currentTask.dependencies = value; break;
+          case 'est. effort': currentTask.effort = value; break;
+          default: logger.warn(`Unknown field key found in task ${currentTask.id}: ${key}`);
+        }
+      }
     }
-    return tasks;
+  }
+  finalizeCurrentTask();
+  return tasks;
 }
 
 function extractFallbackTasks(markdownContent: string): ParsedTask[] {
-    logger.warn("Primary task parser failed. Attempting fallback parsing...");
-    const tasks: ParsedTask[] = [];
-    const lines = markdownContent.split('\n');
-    let taskCounter = 1;
-    const potentialTaskRegex = /^\s*[-*]\s+(.*)|^\s*\d+\.\s+(.*)/;
+  logger.warn("Primary task parser failed. Attempting fallback parsing...");
+  const tasks: ParsedTask[] = [];
+  const lines = markdownContent.split('\n');
+  let taskCounter = 1;
+  const potentialTaskRegex = /^\s*[-*]\s+(.*)|^\s*\d+\.\s+(.*)/;
 
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        const match = line.match(potentialTaskRegex);
-        if (match) {
-            const title = (match[1] || match[2] || 'Untitled Fallback Task').trim();
-            if (title.startsWith('**ID:**') || title.startsWith('*(Description):*')) continue;
-            const taskId = `T-FALLBACK-${taskCounter++}`;
-            logger.debug(`Fallback parser found potential task: ${taskId} - ${title}`);
-            tasks.push({
-                id: taskId, title, description: `(Fallback Parsed) ${title}`,
-                userStory: 'N/A', priority: 'Medium', dependencies: 'None', effort: 'Medium',
-                markdownLine: lines[i], subTasksMarkdown: undefined
-            });
-        }
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    const match = line.match(potentialTaskRegex);
+    if (match) {
+      const title = (match[1] || match[2] || 'Untitled Fallback Task').trim();
+      if (title.startsWith('**ID:**') || title.startsWith('*(Description):*')) continue;
+      const taskId = `T-FALLBACK-${taskCounter++}`;
+      logger.debug(`Fallback parser found potential task: ${taskId} - ${title}`);
+      tasks.push({
+        id: taskId, title, description: `(Fallback Parsed) ${title}`,
+        userStory: 'N/A', priority: 'Medium', dependencies: 'None', effort: 'Medium',
+        markdownLine: lines[i], subTasksMarkdown: undefined
+      });
     }
-    if (tasks.length > 0) logger.warn(`Fallback parser extracted ${tasks.length} potential tasks.`);
-    else logger.error("Fallback parser also failed to extract any tasks.");
-    return tasks;
+  }
+  if (tasks.length > 0) logger.warn(`Fallback parser extracted ${tasks.length} potential tasks.`);
+  else logger.error("Fallback parser also failed to extract any tasks.");
+  return tasks;
 }
 
 function reconstructMarkdown(originalMarkdown: string, decomposedTasks: Map<string, string>): string {
-    let finalMarkdown = "";
-    const lines = originalMarkdown.split('\n');
-    let currentTaskBlock = "";
-    let currentTaskId: string | null = null;
+  let finalMarkdown = "";
+  const lines = originalMarkdown.split('\n');
+  let currentTaskBlock = "";
+  let currentTaskId: string | null = null;
 
-    for (const line of lines) {
-        const idMatch = line.match(/^\s*-\s+\*\*ID:\*\*\s*(T-\d+)/);
-        if (idMatch) {
-            if (currentTaskId && currentTaskBlock) {
-                finalMarkdown += currentTaskBlock.trimEnd() + '\n';
-                if (decomposedTasks.has(currentTaskId)) {
-                    const subTasks = decomposedTasks.get(currentTaskId);
-                    if (subTasks) {
-                        const indentedSubTasks = subTasks.split('\n').map(subLine => subLine.trim() ? `  ${subLine}` : '').join('\n');
-                        finalMarkdown += indentedSubTasks.trimEnd() + '\n';
-                    }
-                }
-            }
-            currentTaskId = idMatch[1];
-            currentTaskBlock = line + '\n';
-        } else if (currentTaskId) {
-            currentTaskBlock += line + '\n';
-        } else {
-             finalMarkdown += line + '\n';
-        }
-    }
-    if (currentTaskId && currentTaskBlock) {
+  for (const line of lines) {
+    const idMatch = line.match(/^\s*-\s+\*\*ID:\*\*\s*(T-\d+)/);
+    if (idMatch) {
+      if (currentTaskId && currentTaskBlock) {
         finalMarkdown += currentTaskBlock.trimEnd() + '\n';
         if (decomposedTasks.has(currentTaskId)) {
-            const subTasks = decomposedTasks.get(currentTaskId);
-            if (subTasks) {
-                const indentedSubTasks = subTasks.split('\n').map(subLine => subLine.trim() ? `  ${subLine}` : '').join('\n');
-                finalMarkdown += indentedSubTasks.trimEnd() + '\n';
-            }
+          const subTasks = decomposedTasks.get(currentTaskId);
+          if (subTasks) {
+            const indentedSubTasks = subTasks.split('\n').map(subLine => subLine.trim() ? `  ${subLine}` : '').join('\n');
+            finalMarkdown += indentedSubTasks.trimEnd() + '\n';
+          }
         }
+      }
+      currentTaskId = idMatch[1];
+      currentTaskBlock = line + '\n';
+    } else if (currentTaskId) {
+      currentTaskBlock += line + '\n';
+    } else {
+      finalMarkdown += line + '\n';
     }
-    return finalMarkdown.trim();
+  }
+  if (currentTaskId && currentTaskBlock) {
+    finalMarkdown += currentTaskBlock.trimEnd() + '\n';
+    if (decomposedTasks.has(currentTaskId)) {
+      const subTasks = decomposedTasks.get(currentTaskId);
+      if (subTasks) {
+        const indentedSubTasks = subTasks.split('\n').map(subLine => subLine.trim() ? `  ${subLine}` : '').join('\n');
+        finalMarkdown += indentedSubTasks.trimEnd() + '\n';
+      }
+    }
+  }
+  return finalMarkdown.trim();
 }
 
 // Helper for decomposition with retry
@@ -342,9 +332,7 @@ async function decomposeSingleTaskWithRetry(
   throw new Error(`Decomposition failed for task ${task.id} after ${maxRetries + 1} attempts.`);
 }
 
-
 // --- Tool Executor ---
-
 export const generateTaskList: ToolExecutor = async (
   params: Record<string, unknown>,
   config: OpenRouterConfig,
@@ -352,26 +340,28 @@ export const generateTaskList: ToolExecutor = async (
 ): Promise<CallToolResult> => {
   const sessionId = context?.sessionId || 'unknown-session';
   if (sessionId === 'unknown-session') {
-      logger.warn({ tool: 'generateTaskList' }, 'Executing tool without a valid sessionId. SSE progress updates will not be sent.');
+    logger.warn({ tool: 'generateTaskList' }, 'Executing tool without a valid sessionId. SSE progress updates will not be sent.');
   }
-  const { productDescription, userStories } = params as { productDescription: string; userStories: string };
+  const productDescription = params.productDescription as string;
+  const userStories = params.userStories as string;
 
   // --- Create Job & Return Immediately ---
   const jobId = jobManager.createJob('generate-task-list', params);
   logger.info({ jobId, tool: 'generateTaskList', sessionId }, 'Starting background job.');
 
-  // Return immediately
-  const initialResponse: CallToolResult = {
-    content: [{ type: 'text', text: `Task list generation started. Job ID: ${jobId}` }],
-    isError: false,
-  };
+  // Use the shared service to format the initial response
+  const initialResponse = formatBackgroundJobInitiationResponse(
+    jobId,
+    'generate-task-list', // Internal tool name
+    'Task List Generator' // User-friendly display name
+  );
 
-  // --- Execute Long-Running Logic Asynchronously ---
+  // Return immediately
   setImmediate(async () => {
     const decomposedTasks = new Map<string, string>(); // Store decomposed tasks <ParentID, SubTasksMarkdown>
     try {
       // Ensure directories are initialized before writing
-      await initDirectories(); // Can stay here or move inside setImmediate
+      await initDirectories();
 
       // --- Step 1: Generate High-Level Tasks ---
       jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Starting high-level task generation...');
@@ -424,37 +414,37 @@ export const generateTaskList: ToolExecutor = async (
 
       let parsedTasks = parseHighLevelTasks(highLevelTaskListMarkdown);
       if (parsedTasks.length === 0 && highLevelTaskListMarkdown.trim().length > 0) {
-          parsedTasks = extractFallbackTasks(highLevelTaskListMarkdown);
+        parsedTasks = extractFallbackTasks(highLevelTaskListMarkdown);
       }
 
       if (parsedTasks.length === 0) {
-          logger.error("Both primary and fallback parsers failed to extract any tasks. Cannot proceed with decomposition.");
-          // Throw an error to be caught by the main catch block
-          throw new ParsingError("Failed to parse any high-level tasks from LLM response.");
+        logger.error("Both primary and fallback parsers failed to extract any tasks. Cannot proceed with decomposition.");
+        // Throw an error to be caught by the main catch block
+        throw new Error("Failed to parse any high-level tasks from LLM response.");
       } else {
-           logger.info(`Proceeding with decomposition for ${parsedTasks.length} tasks.`);
-           const decompositionPromises = parsedTasks
-             .filter(task => task.id && task.title && task.description) // Filter out tasks missing essential details
-             .map(task => decomposeSingleTaskWithRetry(task, config, jobId, sessionId));
+        logger.info(`Proceeding with decomposition for ${parsedTasks.length} tasks.`);
+        const decompositionPromises = parsedTasks
+          .filter(task => task.id && task.title && task.description) // Filter out tasks missing essential details
+          .map(task => decomposeSingleTaskWithRetry(task, config, jobId, sessionId));
 
-           const decompositionResults = await Promise.allSettled(decompositionPromises);
+        const decompositionResults = await Promise.allSettled(decompositionPromises);
 
-           decompositionResults.forEach((result, index) => {
-             const originalTask = parsedTasks.filter(t => t.id && t.title && t.description)[index];
-             if (!originalTask) return;
+        decompositionResults.forEach((result, index) => {
+          const originalTask = parsedTasks.filter(t => t.id && t.title && t.description)[index];
+          if (!originalTask) return;
 
-             if (result.status === 'fulfilled') {
-               decomposedTasks.set(result.value.taskId, result.value.markdown);
-             } else {
-               const error = result.reason;
-               const errorMessage = error instanceof Error ? error.message : String(error);
-               logger.error({ err: error, taskId: originalTask.id }, `Final decomposition failed for task ${originalTask.id} after retries.`);
-               decomposedTasks.set(originalTask.id, `- *(Error: Final decomposition failed: ${errorMessage})*`);
-               sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Failed to decompose task ${originalTask.id}: ${errorMessage}`);
-             }
-           });
-           logger.info(`Task List Generator: Step 2 - Parallel decomposition finished.`);
-           sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Decomposition finished. Reconstructing output...');
+          if (result.status === 'fulfilled') {
+            decomposedTasks.set(result.value.taskId, result.value.markdown);
+          } else {
+            const error = result.reason;
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            logger.error({ err: error, taskId: originalTask.id }, `Final decomposition failed for task ${originalTask.id} after retries.`);
+            decomposedTasks.set(originalTask.id, `- *(Error: Final decomposition failed: ${errorMessage})*`);
+            sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Failed to decompose task ${originalTask.id}: ${errorMessage}`);
+          }
+        });
+        logger.info(`Task List Generator: Step 2 - Parallel decomposition finished.`);
+        sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Decomposition finished. Reconstructing output...');
       }
 
       // --- Step 3: Reconstruct Final Output ---
@@ -471,25 +461,21 @@ export const generateTaskList: ToolExecutor = async (
       const filePath = path.join(TASK_LIST_DIR, filename);
 
       try {
-          await fs.writeFile(filePath, finalMarkdown, 'utf8');
-          logger.info(`Detailed task list generated and saved to ${filePath}`);
-          sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `File saved to ${filePath}. Job complete.`);
+        await fs.writeFile(filePath, finalMarkdown, 'utf8');
+        logger.info(`Detailed task list generated and saved to ${filePath}`);
+        sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `File saved to ${filePath}. Job complete.`);
       } catch (saveError) {
-          logger.error({ err: saveError, filePath }, "Failed to save the final detailed task list.");
-          sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Failed to save output file to ${filePath}.`);
-          // Consider if this should make the job fail
+        logger.error({ err: saveError, filePath }, "Failed to save the final detailed task list.");
+        sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Failed to save output file to ${filePath}.`);
+        // Consider if this should make the job fail
       }
 
       // Set final success result in Job Manager
       const finalResult: CallToolResult = {
-        // Consider returning just the path or a success message instead of full markdown
         content: [{ type: "text", text: `Detailed task list saved to: ${filePath}\n\n${finalMarkdown.substring(0, 1000)}...` }], // Truncate for brevity in result
         isError: false
       };
       jobManager.setJobResult(jobId, finalResult);
-      // Final SSE notification handled by setJobResult logic (or send explicitly if needed)
-      // sseNotifier.sendProgress(sessionId, jobId, JobStatus.COMPLETED, 'Job completed successfully.'); // Redundant if setJobResult notifies
-
     } catch (error) { // Catch errors within the async block
       logger.error({ err: error, jobId, tool: 'generateTaskList' }, 'Error during background job execution.');
 

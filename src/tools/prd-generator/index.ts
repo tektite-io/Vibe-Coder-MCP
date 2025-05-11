@@ -8,9 +8,10 @@ import { performDirectLlmCall } from '../../utils/llmHelper.js'; // Import the n
 import { performResearchQuery } from '../../utils/researchHelper.js';
 import logger from '../../logger.js';
 import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js'; // Import ToolExecutionContext
-import { AppError, ApiError, ConfigurationError, ToolExecutionError } from '../../utils/errors.js'; // Import necessary errors
+import { AppError, ToolExecutionError } from '../../utils/errors.js'; // Import necessary errors
 import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
 import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
+import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js'; // Import the new formatter
 
 // Helper function to get the base output directory
 function getBaseOutputDir(): string {
@@ -155,11 +156,12 @@ export const generatePRD: ToolExecutor = async (
   const jobId = jobManager.createJob('generate-prd', params);
   logger.info({ jobId, tool: 'generatePRD', sessionId }, 'Starting background job.');
 
-  // Return immediately
-  const initialResponse: CallToolResult = {
-    content: [{ type: 'text', text: `PRD generation started. Job ID: ${jobId}` }],
-    isError: false,
-  };
+  // Use the shared service to format the initial response
+  const initialResponse = formatBackgroundJobInitiationResponse(
+    jobId,
+    'generate-prd', // Internal tool name
+    'PRD Generator'   // User-friendly display name
+  );
 
   // ---> Step 2.5(PRD).4: Wrap Logic in Async Block <---
   setImmediate(async () => {
