@@ -7,10 +7,8 @@ import './prd-generator/index.js';
 import './user-stories-generator/index.js';
 import './task-list-generator/index.js';
 import './fullstack-starter-kit-generator/index.js';
-import './code-stub-generator/index.js';
 import './code-refactor-generator/index.js';
 import './git-summary-generator/index.js';
-import './dependency-analyzer/index.js'; // Added import for the dependency analyzer tool
 import './workflow-runner/index.js'; // Add this line
 
 // Note: process-request is currently registered in src/services/request-processor/index.ts

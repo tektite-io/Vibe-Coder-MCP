@@ -30,20 +30,10 @@
       "use_cases": ["coding standards", "project guidelines", "linting rules", "style guide", "development rules"],
       "input_patterns": ["setup rules for {project}", "define standards for {language}", "create style guide for {framework}"]
     },
-    "generate-code-stub": {
-      "description": "Generates a code stub (function, class, etc.) in a specified language based on a description. Can optionally use content from a file as context.",
-      "use_cases": ["generate code", "create function stub", "class boilerplate", "scaffold method", "code stub", "write function"],
-      "input_patterns": ["generate typescript function {name}", "create python class {name} stub", "write go function {name} based on {description}"]
-    },
     "refactor-code": {
       "description": "Refactors a given code snippet based on specific instructions, optionally using surrounding file context.",
       "use_cases": ["refactor code", "improve code", "rewrite snippet", "clean up code", "optimize code", "change code"],
       "input_patterns": ["refactor this code: {codeContent} to {refactoringInstructions}", "improve snippet {codeContent}", "rewrite {functionName} to be more efficient"]
-    },
-    "analyze-dependencies": {
-      "description": "Analyzes dependency manifest files (e.g., package.json, requirements.txt) to list project dependencies.",
-      "use_cases": ["list dependencies", "check project packages", "view dependencies", "analyze packages", "show dependencies"],
-      "input_patterns": ["analyze dependencies in {filePath}", "list packages from {filePath}", "what are the dependencies in {manifestFile}"]
     },
     "git-summary": {
       "description": "Retrieves a summary of current Git changes (diff). Can show staged or unstaged changes.",

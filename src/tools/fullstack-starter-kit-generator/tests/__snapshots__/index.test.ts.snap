@@ -1,0 +1,52 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Fullstack Starter Kit Generator > should set final job result content matching snapshot (async) > Fullstack Starter Kit Generator Content 1`] = `
+"# Fullstack Starter Kit Generator
+
+## Use Case
+E-commerce platform
+
+## Project: test-project
+A test project
+
+## Tech Stack
+- **frontend**: React (18.x) - Popular library for UI development
+- **backend**: Node.js (16.x) - JavaScript runtime for server-side code
+
+## Project Structure Generation
+
+Setup scripts have been generated to create the project structure and install dependencies:
+
+* **Linux/macOS Script:** \`workflow-agent-files/fullstack-starter-kit-generator/2025-05-11T02-24-05-380Z-e-commerce-platform-setup.sh\`
+* **Windows Script:** \`workflow-agent-files/fullstack-starter-kit-generator/2025-05-11T02-24-05-380Z-e-commerce-platform-setup.bat\`
+
+To use these scripts:
+1. Copy the appropriate script to an empty directory outside of this project
+2. For Linux/macOS: \`chmod +x 2025-05-11T02-24-05-380Z-e-commerce-platform-setup.sh && ./2025-05-11T02-24-05-380Z-e-commerce-platform-setup.sh\`
+3. For Windows: Double-click the batch file or run from command prompt
+
+The scripts will:
+- Create the project directory structure
+- Generate all necessary files
+- Install dependencies
+- Run setup commands
+
+## Dependencies
+{
+  "npm": {
+    "root": {
+      "dependencies": {
+        "express": "^4.18.2"
+      }
+    }
+  }
+}
+
+## Setup Commands
+- \`npm install\`
+
+## Next Steps
+- Configure database
+
+Generated with the Fullstack Starter Kit Generator"
+`;
