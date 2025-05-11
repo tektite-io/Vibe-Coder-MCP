@@ -11,6 +11,7 @@ import logger from '../../logger.js'; // Adjust path if necessary
 import { selectModelForTask } from '../../utils/configLoader.js'; // Import the new utility
 import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
 import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
+import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js';
 
 // TODO: Consider moving cleanCodeOutput to a shared utils/codeUtils.ts
 function cleanCodeOutput(rawOutput: string): string {
@@ -77,10 +78,11 @@ export const refactorCode: ToolExecutor = async (
   logger.info({ jobId, tool: 'refactorCode', sessionId }, 'Starting background job.');
 
   // Return immediately
-  const initialResponse: CallToolResult = {
-    content: [{ type: 'text', text: `Code refactoring started. Job ID: ${jobId}` }],
-    isError: false,
-  };
+  const initialResponse = formatBackgroundJobInitiationResponse(
+    jobId,
+    'Code Refactoring',
+    'Your code refactoring request has been submitted. You can retrieve the result using the job ID.'
+  );
 
   // --- Execute Long-Running Logic Asynchronously ---
   setImmediate(async () => {

@@ -97,4 +97,8 @@ VibeCoderOutput/
 # Documentation (if not intended for commit)
 docs/
 
+# Windsurf and Plan Documentation
+.windsurf/
+plan_docs/
+
 # Untracked file to ignore

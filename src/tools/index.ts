@@ -12,6 +12,7 @@ import './code-refactor-generator/index.js';
 import './git-summary-generator/index.js';
 import './dependency-analyzer/index.js'; // Added import for the dependency analyzer tool
 import './workflow-runner/index.js'; // Add this line
+import './job-result-retriever/index.js'; // Added import for the job result retriever tool
 
 // Note: process-request is currently registered in src/services/request-processor/index.ts
 // If it were moved to src/tools/, its import would go here too.

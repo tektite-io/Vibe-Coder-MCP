@@ -10,6 +10,7 @@ import logger from '../../logger.js';
 import { selectModelForTask } from '../../utils/configLoader.js'; // Import the new utility
 import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
 import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
+import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js';
 
 const CODE_STUB_SYSTEM_PROMPT = `You are an expert code generation assistant. Your task is to generate a clean, syntactically correct code stub based ONLY on the user's specifications.
 
@@ -109,10 +110,11 @@ export const generateCodeStub: ToolExecutor = async (
   logger.info({ jobId, tool: 'generateCodeStub', sessionId }, 'Starting background job.');
 
   // Return immediately
-  const initialResponse: CallToolResult = {
-    content: [{ type: 'text', text: `Code stub generation started. Job ID: ${jobId}` }],
-    isError: false,
-  };
+  const initialResponse = formatBackgroundJobInitiationResponse(
+    jobId,
+    'Code Stub Generation',
+    'Your code stub generation request has been submitted. You can retrieve the result using the job ID.'
+  );
 
   // ---> Step 2.5(CSG).4: Wrap Logic in Async Block <---
   setImmediate(async () => {

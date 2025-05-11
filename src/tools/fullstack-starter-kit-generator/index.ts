@@ -12,7 +12,8 @@ import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from
 import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
 import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
 // Import necessary error types for direct LLM calls and parsing
-import { AppError, ValidationError, ParsingError, ToolExecutionError, ApiError, ConfigurationError } from '../../utils/errors.js';
+import { AppError, ValidationError, ParsingError, ToolExecutionError } from '../../utils/errors.js';
+import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js';
 
 // Helper function to get the base output directory
 function getBaseOutputDir(): string {
@@ -184,17 +185,18 @@ export const generateFullstackStarterKit: ToolExecutor = async (
   // Use double cast pattern (first to unknown, then to specific type) to satisfy TypeScript
   const input = params as unknown as FullstackStarterKitInput;
 
-  // --- Create Job & Return Immediately ---
+  // --- Create Job & Return Immediately --- 
   const jobId = jobManager.createJob('generate-fullstack-starter-kit', params);
   logger.info({ jobId, tool: 'generateFullstackStarterKit', sessionId }, 'Starting background job.');
 
-  // Return immediately
-  const initialResponse: CallToolResult = {
-    content: [{ type: 'text', text: `Fullstack starter kit generation started. Job ID: ${jobId}` }],
-    isError: false,
-  };
+  // Use the shared service to format the initial response
+  const initialResponse = formatBackgroundJobInitiationResponse(
+    jobId,
+    'generate-fullstack-starter-kit', // Internal tool name
+    'Fullstack Starter Kit Generator' // User-friendly display name
+  );
 
-  // --- Execute Long-Running Logic Asynchronously ---
+  // --- Execute Long-Running Logic Asynchronously --- 
   setImmediate(async () => {
     const logs: string[] = []; // Keep logs for background process
     let mainPartsJson: Omit<StarterKitDefinition, 'directoryStructure'> | undefined; // Define here for broader scope
@@ -365,7 +367,7 @@ ${researchContext ? `Research Context:\n${researchContext}` : 'No research conte
       logger.debug({ jobId, rawJsonText: mainPartsRawText }, "Raw JSON text received from LLM");
 
       // Robust JSON Parsing
-      let parsedJson: any;
+      let parsedJson: unknown;
       try {
         // Attempt direct parsing first
         parsedJson = JSON.parse(mainPartsRawText);
@@ -439,12 +441,7 @@ Generate the directory structure based on the provided tech stack and project de
 # FINAL INSTRUCTION: Generate the Markdown list for the directory structure now.
 `;
 
-      let directoryStructureMarkdown: string;
-      logger.info({ jobId }, 'Generating directory structure as Markdown using direct LLM call...');
-      jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating directory structure...');
-      sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating directory structure...');
-      // Use performDirectLlmCall instead of processWithSequentialThinking
-      directoryStructureMarkdown = await performDirectLlmCall(
+      const directoryStructureMarkdown = await performDirectLlmCall(
         dirStructurePrompt,
         '', // No specific system prompt needed here as it's in dirStructurePrompt
         config,
@@ -464,11 +461,7 @@ Generate the directory structure based on the provided tech stack and project de
 
 
       // --- Step 3c: Parse Markdown Directory Structure ---
-      let directoryStructureJson: z.infer<typeof fileStructureItemSchema>[];
-      logger.info({ jobId }, 'Parsing directory structure Markdown...');
-      jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Parsing directory structure...');
-      sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Parsing directory structure...');
-      directoryStructureJson = parseDirectoryStructureMarkdown(directoryStructureMarkdown);
+      const directoryStructureJson = parseDirectoryStructureMarkdown(directoryStructureMarkdown);
       logger.info({ jobId }, 'Successfully parsed directory structure.');
       logs.push(`[${new Date().toISOString()}] Successfully parsed directory structure.`);
 
