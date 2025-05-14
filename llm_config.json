@@ -12,6 +12,8 @@
     "git_summary_generation": "google/gemini-2.5-flash-preview",
     "dependency_analysis": "google/gemini-2.5-flash-preview",
     "fullstack_starter_kit_generation": "google/gemini-2.5-flash-preview",
+    "fullstack_starter_kit_module_selection": "google/gemini-2.5-flash-preview",
+    "fullstack_starter_kit_dynamic_yaml_module_generation": "google/gemini-2.5-flash-preview",
     "workflow_step_execution": "google/gemini-2.5-flash-preview",
     "default_generation": "google/gemini-2.5-flash-preview"
   }

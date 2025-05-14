@@ -9,8 +9,11 @@ jspm_packages/
 # Build outputs
 dist/
 build/
-tools/
+/tools/
 *.tsbuildinfo
+
+# Configuration files with potential sensitive information
+claude_desktop_config*.json
 
 # Logs
 logs
