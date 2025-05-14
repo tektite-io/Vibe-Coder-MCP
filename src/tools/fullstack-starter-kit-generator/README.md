@@ -2,121 +2,82 @@
 
 ## Overview
 
-Generates full-stack project starter kits with custom tech stacks. This tool leverages Large Language Models (LLMs) via OpenRouter to perform its task.
+Generates full-stack project starter kits by composing YAML modules based on user requirements and tech stack preferences. This tool leverages Large Language Models (LLMs) via OpenRouter to select appropriate modules and parameters, and then assembles them into a final JSON definition.
+
+**New Feature: Dynamic YAML Module Generation**
+If a specified YAML module template (e.g., `frontend/react-vite.yaml`) is not found in the `src/tools/fullstack-starter-kit-generator/templates/` directory, the system will attempt to dynamically generate it using an LLM. The generated module will then be saved to the templates directory for future use and cached in memory for the current session.
 
 ## Inputs
 
 This tool accepts the following parameters via the MCP call:
 
-| Parameter                  | Type                      | Description                                          | Required |
-| -------------------------- | ------------------------- | ---------------------------------------------------- | -------- |
-| `use_case`                 | `string`                  | The specific use case for the starter kit            | Yes      |
-| `tech_stack_preferences`   | `Record<string, string>`  | Optional tech stack preferences                      | No       |
-| `request_recommendation`   | `boolean`                 | Whether to request recommendations for tech stack    | No       |
-| `include_optional_features`| `string[]`                | Optional features to include in the starter kit      | No       |
-
-*(Based on the Zod schema defined in `src/server.ts`)*
+| Parameter                  | Type                                     | Description                                                                      | Required |
+| -------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------- | -------- |
+| `use_case`                 | `string`                                 | The specific use case for the starter kit (e.g., 'E-commerce site')              | Yes      |
+| `tech_stack_preferences`   | `Record<string, string \| undefined>`    | Optional tech stack preferences (e.g., { frontend: 'React', backend: 'Node.js' }) | No       |
+| `request_recommendation`   | `boolean`                                | Whether to request LLM recommendations for tech stack components via research      | No       |
+| `include_optional_features`| `string[]`                               | Optional features to include (e.g., ['Docker', 'Authentication with JWT'])       | No       |
 
 ## Outputs
 
-* **Primary Output:** A structured JSON definition specifying the starter kit's configuration.
-* **File Storage:** Multiple artifacts are saved to the configured output directory (default: `workflow-agent-files/`, override with `VIBE_CODER_OUTPUT_DIR` env var):
-  * JSON Definition: `[output_dir]/fullstack-starter-kit-generator/[timestamp]-[sanitized-name]-definition.json`
-  * Shell Script: `[output_dir]/fullstack-starter-kit-generator/[timestamp]-[sanitized-name]-setup.sh`
-  * Batch Script: `[output_dir]/fullstack-starter-kit-generator/[timestamp]-[sanitized-name]-setup.bat`
-* **MCP Response:** A formatted report of the generated starter kit configuration.
+* **Primary Output (MCP Response):** A formatted report summarizing the generated starter kit, including paths to the definition file and setup scripts.
+* **File Storage:** Artifacts are saved to the configured output directory (default: `workflow-agent-files/`, override with `VIBE_CODER_OUTPUT_DIR` env var):
+  * **JSON Definition:** `[output_dir]/fullstack-starter-kit-generator/[timestamp]-[sanitized-name]-definition.json`
+    * This JSON file contains the complete, assembled starter kit definition.
+  * **Shell Script:** `[output_dir]/fullstack-starter-kit-generator/[timestamp]-[sanitized-name]-setup.sh`
+  * **Batch Script:** `[output_dir]/fullstack-starter-kit-generator/[timestamp]-[sanitized-name]-setup.bat`
+    * These scripts are designed to unpack the accompanying JSON definition file.
+  * **Dynamically Generated YAML Templates:** Saved to `src/tools/fullstack-starter-kit-generator/templates/[category]/[template-name].yaml` if generated.
 
 ## Asynchronous Execution
 
-This tool executes asynchronously due to the significant time required for research (if requested) and LLM generation.
-1.  When you call this tool, it will immediately return a **Job ID**.
-2.  The starter kit generation process runs in the background.
-3.  Use the `get-job-result` tool with the received Job ID to retrieve the final confirmation message and details once the job is complete.
+This tool executes asynchronously.
+1.  An initial call returns a **Job ID**.
+2.  The generation process runs in the background.
+3.  Use the `get-job-result` tool with the Job ID to retrieve the final outcome.
 
 ## Workflow
 
-When invoked, this tool performs the following steps:
+1.  **Input Validation & Job Creation:** Validates inputs and creates a background job.
+2.  **Research (Optional):** If `request_recommendation` is true, performs research to inform module selection.
+3.  **YAML Module Selection (LLM):**
+    *   Prompts an LLM with the user's request and research context.
+    *   The LLM returns a JSON object specifying:
+        *   `globalParams`: Project-wide parameters (e.g., `projectName`, `frontendPath`, `backendPort`).
+        *   `moduleSelections`: An array of YAML module templates to use (e.g., `frontend/react-vite`, `backend/nodejs-express`) and any specific parameters for them.
+4.  **YAML Composition (`YAMLComposer`):**
+    *   For each selected module:
+        *   The `YAMLComposer` first checks its cache for the module.
+        *   If not cached, it attempts to load the YAML module file from `src/tools/fullstack-starter-kit-generator/templates/`.
+        *   **If the file does not exist, `YAMLComposer` calls an LLM to dynamically generate the YAML module content (as JSON), validates it, saves it as a `.yaml` file in the templates directory, and caches it.**
+        *   The (loaded or generated) module's content is parsed.
+    *   Placeholders in the YAML content are substituted with the provided global and module-specific parameters.
+    *   The `techStack`, `directoryStructure`, `dependencies`, and `setupCommands` from all chosen modules are merged into a single `StarterKitDefinition` object.
+5.  **JSON Validation:** The composed `StarterKitDefinition` is validated against a Zod schema (`schema.ts`).
+6.  **Artifact Generation:**
+    *   The validated definition is saved as a `.json` file.
+    *   `setup.sh` and `setup.bat` scripts are generated. These scripts now expect the `.json` definition file to be in the same directory when they are executed. They will read this JSON to create the project structure.
+7.  **Response:** The job result includes a summary and paths to the generated files.
 
-1. **Input Validation:** The incoming parameters are validated.
-2. **Initial Analysis:** Performs an initial analysis of the use case and tech stack preferences.
-3. **Research Phase (Pre-Generation):**
-   * If `request_recommendation` is true:
-     * Formulates three specific queries based on the use case:
-       * Latest technology stack recommendations
-       * Best practices and architectural patterns
-       * Modern development tooling and libraries
-     * Executes these queries in parallel using the configured Perplexity model (`perplexity/sonar-deep-research` via `performResearchQuery`).
-      * Aggregates the research results into a structured context block.
-4. **JSON Generation Phase:**
-   * Constructs a prompt including the research context (if available) asking for the starter kit definition in JSON format.
-   * Calls the `performDirectLlmCall` utility (`src/utils/llmHelper.ts`) to get the JSON definition directly from the configured LLM (e.g., Gemini).
-5. **JSON Validation:**
-   * Attempts to parse the LLM response as JSON.
-   * Validates it against the `starterKitDefinitionSchema` (Zod schema).
-   * If validation fails, returns a detailed error response.
-6. **Setup Script Generation:**
-   * Generates shell and batch scripts based on the validated JSON definition.
-   * These scripts create the project structure, files, and install dependencies.
-7. **Output Saving:**
-   * Saves the validated JSON definition and both scripts to the filesystem.
-8. **Response:** Returns a formatted report of the generated starter kit.
+### YAML Templates
 
-### Workflow Diagram (Mermaid)
+Modular components (frontend, backend, database, auth, etc.) are defined in YAML files located in `src/tools/fullstack-starter-kit-generator/templates/`. If a template is missing, it will be dynamically generated and saved here. Each YAML file (or dynamically generated module) should specify:
+*   `moduleName`, `description`, `type`
+*   `placeholders`: Variables to be filled in (e.g., `{projectName}`).
+*   `provides`:
+    *   `techStack`: Entries for the technology stack.
+    *   `directoryStructure`: A snippet of the file/folder structure for this module. Paths should be relative to the module's own root (e.g., `src/index.js`). Content for files can be included directly.
+    *   `dependencies`: NPM (or other package manager) dependencies. Keys for dependency groups (e.g. `"{frontendPath}"` or `"root"`) can use placeholders.
+    *   `setupCommands`: Shell commands relevant to setting up the module. Contexts for commands (e.g. `"{backendPath}"`) can use placeholders.
 
-```mermaid
-flowchart TD
-    A[Start Tool: generate-fullstack-starter-kit] --> B{Input Params Valid?};
-    B -- No --> BN[Return Error Response];
-    B -- Yes --> C[1. Perform Initial Analysis];
-    C --> D{Research Requested?};
-    
-    D -- Yes --> E[2a. Call performResearchQuery (Perplexity)];
-    D -- No --> F[3. Assemble Main Prompt w/o Research];
-    
-    E --> F2[2b. Assemble Main Prompt w/ Research Context];
-    F2 --> G2[4. Call performDirectLlmCall (e.g., Gemini)];
-    F --> G[4. Call performDirectLlmCall (e.g., Gemini)];
-    
-    G2 --> H[5. Parse & Validate JSON Output];
-    G --> H;
-    
-    H -- Valid --> I[6. Generate Setup Scripts (SH & BAT)];
-    H -- Invalid --> HE[Return Validation Error];
-    
-    I --> J[7. Save Definition JSON & Scripts];
-    J --> K[8. Return Formatted Response via MCP];
-    
-    E -- Error --> EE[Log Research Error, Continue w/o Context];
-    EE --> F2;
-```
+### Script Usage Change
 
-## Usage Example
+The generated `.sh` and `.bat` scripts now require the corresponding `[timestamp]-[sanitized-name]-definition.json` file to be present in the same directory from which they are run. The scripts parse this JSON file to perform the setup.
 
-From an MCP client (like Claude Desktop):
-
-```
-Generate a fullstack starter kit for a real estate listing website with user authentication, property search, and favoriting features. I prefer React on the frontend and Node.js with Express on the backend, but would like recommendations for other components.
-```
-
-## JSON Schema & Scripts
-
-The tool generates a structured definition conforming to a Zod schema (`schema.ts`), which is then used to generate setup scripts (`scripts.ts`). The schema includes:
-
-* `projectName`: Project identifier
-* `description`: Detailed project description
-* `techStack`: Technology choices with rationale
-* `directoryStructure`: Complete file/folder organization
-* `dependencies`: Package dependencies by directory
-* `setupCommands`: Commands to initialize the project
-* `nextSteps`: Follow-up actions after setup
-
-The generated setup scripts (shell and batch) create the defined directory structure, write all files with appropriate content, install dependencies, and run specified setup commands.
+Bash scripts will attempt to use `jq` for parsing (recommended). Windows batch scripts will attempt to use PowerShell.
 
 ## Error Handling
 
-* Handles invalid input parameters.
-* Attempts to gracefully handle failures during the research phase.
-* Provides detailed validation errors for invalid JSON output.
-* Handles script generation failures.
-* Handles file saving errors.
-* Returns specific error messages via MCP response when failures occur.
+*   Handles invalid input.
+*   Manages errors during research, LLM calls (for module selection and dynamic generation), YAML parsing/composition, and file operations.
+*   Provides detailed error messages via MCP response, including if dynamic template generation fails.

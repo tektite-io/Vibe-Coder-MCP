@@ -1,0 +1,134 @@
+# src/tools/fullstack-starter-kit-generator/templates/backend/nodejs-express.yaml
+moduleName: nodejs-express-backend
+description: "Node.js backend with Express and TypeScript for {projectName}."
+type: backend
+
+placeholders:
+  - projectName
+  - backendPort
+
+provides:
+  techStack:
+    backendFramework:
+      name: Express.js
+      version: "^4.18.2"
+      rationale: "Minimal and flexible Node.js web application framework."
+    backendLanguage:
+      name: Node.js with TypeScript
+      version: "Node ^18, TS ^5" # Example
+      rationale: "JavaScript runtime with static typing for robust backend development."
+
+  directoryStructure:
+    # Paths are relative to a designated 'backend' root (e.g., 'packages/server' or 'server/').
+    - path: "src/" # Relative to the module's assumed root
+      type: directory
+      children:
+        - path: "index.ts"
+          type: file
+          content: |
+            // {moduleRoot}/src/index.ts
+            import express, { Express, Request, Response } from 'express';
+            import dotenv from 'dotenv';
+
+            dotenv.config();
+
+            const app: Express = express();
+            const port = process.env.PORT || {backendPort};
+
+            app.get('/', (req: Request, res: Response) => {
+              res.send('Express + TypeScript Server for {projectName}');
+            });
+
+            app.listen(port, () => {
+              console.log(`[server]: Server is running at http://localhost:${port}`);
+            });
+        - path: "routes/"
+          type: directory
+          children:
+            - path: "example.ts"
+              type: file
+              content: |
+                // {moduleRoot}/src/routes/example.ts
+                import express, { Router, Request, Response } from 'express';
+                const router: Router = express.Router();
+
+                router.get('/hello', (req: Request, res: Response) => {
+                  res.json({ message: 'Hello from the backend!' });
+                });
+
+                export default router;
+    - path: "package.json" # Relative to module root
+      type: file
+      content: |
+        {
+          "name": "{projectName}-server",
+          "version": "1.0.0",
+          "description": "Backend server for {projectName}",
+          "main": "dist/index.js",
+          "scripts": {
+            "build": "tsc",
+            "start": "node dist/index.js",
+            "dev": "nodemon src/index.ts",
+            "lint": "eslint . --ext .ts"
+          },
+          "keywords": [],
+          "author": "",
+          "license": "ISC",
+          "dependencies": {
+            "express": "^4.18.2",
+            "dotenv": "^16.0.3"
+          },
+          "devDependencies": {
+            "@types/express": "^4.17.17",
+            "@types/node": "^20.0.0",
+            "@typescript-eslint/eslint-plugin": "^5.59.0",
+            "@typescript-eslint/parser": "^5.59.0",
+            "eslint": "^8.39.0",
+            "nodemon": "^3.0.0",
+            "ts-node": "^10.9.1",
+            "typescript": "^5.0.0"
+          }
+        }
+    - path: "tsconfig.json" # Relative to module root
+      type: file
+      content: |
+        {
+          "compilerOptions": {
+            "target": "es6",
+            "module": "commonjs",
+            "rootDir": "./src",
+            "outDir": "./dist",
+            "esModuleInterop": true,
+            "strict": true
+          },
+          "include": ["src/**/*"],
+          "exclude": ["node_modules"]
+        }
+    - path: ".env.example" # Relative to module root
+      type: file
+      content: |
+        PORT={backendPort}
+        # Add other environment variables here
+
+  dependencies:
+    npm:
+      "{backendPath}": # Placeholder for actual path like "server"
+        dependencies:
+          express: "^4.18.2"
+          dotenv: "^16.0.3"
+        devDependencies:
+          "@types/express": "^4.17.17"
+          "@types/node": "^20.0.0"
+          "@typescript-eslint/eslint-plugin": "^5.59.0"
+          "@typescript-eslint/parser": "^5.59.0"
+          eslint: "^8.39.0"
+          nodemon: "^3.0.0"
+          "ts-node": "^10.9.1"
+          typescript: "^5.0.0"
+
+  setupCommands:
+    - context: "{backendPath}"
+      command: "npm install"
+    - context: "{backendPath}"
+      command: "npm run build" # Initial build
+```

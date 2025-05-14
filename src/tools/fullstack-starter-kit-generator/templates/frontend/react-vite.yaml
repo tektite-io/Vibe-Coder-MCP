@@ -1,0 +1,200 @@
+# src/tools/fullstack-starter-kit-generator/templates/frontend/react-vite.yaml
+moduleName: react-vite-frontend
+description: "React frontend with Vite and TypeScript for {projectName}."
+type: frontend
+
+# Placeholders used in this template that need to be provided at composition time
+placeholders:
+  - projectName
+
+provides:
+  techStack:
+    frontendFramework: # Using more specific keys for merging
+      name: React
+      version: "^18.2.0"
+      rationale: "Industry-standard UI library with a strong ecosystem."
+    frontendBuildTool:
+      name: Vite
+      version: "^5.1.0" # Example, can be parameterized
+      rationale: "Next-generation frontend tooling offering fast HMR and optimized builds."
+    frontendLanguage:
+      name: TypeScript
+      version: "^5.2.0" # Example
+      rationale: "Strongly typed language for robust frontend development."
+
+  directoryStructure:
+    # Defines a snippet of the directory structure for this module.
+    # Paths are relative to a designated 'frontend' root (e.g., 'packages/client' or 'client/').
+    # The composer will handle placing this under the correct parent.
+    - path: "src/" # Relative to the module's assumed root
+      type: directory
+      children:
+        - path: "App.tsx"
+          type: file
+          content: |
+            // {moduleRoot}/src/App.tsx
+            import './App.css';
+
+            function App() {
+              return (
+                <>
+                  <h1>{projectName} - React + Vite</h1>
+                  <p>Edit <code>src/App.tsx</code> and save to test HMR</p>
+                </>
+              );
+            }
+
+            export default App;
+        - path: "main.tsx"
+          type: file
+          content: |
+            // {moduleRoot}/src/main.tsx
+            import React from 'react';
+            import ReactDOM from 'react-dom/client';
+            import App from './App.tsx';
+            import './index.css';
+
+            ReactDOM.createRoot(document.getElementById('root')!).render(
+              <React.StrictMode>
+                <App />
+              </React.StrictMode>,
+            );
+        - path: "index.css"
+          type: file
+          content: |
+            /* {moduleRoot}/src/index.css */
+            body {
+              font-family: sans-serif;
+              margin: 0;
+              padding: 20px;
+              background-color: #f0f0f0;
+            }
+        - path: "App.css"
+          type: file
+          content: |
+            /* {moduleRoot}/src/App.css */
+            h1 {
+              color: #333;
+            }
+    - path: "package.json" # Relative to the module's assumed root
+      type: file
+      content: |
+        {
+          "name": "{projectName}-client",
+          "private": true,
+          "version": "0.0.1",
+          "type": "module",
+          "scripts": {
+            "dev": "vite",
+            "build": "tsc && vite build",
+            "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+            "preview": "vite preview"
+          },
+          "dependencies": {
+            "react": "^18.2.0",
+            "react-dom": "^18.2.0"
+          },
+          "devDependencies": {
+            "@types/react": "^18.2.55",
+            "@types/react-dom": "^18.2.19",
+            "@typescript-eslint/eslint-plugin": "^6.21.0",
+            "@typescript-eslint/parser": "^6.21.0",
+            "@vitejs/plugin-react": "^4.2.1",
+            "eslint": "^8.56.0",
+            "eslint-plugin-react-hooks": "^4.6.0",
+            "eslint-plugin-react-refresh": "^0.4.5",
+            "typescript": "^5.2.2",
+            "vite": "^5.1.0"
+          }
+        }
+    - path: "vite.config.ts" # Relative to the module's assumed root
+      type: file
+      content: |
+        // {moduleRoot}/vite.config.ts
+        import { defineConfig } from 'vite';
+        import react from '@vitejs/plugin-react';
+
+        // https://vitejs.dev/config/
+        export default defineConfig({
+          plugins: [react()],
+        });
+    - path: "tsconfig.json" # Relative to the module's assumed root
+      type: file
+      content: |
+        {
+          "compilerOptions": {
+            "target": "ES2020",
+            "useDefineForClassFields": true,
+            "lib": ["ES2020", "DOM", "DOM.Iterable"],
+            "module": "ESNext",
+            "skipLibCheck": true,
+            "moduleResolution": "bundler",
+            "allowImportingTsExtensions": true,
+            "resolveJsonModule": true,
+            "isolatedModules": true,
+            "noEmit": true,
+            "jsx": "react-jsx",
+            "strict": true,
+            "noUnusedLocals": true,
+            "noUnusedParameters": true,
+            "noFallthroughCasesInSwitch": true
+          },
+          "include": ["src"],
+          "references": [{ "path": "./tsconfig.node.json" }]
+        }
+    - path: "tsconfig.node.json" # Relative to module root
+      type: file
+      content: |
+        {
+          "compilerOptions": {
+            "composite": true,
+            "skipLibCheck": true,
+            "module": "ESNext",
+            "moduleResolution": "bundler",
+            "allowSyntheticDefaultImports": true,
+            "strict": true
+          },
+          "include": ["vite.config.ts"]
+        }
+    - path: "index.html" # Relative to module root
+      type: file
+      content: |
+        <!doctype html>
+        <html lang="en">
+          <head>
+            <meta charset="UTF-8" />
+            <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+            <title>{projectName} - Vite + React + TS</title>
+          </head>
+          <body>
+            <div id="root"></div>
+            <script type="module" src="/src/main.tsx"></script>
+          </body>
+        </html>
+
+  dependencies:
+    npm:
+      "{frontendPath}": # Placeholder for actual path like "client" or "packages/frontend"
+        dependencies:
+          react: "^18.2.0"
+          react-dom: "^18.2.0"
+        devDependencies:
+          "@types/react": "^18.2.55"
+          "@types/react-dom": "^18.2.19"
+          "@typescript-eslint/eslint-plugin": "^6.21.0"
+          "@typescript-eslint/parser": "^6.21.0"
+          "@vitejs/plugin-react": "^4.2.1"
+          eslint: "^8.56.0"
+          "eslint-plugin-react-hooks": "^4.6.0"
+          "eslint-plugin-react-refresh": "^0.4.5"
+          typescript: "^5.2.2"
+          vite: "^5.1.0"
+
+  setupCommands:
+    # Example: Command to be run in the context of the frontend directory
+    - context: "{frontendPath}" # Placeholder for actual path
+      command: "npm install"
+    - context: "{frontendPath}"
+      command: "npm run lint -- --fix" # Example initial lint
+```
