@@ -49,6 +49,11 @@
       "description": "Retrieves the status and result of a background job previously initiated by another tool.",
       "use_cases": ["job status", "check job", "get job result", "task progress", "background task status"],
       "input_patterns": ["get result for job {jobId}", "check status of job {jobId}", "what is the result of {jobId}"]
+    },
+    "map-codebase": {
+      "description": "Indexes and maps a codebase structure, providing class/function maps, comments, and Mermaid diagrams for AI consumption. Captures doc-strings and inline comments for semantic context.",
+      "use_cases": ["map codebase", "analyze code structure", "understand project architecture", "generate code documentation map", "index project symbols", "visualize code dependencies", "semantic code map"],
+      "input_patterns": ["map codebase {path}", "generate a code map for project {projectName}", "analyze the structure of {directory}", "show me a semantic map of the codebase", "create architecture diagram for {path}"]
     }
   }
 }

@@ -205,7 +205,8 @@ The location varies depending on your AI assistant:
         "generate-fullstack-starter-kit",
         "refactor-code",
         "git-summary", 
-        "run-workflow"
+        "run-workflow",
+        "map-codebase"
       ]
     }
     ```
@@ -559,6 +560,7 @@ Refer to these individual READMEs for in-depth information:
 *   `src/tools/task-list-generator/README.md`
 *   `src/tools/user-stories-generator/README.md`
 *   `src/tools/workflow-runner/README.md`
+*   `src/tools/code-map-generator/README.md`
 
 ## Tool Categories
 
@@ -568,6 +570,7 @@ Refer to these individual READMEs for in-depth information:
 
 ### Analysis & Information Tools
 
+*   **Code Map Generator (`map-codebase`)**: Scans a codebase to extract semantic information (classes, functions, comments) and generates a structural map with Mermaid diagrams.
 *   **Git Summary Generator (`git-summary`)**: Provides a summary of the current Git status, showing staged or unstaged changes (diff). Useful for quick checks before committing.
 *   **Research Manager (`research-manager`)**: Performs deep research on technical topics using Perplexity Sonar, providing summaries and sources.
 
@@ -623,6 +626,7 @@ Interact with the tools via your connected AI assistant:
 *   **Refactor Code:** `Refactor this code to use async/await: [paste code snippet]`
 *   **Git Summary:** `Show unstaged git changes`
 *   **Run Workflow:** `Run workflow newProjectSetup with input { "projectName": "my-new-app", "description": "A simple task manager" }`
+*   **Map Codebase:** `Generate a code map for the current project` or `map-codebase path="./src"`
 
 ## Running Locally (Optional)
 
