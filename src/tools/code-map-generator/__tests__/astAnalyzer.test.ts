@@ -32,49 +32,9 @@ describe('AST Analyzer', () => {
     await initializeParser();
   });
 
-  // Mock the actual implementation of extractFunctions, extractClasses, and extractImports
-  vi.mock('../astAnalyzer.js', async () => {
-    const actual = await vi.importActual('../astAnalyzer.js');
-    return {
-      ...actual,
-      extractFunctions: vi.fn().mockImplementation((node, sourceCode, languageId) => {
-        if (languageId === '.js') {
-          return [{
-            name: 'myFunction',
-            signature: 'myFunction()',
-            comment: 'Performs an action related to my function.',
-            startLine: 1,
-            endLine: 1
-          }];
-        } else if (languageId === '.py') {
-          return [{
-            name: 'hello_world',
-            signature: 'hello_world()',
-            comment: 'This is a docstring.',
-            startLine: 1,
-            endLine: 3
-          }];
-        }
-        return [];
-      }),
-      extractClasses: vi.fn().mockImplementation(() => {
-        return [{
-          name: 'MyClass',
-          methods: [],
-          comment: 'A my class class definition.',
-          startLine: 1,
-          endLine: 1
-        }];
-      }),
-      extractImports: vi.fn().mockImplementation(() => {
-        return [{
-          path: './utils.js',
-          importedItems: ['helper'],
-          startLine: 1,
-          endLine: 1
-        }];
-      })
-    };
+  // We'll use the actual implementation for our new tests
+  beforeEach(() => {
+    vi.restoreAllMocks();
   });
 
   // Helper function to create a mock SyntaxNode - only used for getNodeText tests now
@@ -154,6 +114,82 @@ describe('AST Analyzer', () => {
       expect(functions[0].name).toBe('hello_world');
       // This test might need adjustment based on how docstrings are actually extracted
       // expect(functions[0].comment).toBe('This is a docstring.');
+    });
+
+    it('should extract a function from variable assignment', () => {
+      // Create a mock for: const myArrowFunc = () => {}
+      const identifierNode = createMockNode('identifier', 'myArrowFunc');
+      const arrowFuncNode = createMockNode('arrow_function', '() => {}');
+      const variableDeclaratorNode = createMockNode('variable_declarator', 'myArrowFunc = () => {}', [identifierNode, arrowFuncNode], [identifierNode, arrowFuncNode], null, { name: identifierNode });
+
+      // Set parent relationship
+      const arrowFuncWithParent = arrowFuncNode as SyntaxNode & { parent: SyntaxNode };
+      arrowFuncWithParent.parent = variableDeclaratorNode;
+
+      const rootNode = createMockNode('program', 'const myArrowFunc = () => {}', [variableDeclaratorNode]);
+
+      // Mock the descendantsOfType to return our arrow function
+      rootNode.descendantsOfType = vi.fn().mockReturnValue([arrowFuncNode]);
+
+      const functions = extractFunctions(rootNode, rootNode.text, '.js');
+      expect(functions).toHaveLength(1);
+      expect(functions[0].name).toBe('myArrowFunc');
+    });
+
+    it('should extract a function from test framework', () => {
+      // Create a mock for: describe('test case', () => {})
+      const stringNode = createMockNode('string', "'test case'");
+      const arrowFuncNode = createMockNode('arrow_function', '() => {}');
+      const argumentsNode = createMockNode('arguments', "'test case', () => {}", [stringNode, arrowFuncNode], [stringNode, arrowFuncNode]);
+
+      // Set parent relationship for arrow function
+      const arrowFuncWithParent = arrowFuncNode as SyntaxNode & { parent: SyntaxNode };
+      arrowFuncWithParent.parent = argumentsNode;
+
+      const identifierNode = createMockNode('identifier', 'describe');
+      const callExprNode = createMockNode('call_expression', "describe('test case', () => {})", [identifierNode, argumentsNode], [identifierNode, argumentsNode], null, { function: identifierNode, arguments: argumentsNode });
+
+      // Set parent relationship for arguments
+      const argumentsWithParent = argumentsNode as SyntaxNode & { parent: SyntaxNode };
+      argumentsWithParent.parent = callExprNode;
+
+      const rootNode = createMockNode('program', "describe('test case', () => {})", [callExprNode]);
+
+      // Mock the descendantsOfType to return our arrow function
+      rootNode.descendantsOfType = vi.fn().mockReturnValue([arrowFuncNode]);
+
+      const functions = extractFunctions(rootNode, rootNode.text, '.js');
+      expect(functions).toHaveLength(1);
+      expect(functions[0].name).toBe('describe_test case');
+    });
+
+    it('should extract a function from array method callback', () => {
+      // Create a mock for: array.map(() => {})
+      const arrowFuncNode = createMockNode('arrow_function', '() => {}');
+      const argumentsNode = createMockNode('arguments', '() => {}', [arrowFuncNode], [arrowFuncNode]);
+
+      // Set parent relationship for arrow function
+      const arrowFuncWithParent = arrowFuncNode as SyntaxNode & { parent: SyntaxNode };
+      arrowFuncWithParent.parent = argumentsNode;
+
+      const propertyNode = createMockNode('identifier', 'map');
+      const objectNode = createMockNode('identifier', 'array');
+      const memberExprNode = createMockNode('member_expression', 'array.map', [objectNode, propertyNode], [objectNode, propertyNode], null, { property: propertyNode });
+
+      const callExprNode = createMockNode('call_expression', 'array.map(() => {})', [memberExprNode, argumentsNode], [memberExprNode, argumentsNode], null, { function: memberExprNode, arguments: argumentsNode });
+
+      // Set parent relationship for arguments
+      const argumentsWithParent = argumentsNode as SyntaxNode & { parent: SyntaxNode };
+      argumentsWithParent.parent = callExprNode;
+
+      const rootNode = createMockNode('program', 'array.map(() => {})', [callExprNode]);
+
+      // Mock the descendantsOfType to return our arrow function
+      rootNode.descendantsOfType = vi.fn().mockReturnValue([arrowFuncNode]);
+
+      const functions = extractFunctions(rootNode, rootNode.text, '.js');
+      expect(functions).toHaveLength(1);
+      expect(functions[0].name).toBe('map_callback');
     });
   });
 

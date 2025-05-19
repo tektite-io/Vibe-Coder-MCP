@@ -7,7 +7,8 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 import logger from '../../logger.js';
-import { CodeMapGeneratorConfig, CacheConfig, ProcessingConfig, OutputConfig } from './types.js';
+import { CodeMapGeneratorConfig, CacheConfig, ProcessingConfig, OutputConfig, FeatureFlagsConfig } from './types.js';
+import { getFeatureFlags } from './config/featureFlags.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
 
 /**
@@ -27,6 +28,14 @@ const DEFAULT_CONFIG: Partial<CodeMapGeneratorConfig> = {
   output: {
     format: 'markdown',
     splitOutput: true,
+  },
+  featureFlags: {
+    enhancedFunctionDetection: true,
+    contextAnalysis: true,
+    frameworkDetection: true,
+    roleIdentification: true,
+    heuristicNaming: true,
+    memoryOptimization: true,
   }
 };
 
@@ -54,6 +63,7 @@ export async function validateCodeMapConfig(config: Partial<CodeMapGeneratorConf
     cache: validateCacheConfig(config.cache),
     processing: validateProcessingConfig(config.processing),
     output: validateOutputConfig(config.output),
+    featureFlags: validateFeatureFlagsConfig(config.featureFlags),
   };
 
   return validatedConfig;
@@ -155,6 +165,35 @@ export function validateOutputConfig(config?: Partial<OutputConfig>): OutputConf
     format: config.format || defaultOutput.format,
     splitOutput: config.splitOutput !== undefined ? config.splitOutput : defaultOutput.splitOutput,
     filePrefix: config.filePrefix,
+  };
+}
+
+/**
+ * Validates the feature flags configuration.
+ * @param config The feature flags configuration to validate
+ * @returns The validated feature flags configuration with defaults applied
+ */
+export function validateFeatureFlagsConfig(config?: Partial<FeatureFlagsConfig>): FeatureFlagsConfig {
+  const defaultFeatureFlags = DEFAULT_CONFIG.featureFlags as FeatureFlagsConfig;
+
+  if (!config) {
+    return defaultFeatureFlags;
+  }
+
+  // Start with defaults and override with provided values
+  return {
+    enhancedFunctionDetection: config.enhancedFunctionDetection !== undefined ?
+      config.enhancedFunctionDetection : defaultFeatureFlags.enhancedFunctionDetection,
+    contextAnalysis: config.contextAnalysis !== undefined ?
+      config.contextAnalysis : defaultFeatureFlags.contextAnalysis,
+    frameworkDetection: config.frameworkDetection !== undefined ?
+      config.frameworkDetection : defaultFeatureFlags.frameworkDetection,
+    roleIdentification: config.roleIdentification !== undefined ?
+      config.roleIdentification : defaultFeatureFlags.roleIdentification,
+    heuristicNaming: config.heuristicNaming !== undefined ?
+      config.heuristicNaming : defaultFeatureFlags.heuristicNaming,
+    memoryOptimization: config.memoryOptimization !== undefined ?
+      config.memoryOptimization : defaultFeatureFlags.memoryOptimization,
   };
 }
 

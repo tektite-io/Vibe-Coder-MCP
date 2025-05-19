@@ -205,6 +205,85 @@ The grammar files are loaded from the following directory:
 
 The tool dynamically loads the appropriate grammar files based on the file extensions encountered during scanning. If a grammar file is missing, the tool will log a warning and continue processing other files.
 
+## Enhanced Function Name Detection
+
+The Code-Map Generator includes an advanced function name detection system that provides context-aware function names and semantic information for 30+ programming languages.
+
+### Key Features
+
+- **Language-Specific Handlers**: Specialized handlers for each supported language that understand language-specific idioms and patterns.
+- **Framework Detection**: Automatic detection of popular frameworks like React, Angular, Vue, Express, Django, Flask, and more.
+- **Context-Aware Function Names**: Intelligent extraction of function names based on their context and usage.
+- **Comment Extraction**: Extraction of documentation comments (JSDoc, docstrings, etc.) for functions and classes.
+- **Heuristic Comments**: Generation of descriptive comments for functions and classes that lack documentation.
+
+### Supported Languages
+
+The Enhanced Function Name Detection system supports all languages supported by the Code-Map Generator, with specialized handlers for:
+
+- JavaScript/TypeScript
+- Python
+- Java
+- C#
+- Go
+- Ruby
+- Rust
+- PHP
+- Swift
+- Kotlin
+- C/C++
+- Scala
+- Objective-C
+- Elixir
+- Lua
+- Bash/Shell
+- Dart/Flutter
+- R
+- YAML/Configuration
+- GraphQL/Schema
+- JSON
+- HTML
+- Vue
+- TOML
+- And more...
+
+### Framework Support
+
+The system can detect and provide specialized handling for popular frameworks, including:
+
+- React
+- Angular
+- Vue
+- Express
+- Django
+- Flask
+- Spring
+- ASP.NET
+- Rails
+- Laravel
+- Android
+- Flutter
+
+### How It Works
+
+1. **Language Detection**: The system detects the language of the source code based on file extension and content.
+2. **Grammar Loading**: The appropriate Tree-sitter grammar is loaded for parsing.
+3. **AST Parsing**: The source code is parsed into an Abstract Syntax Tree (AST).
+4. **Function Extraction**: Language-specific handlers extract functions, methods, and classes from the AST.
+5. **Context Analysis**: The system analyzes the context of each function to determine its purpose and usage.
+6. **Framework Detection**: The system detects frameworks used in the code and applies specialized handling.
+7. **Comment Extraction**: Documentation comments are extracted and associated with functions and classes.
+8. **Heuristic Generation**: For functions and classes without documentation, heuristic comments are generated.
+
+### Memory Management
+
+The Enhanced Function Name Detection system includes sophisticated memory management features:
+
+- **Lazy Grammar Loading**: Tree-sitter grammars are loaded on demand to reduce memory usage.
+- **LRU Caching**: Least Recently Used (LRU) caching is used for AST nodes and source code.
+- **Automatic Garbage Collection**: The system periodically suggests garbage collection to free up memory.
+- **File-Based Caching**: Large data structures can be cached to disk to reduce memory usage.
+
 ## Security Considerations
 
 The Code-Map Generator tool implements several security measures:

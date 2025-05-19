@@ -2,13 +2,23 @@
 
 export interface FunctionInfo {
   name: string;
-  signature: string; // e.g., "myFunction(param1: string, param2: number): boolean"
+  signature?: string; // e.g., "myFunction(param1: string, param2: number): boolean"
   comment?: string; // Heuristic or docstring
   startLine: number;
   endLine: number;
   isAsync?: boolean; // Optional metadata
   isExported?: boolean; // Optional metadata
-  // Future: parameters, returnType, etc.
+  isMethod?: boolean;
+  isConstructor?: boolean;
+  isGetter?: boolean;
+  isSetter?: boolean;
+  isGenerator?: boolean;
+  isHook?: boolean;
+  isEventHandler?: boolean;
+  framework?: string;
+  class?: string;
+  parameters?: string[];
+  returnType?: string;
 }
 
 export interface ClassInfo {

@@ -1,10 +1,8 @@
-import { SyntaxNode } from './parser.js'; // Assuming SyntaxNode is exported from parser.js
+import { SyntaxNode } from './parser.js';
 import { FunctionInfo, ClassInfo, ImportInfo } from './codeMapModel.js';
-
-// Language-specific query strings or node types can be defined here or in a separate config
-// For simplicity, we'll use string comparisons for node types, but queries are more robust.
-// Example:
-// const JS_FUNCTION_QUERY = `(function_declaration name: (identifier) @name parameters: (formal_parameters) @params body: (statement_block) @body)`;
+import { FunctionExtractionOptions, ClassExtractionOptions, ImportExtractionOptions } from './types.js';
+import { getLanguageHandler } from './languageHandlers/registry.js';
+import logger from '../../logger.js';
 
 /**
  * Extracts the text content of a given AST node from the source code.
@@ -113,206 +111,92 @@ function findCommentForNode(node: SyntaxNode, sourceCode: string, languageId: st
 }
 
 
+/**
+ * Extracts functions from an AST node using the appropriate language handler.
+ * @param parentNode The parent node to extract functions from.
+ * @param sourceCode The source code string.
+ * @param languageId The language identifier (e.g., '.js', '.py').
+ * @param isMethodExtraction Whether to extract methods within a class.
+ * @param className The name of the parent class if extracting methods.
+ * @returns An array of extracted function information.
+ */
 export function extractFunctions(
   parentNode: SyntaxNode,
   sourceCode: string,
   languageId: string,
-  isMethodExtraction: boolean = false, // True if extracting methods for a class
-  className?: string // Optional class name if extracting methods
+  isMethodExtraction: boolean = false,
+  className?: string
 ): FunctionInfo[] {
-  const functions: FunctionInfo[] = [];
-  const queryPatterns: Record<string, string[]> = {
-    '.js': ['function_declaration', 'arrow_function', 'method_definition'],
-    '.ts': ['function_declaration', 'arrow_function', 'method_definition'],
-    '.py': ['function_definition'],
-    // Add more language patterns here
-  };
+  try {
+    // Get the appropriate language handler
+    const handler = getLanguageHandler(languageId);
 
-  const patternsToQuery = queryPatterns[languageId] || [];
-  if (patternsToQuery.length === 0) return functions;
+    // Create options object
+    const options: FunctionExtractionOptions = {
+      isMethodExtraction,
+      className,
+      enableContextAnalysis: true,
+      enableRoleDetection: true,
+      enableHeuristicNaming: true
+    };
 
-  parentNode.descendantsOfType(patternsToQuery).forEach(node => {
-    // Filter out nested functions if we are only extracting top-level functions or methods
-    if (!isMethodExtraction && node.parent && patternsToQuery.includes(node.parent.type)) {
-        return; // Skip nested functions if not extracting methods within this call
-    }
-    if (isMethodExtraction && node.type !== 'method_definition' && languageId !== '.py') { // Python methods are 'function_definition'
-        // If extracting methods, only consider method_definition nodes (or equivalent for other langs)
-        // unless it's Python where methods are also function_definition but within a class_definition
-        if (languageId === '.py' && node.parent?.type !== 'block') { // Python methods are inside class's block
-             return;
-        } else if (languageId !== '.py') {
-            return;
-        }
-    }
-
-
-    let name = 'anonymous';
-    let signatureParams = '()';
-    const nameNode = node.childForFieldName('name') || (node.type === 'arrow_function' && node.previousNamedSibling?.type === 'identifier' ? node.previousNamedSibling : null);
-    if (nameNode) {
-      name = getNodeText(nameNode, sourceCode);
-    }
-
-    const paramsNode = node.childForFieldName('parameters');
-    if (paramsNode) {
-      signatureParams = getNodeText(paramsNode, sourceCode);
-    } else if (node.type === 'arrow_function') {
-        // Simpler param extraction for arrow functions if 'parameters' field isn't standard
-        const firstChild = node.firstChild;
-        if (firstChild?.type === 'identifier' || firstChild?.type === 'formal_parameters') {
-            signatureParams = getNodeText(firstChild, sourceCode);
-        }
-    }
-
-
-    const comment = findCommentForNode(node, sourceCode, languageId) || generateHeuristicComment(name, isMethodExtraction ? 'method' : 'function', signatureParams, className);
-
-    functions.push({
-      name,
-      signature: `${name}${signatureParams}`, // Simplified signature
-      comment,
-      startLine: node.startPosition.row + 1,
-      endLine: node.endPosition.row + 1,
-      isAsync: node.text.startsWith('async '), // Basic check
-      isExported: node.parent?.type === 'export_statement', // Basic check
-    });
-  });
-  return functions;
+    // Extract functions using the handler
+    return handler.extractFunctions(parentNode, sourceCode, options);
+  } catch (error) {
+    logger.error({ err: error, languageId }, `Error extracting functions for language ${languageId}`);
+    return [];
+  }
 }
 
+/**
+ * Extracts classes from an AST node using the appropriate language handler.
+ * @param rootNode The root node to extract classes from.
+ * @param sourceCode The source code string.
+ * @param languageId The language identifier (e.g., '.js', '.py').
+ * @returns An array of extracted class information.
+ */
 export function extractClasses(rootNode: SyntaxNode, sourceCode: string, languageId: string): ClassInfo[] {
-  const classes: ClassInfo[] = [];
-  const queryPatterns: Record<string, string[]> = {
-    '.js': ['class_declaration'],
-    '.ts': ['class_declaration'],
-    '.py': ['class_definition'],
-    // Add more
-  };
+  try {
+    // Get the appropriate language handler
+    const handler = getLanguageHandler(languageId);
 
-  const patternsToQuery = queryPatterns[languageId] || [];
-  if (patternsToQuery.length === 0) return classes;
+    // Create options object
+    const options: ClassExtractionOptions = {
+      extractNestedClasses: false,
+      extractMethods: true,
+      extractProperties: true
+    };
 
-  rootNode.descendantsOfType(patternsToQuery).forEach(node => {
-    const nameNode = node.childForFieldName('name');
-    const name = nameNode ? getNodeText(nameNode, sourceCode) : 'AnonymousClass';
-
-    const methods = extractFunctions(node.childForFieldName('body') || node, sourceCode, languageId, true, name);
-
-    let parentClass: string | undefined;
-    const superclassNode = node.childForFieldName('superclass'); // Common in JS/TS
-    if (superclassNode) {
-      parentClass = getNodeText(superclassNode, sourceCode);
-    } else if (languageId === '.py') { // Python: class MyClass(ParentClass):
-        const argListNode = node.childForFieldName('argument_list');
-        if(argListNode?.firstChild?.type === 'identifier') {
-            parentClass = getNodeText(argListNode.firstChild, sourceCode);
-        }
-    }
-
-    const comment = findCommentForNode(node, sourceCode, languageId) || generateHeuristicComment(name, 'class');
-
-    classes.push({
-      name,
-      methods,
-      properties: [], // Add empty properties array
-      parentClass,
-      // implementedInterfaces: [], // TODO: Extract interfaces
-      comment,
-      startLine: node.startPosition.row + 1,
-      endLine: node.endPosition.row + 1,
-      isExported: node.parent?.type === 'export_statement',
-    });
-  });
-  return classes;
+    // Extract classes using the handler
+    return handler.extractClasses(rootNode, sourceCode, options);
+  } catch (error) {
+    logger.error({ err: error, languageId }, `Error extracting classes for language ${languageId}`);
+    return [];
+  }
 }
 
+/**
+ * Extracts imports from an AST node using the appropriate language handler.
+ * @param rootNode The root node to extract imports from.
+ * @param sourceCode The source code string.
+ * @param languageId The language identifier (e.g., '.js', '.py').
+ * @returns An array of extracted import information.
+ */
 export function extractImports(rootNode: SyntaxNode, sourceCode: string, languageId: string): ImportInfo[] {
-  const imports: ImportInfo[] = [];
-  const queryPatterns: Record<string, string[]> = {
-    '.js': ['import_statement', 'lexical_declaration'], // lex_decl for require()
-    '.ts': ['import_statement', 'lexical_declaration'],
-    '.py': ['import_statement', 'import_from_statement'],
-    // Add more
-  };
+  try {
+    // Get the appropriate language handler
+    const handler = getLanguageHandler(languageId);
 
-  const patternsToQuery = queryPatterns[languageId] || [];
-  if (patternsToQuery.length === 0) return imports;
+    // Create options object
+    const options: ImportExtractionOptions = {
+      resolveImportPaths: false,
+      extractComments: true
+    };
 
-  rootNode.descendantsOfType(patternsToQuery).forEach(node => {
-    let importPath = '';
-    const importedItems: string[] = [];
-    let isDefault = false;
-
-    if ((languageId === '.js' || languageId === '.ts') && node.type === 'import_statement') {
-        const sourceNode = node.childForFieldName('source');
-        if (sourceNode) {
-            importPath = getNodeText(sourceNode, sourceCode).slice(1, -1); // Remove quotes
-        }
-        // Look for named imports or default import
-        node.descendantsOfType(['import_clause', 'named_imports', 'identifier', 'namespace_import']).forEach(clauseNode => {
-            if(clauseNode.type === 'identifier' && clauseNode.parent?.type === 'import_clause' && clauseNode.previousSibling?.type !== 'type_alias_declaration') { // basic default import
-                importedItems.push(getNodeText(clauseNode, sourceCode));
-                isDefault = true;
-            } else if (clauseNode.type === 'identifier' && clauseNode.parent?.type === 'import_specifier') {
-                 importedItems.push(getNodeText(clauseNode, sourceCode));
-            } else if (clauseNode.type === 'namespace_import' && clauseNode.childForFieldName('name')) {
-                importedItems.push(`* as ${getNodeText(clauseNode.childForFieldName('name'), sourceCode)}`);
-            }
-        });
-    } else if (languageId === '.py' && (node.type === 'import_statement' || node.type === 'import_from_statement')) {
-        // Python: import module or from module import item
-        if (node.type === 'import_statement') {
-            node.descendantsOfType('dotted_name').forEach(nameNode => {
-                 imports.push({
-                    path: getNodeText(nameNode, sourceCode),
-                    startLine: node.startPosition.row +1,
-                    endLine: node.endPosition.row + 1,
-                 });
-            });
-            return; // Handled
-        } else { // import_from_statement
-            const moduleNameNode = node.childForFieldName('module_name');
-            if (moduleNameNode) {
-                importPath = getNodeText(moduleNameNode, sourceCode);
-            }
-            node.descendantsOfType(['dotted_name', 'wildcard_import']).forEach(itemNode => {
-                 if (itemNode.parent?.type === 'import_from_statement' && itemNode.previousSibling?.text === 'import') { // avoid module_name
-                    importedItems.push(getNodeText(itemNode, sourceCode));
-                 } else if (itemNode.type === 'dotted_name' && itemNode.parent?.type === 'aliased_import') {
-                    importedItems.push(getNodeText(itemNode, sourceCode) + ' as ' + getNodeText(itemNode.nextNamedSibling, sourceCode));
-                 } else if (itemNode.type === 'wildcard_import') {
-                    importedItems.push('*');
-                 }
-            });
-        }
-    } else if ((languageId === '.js' || languageId === '.ts') && node.type === 'lexical_declaration') {
-        // Basic require: const x = require('module');
-        const callNode = node.descendantsOfType('call_expression').find(c => getNodeText(c.childForFieldName('function'), sourceCode) === 'require');
-        if (callNode) {
-            const argNode = callNode.childForFieldName('arguments')?.firstChild;
-            if (argNode && (argNode.type === 'string' || argNode.type === 'template_string')) {
-                importPath = getNodeText(argNode, sourceCode).slice(1, -1);
-                const varNameNode = node.descendantsOfType('identifier')[0];
-                if (varNameNode) importedItems.push(getNodeText(varNameNode, sourceCode));
-                isDefault = true; // require usually acts like a default import
-            }
-        } else {
-            return; // Not a require call
-        }
-    }
-
-
-    if (importPath) {
-      imports.push({
-        path: importPath,
-        importedItems: importedItems.length > 0 ? importedItems : undefined,
-        isDefault,
-
-        startLine: node.startPosition.row + 1,
-        endLine: node.endPosition.row + 1,
-      });
-    }
-  });
-  return imports;
+    // Extract imports using the handler
+    return handler.extractImports(rootNode, sourceCode, options);
+  } catch (error) {
+    logger.error({ err: error, languageId }, `Error extracting imports for language ${languageId}`);
+    return [];
+  }
 }
