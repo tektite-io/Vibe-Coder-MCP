@@ -7,6 +7,10 @@ export interface OpenRouterConfig {
   geminiModel: string;
   perplexityModel: string;
   llm_mapping?: Record<string, string>; // Optional: Mapping of logical task names to model strings
+
+  // Tool-specific configurations
+  tools?: Record<string, any>;
+  config?: Record<string, any>;
 }
 
 

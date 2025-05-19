@@ -12,8 +12,25 @@
     "dev:sse": "tsc -w & cross-env NODE_ENV=development nodemon build/index.js --sse | pino-pretty",
     "lint": "eslint \"src/**/*.ts\"",
     "test": "vitest run",
+    "test:unit": "vitest run \"src/**/__tests__/**/*.test.ts\"",
+    "test:integration": "vitest run \"src/**/__integration__/**/*.test.ts\" \"src/__integration__/**/*.test.ts\"",
+    "test:e2e": "vitest run \"e2e/**/*.test.ts\"",
     "test:watch": "vitest",
-    "coverage": "vitest run --coverage"
+    "test:unit:watch": "vitest \"src/**/__tests__/**/*.test.ts\"",
+    "test:integration:watch": "vitest \"src/**/__integration__/**/*.test.ts\" \"src/__integration__/**/*.test.ts\"",
+    "test:e2e:watch": "vitest \"e2e/**/*.test.ts\"",
+    "coverage": "vitest run --coverage",
+    "coverage:unit": "vitest run --coverage \"src/**/__tests__/**/*.test.ts\"",
+    "coverage:integration": "vitest run --coverage \"src/**/__integration__/**/*.test.ts\" \"src/__integration__/**/*.test.ts\"",
+    "coverage:e2e": "vitest run --coverage \"e2e/**/*.test.ts\"",
+    "test:ci": "vitest run --reporter=junit --outputFile=test-results.xml",
+    "test:job-polling": "vitest run \"e2e/job-status-polling-flow.test.ts\"",
+    "test:code-map": "vitest run \"e2e/code-map-generator-flow.test.ts\"",
+    "test:workflow": "vitest run \"e2e/workflow-runner-flow.test.ts\"",
+    "test:transport": "vitest run \"e2e/transport-specific-flow.test.ts\"",
+    "test:message-format": "vitest run \"e2e/message-format-flow.test.ts\"",
+    "test:rate-limiting": "vitest run \"e2e/rate-limiting-flow.test.ts\"",
+    "test:job-result-retriever": "vitest run \"e2e/job-result-retriever-flow.test.ts\""
   },
   "keywords": [
     "MCP",
@@ -34,6 +51,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.7.0",
     "axios": "^1.6.7",
+    "commander": "^14.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.18.2",
@@ -41,6 +59,7 @@
     "js-yaml": "^4.1.0",
     "pino": "^9.6.0",
     "simple-git": "^3.22.0",
+    "web-tree-sitter": "^0.20.8",
     "zod": "^3.22.4"
   },
   "devDependencies": {
@@ -54,8 +73,14 @@
     "@xenova/transformers": "^2.17.1",
     "cross-env": "^7.0.3",
     "eslint": "^8.56.0",
+    "eventsource": "^2.0.2",
     "nodemon": "^3.0.3",
     "pino-pretty": "^13.0.0",
+    "tree-sitter-cli": "^0.25.4",
+    "tree-sitter-javascript": "^0.23.1",
+    "tree-sitter-python": "^0.23.6",
+    "tree-sitter-typescript": "^0.23.2",
+    "tree-sitter-wasms": "^0.1.12",
     "typescript": "^5.3.3",
     "vitest": "^3.0.9"
   },

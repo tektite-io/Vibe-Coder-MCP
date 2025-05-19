@@ -1,0 +1,45 @@
+{
+  "vitest.enable": true,
+  "vitest.commandLine": "npm run test:watch",
+  "vitest.include": [
+    "**/__tests__/**/*.test.ts",
+    "**/__integration__/**/*.test.ts",
+    "e2e/**/*.test.ts"
+  ],
+  "vitest.exclude": [
+    "**/node_modules/**",
+    "**/build/**"
+  ],
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+  "eslint.validate": [
+    "typescript"
+  ],
+  "files.exclude": {
+    "**/.git": true,
+    "**/.DS_Store": true,
+    "**/node_modules": true,
+    "**/build": false
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/build": true
+  },
+  "testExplorer.useNativeTesting": true,
+  "testExplorer.showCollapseButton": true,
+  "testExplorer.mergeSuites": true,
+  "testExplorer.hideEmptyLog": true,
+  "testExplorer.addToEditorContextMenu": true,
+  "testExplorer.showOnRun": true,
+  "testExplorer.sort": "byLocation",
+  "testExplorer.codeLens": true,
+  "testExplorer.gutterDecoration": true,
+  "testExplorer.errorDecoration": true,
+  "testExplorer.errorDecorationHover": true,
+  "testExplorer.onStart": "reset",
+  "testExplorer.onReload": "reset",
+  "testExplorer.showInlineError": true
+}

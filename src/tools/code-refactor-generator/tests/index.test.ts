@@ -7,7 +7,7 @@ import { OpenRouterConfig } from '../../../types/workflow.js'; // Import OpenRou
 import logger from '../../../logger.js'; // Adjust path if needed
 import { jobManager, JobStatus } from '../../../services/job-manager/index.js'; // Import Job Manager
 import { sseNotifier } from '../../../services/sse-notifier/index.js'; // Import SSE Notifier
-import { CallToolResult } from '@modelcontextprotocol/sdk/types.js'; // Import CallToolResult
+import { McpError } from '@modelcontextprotocol/sdk/types.js'; // Import McpError for typing
 
 // Mock dependencies
 vi.mock('../../../utils/fileReader.js');
@@ -183,7 +183,7 @@ describe('refactorCode (Async)', () => {
        expect(finalResultArgs[0]).toBe(mockJobId);
        expect(finalResultArgs[1].isError).toBe(true);
        expect(finalResultArgs[1].content[0]?.text).toContain('Error during background job');
-       const errorDetailsApi = finalResultArgs[1].errorDetails as any; // Cast to any
+       const errorDetailsApi = finalResultArgs[1].errorDetails as McpError; // Cast to McpError
        expect(errorDetailsApi?.message).toContain('Code refactoring API Error: Status 400');
        expect(sseNotifier.sendProgress).toHaveBeenCalledWith(mockContext.sessionId, mockJobId, JobStatus.FAILED, expect.stringContaining('Job failed:'));
    });
@@ -201,7 +201,7 @@ describe('refactorCode (Async)', () => {
         const finalResultArgs = vi.mocked(jobManager.setJobResult).mock.calls[0];
         expect(finalResultArgs[1].isError).toBe(true); // Should now correctly be an error
         expect(finalResultArgs[1].content[0]?.text).toContain('Error during background job');
-        const errorDetailsEmpty = finalResultArgs[1].errorDetails as any; // Cast to any
+        const errorDetailsEmpty = finalResultArgs[1].errorDetails as McpError; // Cast to McpError
         expect(errorDetailsEmpty?.message).toContain('LLM returned empty code content after cleanup');
     });
 
@@ -218,7 +218,7 @@ describe('refactorCode (Async)', () => {
         const finalResultArgs = vi.mocked(jobManager.setJobResult).mock.calls[0];
         expect(finalResultArgs[1].isError).toBe(true);
         expect(finalResultArgs[1].content[0]?.text).toContain('Error during background job');
-        const errorDetailsStruct = finalResultArgs[1].errorDetails as any; // Cast to any
+        const errorDetailsStruct = finalResultArgs[1].errorDetails as McpError; // Cast to McpError
         expect(errorDetailsStruct?.message).toContain('No valid content received from LLM');
     });
 });

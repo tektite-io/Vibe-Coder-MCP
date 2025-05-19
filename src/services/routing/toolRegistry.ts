@@ -7,12 +7,15 @@ import logger from '../../logger.js';
 import { AppError, ValidationError } from '../../utils/errors.js';
 
 /**
- * Defines the structure for passing contextual information (like sessionId)
- * to tool executors.
+ * Defines the structure for passing contextual information to tool executors.
  */
 export interface ToolExecutionContext {
-  sessionId: string; // Identifier for the client connection (e.g., SSE session)
-  // Add other context properties here if needed in the future
+  /** Identifier for the client connection (e.g., SSE session) */
+  sessionId: string;
+  /** The type of transport being used (stdio, sse) */
+  transportType?: string;
+  /** Any additional context information */
+  [key: string]: unknown;
 }
 
 /**
@@ -43,8 +46,7 @@ export interface ToolDefinition {
   executor: ToolExecutor;
 }
 
-// In-memory storage for registered tools. Maps tool name to its definition.
-const toolRegistry = new Map<string, ToolDefinition>();
+// Singleton instance will manage the tool registry
 
 // Singleton instance holder
 let instance: ToolRegistry | null = null;
@@ -75,17 +77,17 @@ export class ToolRegistry {
                 throw new Error("ToolRegistry requires configuration on first initialization.");
             }
             instance = new ToolRegistry(config);
-            logger.info('ToolRegistry initialized with configuration', { 
+            logger.info('ToolRegistry initialized with configuration', {
                 hasLlmMapping: Boolean(config.llm_mapping),
                 mappingKeys: config.llm_mapping ? Object.keys(config.llm_mapping) : []
             });
-            
+
             // Process any pending tool registrations after initial initialization
             processPendingToolRegistrations();
         } else if (config) {
             // Always update the config when provided
             instance.config = {...config}; // Make a copy to avoid reference issues
-            logger.info('ToolRegistry configuration updated', { 
+            logger.info('ToolRegistry configuration updated', {
                 hasLlmMapping: Boolean(config.llm_mapping),
                 mappingKeys: config.llm_mapping ? Object.keys(config.llm_mapping) : []
             });
@@ -153,7 +155,7 @@ export function registerTool(definition: ToolDefinition): void {
         pendingToolRegistrations.push(definition);
         return;
     }
-    
+
     // Otherwise, register immediately with the initialized registry
     ToolRegistry.getInstance().registerTool(definition);
 }
@@ -171,19 +173,19 @@ export function processPendingToolRegistrations(): void {
         logger.error("Tried to process pending tool registrations but ToolRegistry is still not initialized");
         return;
     }
-    
+
     const pendingCount = pendingToolRegistrations.length;
     if (pendingCount > 0) {
         logger.info(`Processing ${pendingCount} pending tool registrations`);
-        
+
         // Register all pending tools
         for (const toolDef of pendingToolRegistrations) {
             ToolRegistry.getInstance().registerTool(toolDef);
         }
-        
+
         // Clear the pending queue
         pendingToolRegistrations.length = 0;
-        
+
         logger.info(`Successfully registered ${pendingCount} pending tools`);
     }
 }
