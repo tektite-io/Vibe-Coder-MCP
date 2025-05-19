@@ -1,36 +1,53 @@
 // src/services/job-response-formatter/index.ts
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { JobStatus } from '../job-manager/index.js'; // Assuming JobStatus is needed/useful
+import { ToolExecutionContext } from '../routing/toolRegistry.js';
+import { JobStatus } from '../job-manager/index.js';
+import { createJobStatusMessage } from '../job-manager/jobStatusMessage.js';
 
 /**
- * Formats the initial response for a background job that has been successfully initiated.
- *
- * @param jobId The unique identifier for the job.
- * @param toolName The internal, registered name of the tool (e.g., "generate-prd").
- * @param toolDisplayName A user-friendly name for the tool (e.g., "PRD Generator").
- * @returns A CallToolResult object suitable for immediate return to the client.
+ * Formats a response for a background job initiation.
+ * @param jobId The ID of the newly created job.
+ * @param toolName The name of the tool that created the job.
+ * @param message A message to include in the response.
+ * @param context The tool execution context.
+ * @returns A formatted CallToolResult object.
  */
 export function formatBackgroundJobInitiationResponse(
   jobId: string,
   toolName: string,
-  toolDisplayName: string
+  message: string,
+  context?: ToolExecutionContext
 ): CallToolResult {
-  const userMessage = `Your request to use the '${toolDisplayName}' tool has been initiated with Job ID: ${jobId}. Your request will be completed shortly.`;
-  const retrievalPrompt = `To check the status and retrieve the output of your request with Job ID ${jobId}, please use the 'get-job-result' tool with the following parameters: { "jobId": "${jobId}" }.`;
+  const sessionId = context?.sessionId || 'unknown-session';
+  const transportType = context?.transportType || 'unknown';
+
+  // Create a standardized job status message
+  const statusMessage = createJobStatusMessage(
+    jobId,
+    toolName,
+    JobStatus.PENDING,
+    message,
+    0, // 0% progress
+    Date.now(),
+    Date.now()
+  );
+
+  // Create a human-readable response message
+  let responseText = `Job started: ${jobId} (${toolName})\n\n${message}\n\n`;
+
+  // Add polling instructions based on transport type
+  if (transportType === 'stdio' || sessionId === 'stdio-session') {
+    responseText += `To check the status of this job, use the get-job-result tool with the following parameters:\n\n`;
+    responseText += `{\n  "jobId": "${jobId}"\n}\n\n`;
+    responseText += `Recommended initial polling interval: ${statusMessage.pollingRecommendation?.interval ? statusMessage.pollingRecommendation.interval / 1000 : 5} seconds.`;
+  } else {
+    responseText += `You will receive real-time updates on the job status via SSE.`;
+  }
 
   return {
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify({
-          jobId: jobId,
-          message: userMessage,
-          retrievalPrompt: retrievalPrompt,
-          status: JobStatus.PENDING, // Reflecting the initial status
-          toolName: toolName, // The actual tool name for consistency/internal use
-        }),
-      },
-    ],
+    content: [{ type: 'text', text: responseText }],
     isError: false,
+    jobId,
+    jobStatus: statusMessage
   };
 }

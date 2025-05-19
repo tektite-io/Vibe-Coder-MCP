@@ -177,12 +177,14 @@ export async function processWithSequentialThinking(
   return currentThought.thought;
 } // End function
 
-/**
+// Note: This function was previously used for fallback extraction but is no longer needed.
+// Keeping the commented implementation for reference in case it's needed in the future.
+/*
  * Extracts the core "thought" text from raw LLM content as a fallback
  * when JSON parsing fails. Uses lenient methods.
  * @param rawContent The raw string content from the LLM response.
  * @returns The extracted thought text, or the trimmed raw content as a last resort.
- */
+ *
 function extractFallbackThoughtText(rawContent: string): string {
   if (!rawContent) {
     return ''; // Handle empty input
@@ -216,6 +218,7 @@ function extractFallbackThoughtText(rawContent: string): string {
     return rawContent.trim(); // Return raw content on extraction error
   }
 }
+*/
 
 
 /**

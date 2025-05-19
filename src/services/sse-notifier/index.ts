@@ -1,18 +1,8 @@
 // src/services/sse-notifier/index.ts
 import { Response } from 'express'; // Assuming Express is used for the SSE endpoint
 import logger from '../../logger.js';
-import { JobStatus } from '../job-manager/index.js'; // Import JobStatus
-
-/**
- * Represents the structure of the data sent via SSE.
- */
-interface SseProgressData {
-  jobId: string;
-  status: JobStatus;
-  message?: string;
-  timestamp: number;
-  // Add other relevant fields like percentage complete if needed
-}
+import { JobStatus, jobManager } from '../job-manager/index.js'; // Import JobStatus and jobManager
+import { createJobStatusMessage } from '../job-manager/jobStatusMessage.js'; // Import standard message format
 
 /**
  * Manages Server-Sent Events (SSE) connections and broadcasts job progress.
@@ -69,7 +59,23 @@ class SseNotifier {
         return;
       }
       // Send a comment line to keep the connection open
-      res.write(': keep-alive\n\n');
+      // res.write(': keep-alive\n\n'); // Old line
+      const currentRes = this.connections.get(sessionId); // Get current res, might have changed
+      if (currentRes && !currentRes.writableEnded) {
+        try {
+          currentRes.write(': keep-alive\n\n');
+        } catch (e) {
+          logger.warn({ err: e, sessionId }, 'Error writing keep-alive. Clearing interval and unregistering.');
+          clearInterval(keepAliveInterval);
+          this.unregisterConnection(sessionId); // Attempt to clean up
+        }
+      } else {
+        // Connection no longer valid or writable
+        clearInterval(keepAliveInterval);
+        if (this.connections.has(sessionId)) { // Check again before unregistering
+            this.unregisterConnection(sessionId);
+        }
+      }
     }, 20000); // e.g., every 20 seconds
   }
 
@@ -88,7 +94,7 @@ class SseNotifier {
       } catch (e) {
          logger.error({ err: e, sessionId }, `Error ending SSE connection during unregister.`);
       }
-      this.connections.delete(sessionId);
+      this.connections.delete(sessionId); // Ensure this is called if res was found
       logger.info({ sessionId }, `Unregistered SSE connection.`);
     } else {
       logger.warn({ sessionId }, `Attempted to unregister non-existent SSE connection.`);
@@ -119,26 +125,81 @@ class SseNotifier {
   }
 
   /**
-   * Sends a job progress update to a specific client via SSE.
+   * Sends a job progress update to a client.
+   * For SSE clients, sends the update via SSE.
+   * For stdio clients, updates the job status in the job manager.
    * @param sessionId The ID of the session/client associated with the job.
    * @param jobId The ID of the job being updated.
    * @param status The current status of the job.
    * @param message An optional progress message.
+   * @param progress An optional progress percentage (0-100).
    */
-  sendProgress(sessionId: string, jobId: string, status: JobStatus, message?: string): void {
-    if (!sessionId || sessionId === 'unknown-session' || sessionId === 'placeholder-session-id') {
-        logger.warn({ jobId, status, message }, "Cannot send SSE progress: Invalid or placeholder sessionId.");
-        return;
+  sendProgress(sessionId: string, jobId: string, status: JobStatus, message?: string, progress?: number): void {
+    if (!sessionId) {
+      logger.warn({ jobId, status, message }, "Cannot send progress update: Missing sessionId.");
+      return;
     }
 
-    const progressData: SseProgressData = {
+    // Get the job to include tool name and timestamps
+    const job = jobManager.getJob(jobId, false); // Don't update access time
+
+    if (!job) {
+      logger.warn({ jobId, status, message }, "Cannot send progress update: Job not found.");
+      return;
+    }
+
+    // Create a standardized job status message
+    const statusMessage = createJobStatusMessage(
       jobId,
+      job.toolName,
       status,
       message,
-      timestamp: Date.now(),
-    };
-    // Double cast to satisfy sendMessage signature with stricter type checking
-    this.sendMessage(sessionId, 'jobProgress', progressData as unknown as Record<string, unknown>);
+      progress,
+      job.createdAt,
+      job.updatedAt
+    );
+
+    // For stdio transport, just update the job status
+    if (sessionId === 'stdio-session' || sessionId === 'placeholder-session-id' || sessionId === 'unknown-session') {
+      // Just update the job status in the job manager
+      jobManager.updateJobStatus(jobId, status, message);
+      logger.debug({ jobId, status, message, sessionId }, "Updated job status for stdio session");
+      return;
+    }
+
+    // For SSE transport, send the update via SSE
+    if (this.connections.has(sessionId)) {
+      this.sendMessage(sessionId, 'jobProgress', statusMessage as unknown as Record<string, unknown>);
+    } else {
+      logger.warn({ jobId, status, message, sessionId }, "Cannot send SSE progress: No active connection for session.");
+    }
+  }
+
+  /**
+   * Sends a job result to a client.
+   * For SSE clients, sends the result via SSE.
+   * @param sessionId The ID of the session/client associated with the job.
+   * @param jobId The ID of the job.
+   * @param result The result of the job.
+   */
+  sendJobResult(sessionId: string, jobId: string, result: Record<string, unknown>): void {
+    if (!sessionId) {
+      logger.warn({ jobId }, "Cannot send job result: Missing sessionId.");
+      return;
+    }
+
+    // For stdio transport, do nothing (client will poll for result)
+    if (sessionId === 'stdio-session' || sessionId === 'placeholder-session-id' || sessionId === 'unknown-session') {
+      logger.debug({ jobId, sessionId }, "Skipping SSE job result for stdio session");
+      return;
+    }
+
+    // For SSE transport, send the result via SSE
+    if (this.connections.has(sessionId)) {
+      this.sendMessage(sessionId, 'result', { jobId, result });
+    } else {
+      logger.warn({ jobId, sessionId }, "Cannot send SSE job result: No active connection for session.");
+    }
   }
 
   /**

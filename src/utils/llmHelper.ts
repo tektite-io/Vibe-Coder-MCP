@@ -145,7 +145,7 @@ export function normalizeJsonResponse(rawResponse: string, jobId?: string): stri
 
   // Step 3: Attempt to find the first '{' or '[' and the last '}' or ']'
   // This is a more aggressive cleanup and should be used carefully.
-  let jsonContent = rawResponse.trim(); // Trim whitespace first
+  const jsonContent = rawResponse.trim(); // Trim whitespace first
 
   const firstBracket = jsonContent.indexOf('[');
   const firstBrace = jsonContent.indexOf('{');
@@ -178,10 +178,10 @@ export function normalizeJsonResponse(rawResponse: string, jobId?: string): stri
             JSON.parse(potentialJson); // Try to parse this substring
             logger.debug({ jobId, extractionMethod: "substring_extraction", start, end, originalLength: rawResponse.length, newLength: potentialJson.length }, "Extracted JSON by finding first/last brace/bracket and validating substring");
             return potentialJson;
-        } catch (e) {
+        } catch (error) {
             // The substring wasn't valid JSON, so the original logic might be flawed for this case.
             // Try a more direct extraction if the string starts/ends with braces/brackets but has surrounding text.
-             logger.debug({ jobId, extractionMethod: "substring_extraction_failed_parse", start, end }, "Substring extraction failed to parse, trying more direct extraction");
+             logger.debug({ jobId, extractionMethod: "substring_extraction_failed_parse", error: error instanceof Error ? error.message : String(error), start, end }, "Substring extraction failed to parse, trying more direct extraction");
         }
     }
   }

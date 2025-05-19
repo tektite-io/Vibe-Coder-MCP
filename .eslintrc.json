@@ -16,6 +16,8 @@
     "ecmaVersion": 12,
     "sourceType": "module"
   },
-  "rules": {},
+  "rules": {
+    "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_" }]
+  },
   "ignorePatterns": ["build/", "node_modules/", "vitest.config.ts"]
 }

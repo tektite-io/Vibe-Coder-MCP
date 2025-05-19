@@ -41,8 +41,8 @@ dotenv.config();
  */
 export function createServer(loadedConfigParam: OpenRouterConfig): McpServer { // Accept loadedConfigParam as argument
   // Log the received config object with all details for debugging
-  logger.info({ 
-    receivedConfig: loadedConfigParam, 
+  logger.info({
+    receivedConfig: loadedConfigParam,
     hasMapping: Boolean(loadedConfigParam.llm_mapping),
     mappingKeys: loadedConfigParam.llm_mapping ? Object.keys(loadedConfigParam.llm_mapping) : [],
     mappingValues: loadedConfigParam.llm_mapping
@@ -69,10 +69,10 @@ All generated artifacts are stored in structured directories.
       `
     }
   );
-  
+
   // Log server initialization
   logger.info('MCP Server initialized');
-  
+
   // Note: McpServer doesn't expose direct error handling hook
   // Errors will be caught in the main index.ts
 
@@ -160,14 +160,14 @@ All generated artifacts are stored in structured directories.
         request_recommendation: request_recommendation || false,
         include_optional_features: include_optional_features || []
       };
-      
+
       const result = await generateFullstackStarterKit(input, config);
       return {
         content: result.content
       };
     }
   );
-  
+
   // Register the natural language request processor tool
   server.tool(
     "process-request",
@@ -178,7 +178,7 @@ All generated artifacts are stored in structured directories.
     async ({ request }): Promise<CallToolResult> => {
       // Process the request to determine which tool to use
       const result = await processUserRequest(request, config);
-      
+
       // Check that we have content and it's text
       if (!result.content?.[0] || result.content[0].type !== 'text' || typeof result.content[0].text !== 'string') {
         return {
@@ -191,7 +191,7 @@ All generated artifacts are stored in structured directories.
           isError: true
         };
       }
-      
+
       // If we need to confirm with the user, just return the processed request
       const processedRequest = JSON.parse(result.content[0].text) as ProcessedRequest;
       if (processedRequest.requiresConfirmation) {
@@ -204,17 +204,17 @@ All generated artifacts are stored in structured directories.
           ]
         };
       }
-      
+
       // Otherwise, execute the tool directly
       // Create a map of tool executors
       const toolExecutors: Record<string, (params: Record<string, string>) => Promise<CallToolResult>> = {
         "fullstack-starter-kit-generator": async (params) => {
           const input = {
             use_case: params.use_case || params.project || request,
-            tech_stack_preferences: params.tech_stack_preferences ? 
+            tech_stack_preferences: params.tech_stack_preferences ?
               JSON.parse(params.tech_stack_preferences) : {},
             request_recommendation: params.request_recommendation === 'true',
-            include_optional_features: params.include_optional_features ? 
+            include_optional_features: params.include_optional_features ?
               params.include_optional_features.split(',') : []
           };
           const result = await generateFullstackStarterKit(input, config);
@@ -226,13 +226,13 @@ All generated artifacts are stored in structured directories.
         // "research-manager" execution is now handled by executeTool in toolRegistry
         "rules-generator": async (params) => {
           // Safe handling of rule categories
-          const categories = typeof params.ruleCategories === 'string' ? 
+          const categories = typeof params.ruleCategories === 'string' ?
             params.ruleCategories.split(",") : undefined;
-          
+
           return generateRules(
-            params.productDescription || request, 
-            params.userStories, 
-            categories, 
+            params.productDescription || request,
+            params.userStories,
+            categories,
             config
           );
         },
@@ -244,16 +244,16 @@ All generated artifacts are stored in structured directories.
         },
         "task-list-generator": async (params) => {
           return generateTaskList(
-            params.productDescription || request, 
-            params.userStories || "", 
+            params.productDescription || request,
+            params.userStories || "",
             config
           );
         }
       };
-      
+
       // Execute the appropriate tool
       const toolResult = await executeProcessedRequest(processedRequest, toolExecutors);
-      
+
       // Return the result with an explanation
       return {
         content: [
@@ -288,22 +288,52 @@ All generated artifacts are stored in structured directories.
       // Pass the raw shape directly, as expected by server.tool
       definition.inputSchema,
       // The handler now integrates state management
-      async (params: Record<string, unknown>): Promise<CallToolResult> => {
+      async (params: Record<string, unknown>, extra?: unknown): Promise<CallToolResult> => {
         // Log the config object available within this closure
         logger.debug({ configInHandler: loadedConfigParam }, 'Tool handler closure using config object.'); // Use loadedConfigParam
 
         // --- Context Creation START ---
-        // --- How to get sessionId here needs investigation based on transport ---
-        // TODO: Replace this placeholder with actual session ID retrieval logic
-        // It might involve inspecting headers, query params, or transport-specific methods
-        // associated with the incoming MCP request that triggered this handler.
-        const sessionId = 'placeholder-session-id'; // CRITICAL PLACEHOLDER
-        if (sessionId === 'placeholder-session-id') {
-            logger.warn({ toolName: definition.name }, "Using placeholder session ID. SSE notifications will not work correctly.");
+        // Extract session ID from extra or generate a unique one
+        let sessionId = 'placeholder-session-id';
+        let transportType = 'unknown';
+
+        // Check if extra contains transport information
+        if (extra && typeof extra === 'object') {
+          // Try to get session ID from extra
+          if ('sessionId' in extra && typeof extra.sessionId === 'string') {
+            sessionId = extra.sessionId;
+          } else if ('req' in extra && extra.req && typeof extra.req === 'object') {
+            // Try to get session ID from request
+            const req = extra.req as any;
+            if (req.query && req.query.sessionId) {
+              sessionId = req.query.sessionId as string;
+            } else if (req.body && req.body.session_id) {
+              sessionId = req.body.session_id as string;
+            } else if (req.headers && req.headers['x-session-id']) {
+              sessionId = req.headers['x-session-id'] as string;
+            }
+          }
+
+          // Try to get transport type from extra
+          if ('transportType' in extra && typeof extra.transportType === 'string') {
+            transportType = extra.transportType;
+          }
         }
 
-        const context: ToolExecutionContext = { sessionId };
-        logger.debug({ toolName: definition.name, sessionId: context.sessionId }, "Server handler executing tool with context");
+        // If we still have the placeholder, generate a unique ID for stdio transport
+        if (sessionId === 'placeholder-session-id') {
+          // For stdio transport, use a fixed session ID with a prefix
+          sessionId = 'stdio-session';
+          transportType = 'stdio';
+          logger.warn({ toolName: definition.name }, "Using stdio session ID. SSE notifications will be limited to polling.");
+        }
+
+        const context: ToolExecutionContext = {
+          sessionId,
+          transportType
+        };
+
+        logger.debug({ toolName: definition.name, sessionId: context.sessionId, transportType: context.transportType }, "Server handler executing tool with context");
         // --- Context Creation END ---
 
         // Create a fresh deep copy specifically for this execution to prevent closure/reference issues

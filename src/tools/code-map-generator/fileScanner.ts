@@ -1,53 +1,154 @@
 import fs from 'fs/promises';
 import path from 'path';
 import logger from '../../logger.js';
+import { validatePathSecurity, createSecurePath, isPathWithin } from './pathUtils.js';
+import { readDirSecure, statSecure } from './fsUtils.js';
+import { CodeMapGeneratorConfig } from './types.js';
+import { splitIntoBatches } from './batchProcessor.js';
+
+const MAX_SCAN_DEPTH = 25; // Define a maximum recursion depth
 
 /**
  * Recursively collects source file paths from a directory, adhering to supported extensions and ignore patterns.
+ * Uses secure path validation to ensure all accessed paths are within the allowed directory.
+ *
  * @param rootDir The root directory to scan.
  * @param supportedExtensions An array of file extensions to include (e.g., ['.js', '.ts', '.py']).
  * @param ignoredPatterns An array of RegExp patterns for paths to ignore.
- * @returns A promise that resolves to an array of collected file paths.
+ * @param config The Code-Map Generator configuration.
+ * @param returnBatches Whether to return files in batches (default: false).
+ * @returns A promise that resolves to an array of collected file paths or batches of file paths.
  */
 export async function collectSourceFiles(
   rootDir: string,
   supportedExtensions: string[], // e.g., ['.js', '.ts', '.py']
-  ignoredPatterns: RegExp[] // e.g., [/node_modules/, /\.git/, /dist/]
-): Promise<string[]> {
+  ignoredPatterns: RegExp[], // e.g., [/node_modules/, /\.git/, /dist/]
+  config: CodeMapGeneratorConfig,
+  returnBatches: boolean = false
+): Promise<string[] | string[][]> {
   const collectedFiles: string[] = [];
-  const normalizedRootDir = path.resolve(rootDir);
 
-  async function scanDir(currentPath: string) {
+  // Validate the root directory against the allowed mapping directory
+  const validationResult = validatePathSecurity(rootDir, config.allowedMappingDirectory);
+  if (!validationResult.isValid) {
+    logger.error(`Security violation: ${validationResult.error}`);
+    return []; // Return empty array if directory is outside allowed boundary
+  }
+
+  // Get the secure path
+  const securePath = createSecurePath(rootDir, config.allowedMappingDirectory);
+
+  // Ensure rootDir exists and is accessible
+  try {
+    await statSecure(securePath, config.allowedMappingDirectory);
+    logger.debug(`Directory exists and is readable: ${securePath}`);
+  } catch (error) {
+    logger.error(`Cannot access directory: ${securePath}. Error: ${error instanceof Error ? error.message : String(error)}`);
+    return []; // Return empty array if directory doesn't exist or can't be accessed
+  }
+
+  logger.debug(`Normalized root directory: ${securePath}`);
+  logger.debug(`Looking for files with extensions: ${supportedExtensions.join(', ')}`);
+
+  const visitedSymlinks = new Set<string>(); // To prevent symlink loops
+
+  async function scanDir(currentPath: string, currentDepth: number) {
+    if (currentDepth > MAX_SCAN_DEPTH) {
+      logger.warn(`Reached maximum scan depth of ${MAX_SCAN_DEPTH} at ${currentPath}. Skipping further recursion in this branch.`);
+      return;
+    }
+
+    // Validate the current path against the allowed mapping directory
+    if (!isPathWithin(currentPath, config.allowedMappingDirectory)) {
+      logger.warn(`Security boundary violation: ${currentPath} is outside of allowed directory ${config.allowedMappingDirectory}. Skipping.`);
+      return;
+    }
+
     try {
-      const entries = await fs.readdir(currentPath, { withFileTypes: true });
+      // Use secure directory reading
+      const entries = await readDirSecure(currentPath, config.allowedMappingDirectory);
+
       for (const entry of entries) {
         const entryPath = path.join(currentPath, entry.name);
-        const relativeEntryPath = path.relative(normalizedRootDir, entryPath); // For consistent ignore pattern testing
+
+        // Validate the entry path
+        if (!isPathWithin(entryPath, config.allowedMappingDirectory)) {
+          logger.warn(`Security boundary violation: ${entryPath} is outside of allowed directory ${config.allowedMappingDirectory}. Skipping.`);
+          continue;
+        }
+
+        const relativeEntryPath = path.relative(securePath, entryPath); // For consistent ignore pattern testing
 
         if (ignoredPatterns.some(pattern => pattern.test(relativeEntryPath)) || ignoredPatterns.some(pattern => pattern.test(entry.name))) {
           logger.debug(`Ignoring path: ${entryPath} due to ignore patterns.`);
           continue;
         }
 
+        if (entry.isSymbolicLink()) {
+          try {
+            // Resolve the symlink securely
+            const realPath = await fs.realpath(entryPath);
+
+            // Validate the resolved path
+            if (!isPathWithin(realPath, config.allowedMappingDirectory)) {
+              logger.warn(`Security boundary violation: Symlink ${entryPath} resolves to ${realPath} which is outside of allowed directory ${config.allowedMappingDirectory}. Skipping.`);
+              continue;
+            }
+
+            if (visitedSymlinks.has(realPath)) {
+              logger.warn(`Detected symlink loop or already visited symlink: ${entryPath} -> ${realPath}. Skipping.`);
+              continue;
+            }
+
+            visitedSymlinks.add(realPath);
+
+            // After resolving symlink, get its stats to determine if it's a directory or file
+            const targetStats = await statSecure(entryPath, config.allowedMappingDirectory); // stat follows the link
+
+            if (targetStats.isDirectory()) {
+              await scanDir(entryPath, currentDepth + 1); // Scan the directory the symlink points to
+            } else if (targetStats.isFile()) {
+              const fileExtension = path.extname(entryPath).toLowerCase();
+              if (supportedExtensions.includes(fileExtension)) {
+                collectedFiles.push(entryPath);
+              }
+            }
+          } catch (error) {
+            logger.warn(`Error processing symlink ${entryPath}: ${error instanceof Error ? error.message : String(error)}. Skipping.`);
+          }
+          continue; // Done with symlink
+        }
+
         if (entry.isDirectory()) {
-          await scanDir(entryPath);
+          await scanDir(entryPath, currentDepth + 1);
         } else if (entry.isFile()) {
           const fileExtension = path.extname(entryPath).toLowerCase();
           if (supportedExtensions.includes(fileExtension)) {
-            collectedFiles.push(path.resolve(entryPath)); // Store absolute paths
+            collectedFiles.push(entryPath); // Store absolute paths
           }
         }
-        // Note: Symbolic links are currently followed if they point to a directory or a supported file.
-        // Consider adding specific handling for symlinks if needed (e.g., entry.isSymbolicLink()).
       }
     } catch (error) {
-      // Log error with more specific details if available
       const errDetails = error instanceof Error ? { message: error.message, stack: error.stack } : { errorInfo: String(error) };
       logger.warn({ err: errDetails, path: currentPath }, `Could not read directory, skipping.`);
     }
   }
 
-  await scanDir(normalizedRootDir);
-  logger.info(`Collected ${collectedFiles.length} files from ${normalizedRootDir}.`);
+  await scanDir(securePath, 0); // Start scanning with depth 0
+
+  // Clear the visitedSymlinks set to prevent memory leaks
+  const symlinksCount = visitedSymlinks.size;
+  visitedSymlinks.clear();
+
+  logger.info(`Collected ${collectedFiles.length} files from ${securePath}. Cleared ${symlinksCount} symlink entries.`);
+
+  // Return files in batches if requested
+  if (returnBatches && collectedFiles.length > 0) {
+    const batchSize = config.processing?.batchSize || 100;
+    const batches = splitIntoBatches(collectedFiles, batchSize);
+    logger.info(`Split ${collectedFiles.length} files into ${batches.length} batches (batch size: ${batchSize})`);
+    return batches;
+  }
+
   return collectedFiles;
 }

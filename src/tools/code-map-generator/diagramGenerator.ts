@@ -1,6 +1,11 @@
 import { GraphEdge, GraphNode } from './graphBuilder.js';
 import { ClassInfo } from './codeMapModel.js'; // For class diagram members
-import path from 'path';
+import {
+  extractMethodCallSequences,
+  extractParticipants,
+  generateSequenceDiagram,
+  optimizeSequenceDiagram
+} from './sequenceDiagramGenerator.js';
 
 function sanitizeMermaidLabel(label: string): string {
   // Replace characters that might break Mermaid syntax or display poorly.
@@ -69,4 +74,42 @@ export function generateMermaidFunctionCallDiagram(nodes: GraphNode[], edges: Gr
   });
   mermaidString += '  end';
   return mermaidString;
+}
+
+/**
+ * Generates a Mermaid sequence diagram from function/method call nodes and edges.
+ * @param nodes Function and method nodes
+ * @param edges Call edges between functions/methods
+ * @param maxCalls Maximum number of calls to include in the sequence
+ * @param maxParticipants Maximum number of participants to include in the diagram
+ * @returns Mermaid sequence diagram string
+ */
+export function generateMermaidSequenceDiagram(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  maxCalls: number = 20,
+  maxParticipants: number = 10
+): string {
+  if (edges.length === 0 && nodes.length === 0) {
+    return 'sequenceDiagram\n  Note over System: No method calls detected';
+  }
+
+  // Extract method call sequences
+  const methodCalls = extractMethodCallSequences(nodes, edges, maxCalls);
+
+  // If no method calls were extracted, return an empty diagram
+  if (methodCalls.length === 0) {
+    return 'sequenceDiagram\n  Note over System: No method calls detected';
+  }
+
+  // Extract participants
+  const participants = extractParticipants(methodCalls, nodes);
+
+  // Generate the sequence diagram
+  const diagram = generateSequenceDiagram(methodCalls, participants);
+
+  // Optimize the diagram for readability
+  const optimizedDiagram = optimizeSequenceDiagram(diagram, maxParticipants);
+
+  return optimizedDiagram;
 }

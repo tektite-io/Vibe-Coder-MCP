@@ -1,0 +1,8 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`User Stories Generator (Async) > should set final job result content matching snapshot (async) > User Stories Generator Content 1`] = `
+"# User Stories: Event Ticketing App
+
+## Epic: User Registration
+### User Story: Account Creation..."
+`;

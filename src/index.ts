@@ -34,7 +34,7 @@ if (dotenvResult.error) {
 
 // Define an interface for transports that handle POST messages
 interface TransportWithMessageHandling {
-  handlePostMessage(req: express.Request, res: express.Response): Promise<void>;
+  handlePostMessage(req: express.Request, res: express.Response, context?: Record<string, unknown>): Promise<void>;
   // Add other common transport properties/methods if needed, e.g., from SSEServerTransport
 }
 
@@ -56,39 +56,73 @@ async function main(mcpServer: import("@modelcontextprotocol/sdk/server/mcp.js")
       app.use(express.json());
       const port = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 
+      // Add a health endpoint
+      app.get('/health', (req: express.Request, res: express.Response) => {
+        res.status(200).json({ status: 'ok' });
+      });
+
       app.get('/sse', (req: express.Request, res: express.Response) => {
+        // Extract session ID from query parameters or generate a new one
+        const sessionId = req.query.sessionId as string || `sse-${Math.random().toString(36).substring(2)}`;
+
+        // Create a transport
         const transport = new SSEServerTransport('/messages', res);
-        mcpServer.connect(transport).catch((error: Error) => { // Use mcpServer
+
+        // Store the session ID in the request object for later use
+        (req as any).sessionId = sessionId;
+
+        // Log the session ID
+        logger.info({ sessionId, transportSessionId: transport.sessionId }, 'Established SSE connection');
+
+        // Store the session ID in a global map for later use
+        // sseNotifier.registerConnection(sessionId, res);
+
+        // Connect the transport to the server
+        mcpServer.connect(transport).catch((error: Error) => {
           logger.error({ err: error }, 'Failed to connect transport');
         });
       });
 
       app.post('/messages', async (req: express.Request, res: express.Response) => {
-         if (!req.body) {
-           return res.status(400).json({ error: 'Invalid request body' });
-         }
-         try {
-           const sessionId = req.query.sessionId as string;
-           // Find the active transport for this session from the passed server instance
-           const transport = mcpServer.server.transport; // Use mcpServer
-           if (!transport || !sessionId) {
-             return res.status(400).json({ error: 'No active SSE connection' });
-           }
-           if (isMessageHandlingTransport(transport)) {
-              await transport.handlePostMessage(req, res);
-           } else {
-              logger.error('Active transport does not support handlePostMessage or is not defined.');
-              if (!res.headersSent) {
-                   res.status(500).json({ error: 'Internal server error: Cannot handle POST message.' });
-              }
-              return;
-           }
-         } catch (error) {
-           logger.error({ err: error }, 'Error handling POST message');
-           if (!res.headersSent) {
-              res.status(500).json({ error: 'Internal server error while handling POST message.' });
-           }
-         }
+        if (!req.body) {
+          return res.status(400).json({ error: 'Invalid request body' });
+        }
+
+        try {
+          // Extract session ID from query parameters or body
+          const sessionId = req.query.sessionId as string || req.body.session_id;
+
+          if (!sessionId) {
+            return res.status(400).json({ error: 'Missing session ID. Establish an SSE connection first.' });
+          }
+
+          // Find the active transport for this session
+          const transport = mcpServer.server.transport;
+
+          if (!transport) {
+            return res.status(400).json({ error: 'No active SSE connection' });
+          }
+
+          if (isMessageHandlingTransport(transport)) {
+            // Pass the session ID and transport type in the context
+            const context = {
+              sessionId,
+              transportType: sessionId === 'stdio-session' ? 'stdio' : 'sse'
+            };
+            await transport.handlePostMessage(req, res, context);
+          } else {
+            logger.error('Active transport does not support handlePostMessage or is not defined.');
+            if (!res.headersSent) {
+              res.status(500).json({ error: 'Internal server error: Cannot handle POST message.' });
+            }
+            return;
+          }
+        } catch (error) {
+          logger.error({ err: error }, 'Error handling POST message');
+          if (!res.headersSent) {
+            res.status(500).json({ error: 'Internal server error while handling POST message.' });
+          }
+        }
       });
 
       app.listen(port, () => {
@@ -110,8 +144,14 @@ async function main(mcpServer: import("@modelcontextprotocol/sdk/server/mcp.js")
        // --- End new SSE endpoint ---
 
      } else {
-      // Use stdio transport
+      // Use stdio transport with session ID
+      const stdioSessionId = 'stdio-session';
       const transport = new StdioServerTransport();
+
+      // Log the session ID
+      logger.info({ sessionId: stdioSessionId }, 'Initialized stdio transport with session ID');
+
+      // We'll pass the session ID and transport type in the context when handling messages
       await mcpServer.connect(transport); // Use mcpServer
       logger.info('Vibe Coder MCP server running on stdio');
     }
@@ -196,7 +236,7 @@ async function initializeApp() {
       perplexityModel: process.env.PERPLEXITY_MODEL || "perplexity/sonar-deep-research",
       llm_mapping: JSON.parse(JSON.stringify(llmMapping)) // Create a deep copy using JSON serialization
   };
-  
+
   // Log the loaded configuration details
   const mappingKeys = Object.keys(llmMapping);
   logger.info('Loaded LLM mapping configuration details:', {

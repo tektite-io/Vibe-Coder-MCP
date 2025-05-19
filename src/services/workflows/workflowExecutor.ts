@@ -10,9 +10,11 @@ import { AppError, ToolExecutionError, ConfigurationError, ParsingError } from '
 import { jobManager, Job, JobStatus } from '../job-manager/index.js'; // Import Job Manager
 import { sseNotifier } from '../sse-notifier/index.js'; // Import SSE Notifier
 
-// --- Constants for Job Polling ---
-const POLLING_INTERVAL_MS = 2000; // Check job status every 2 seconds
-const MAX_POLLING_ATTEMPTS = 150; // Max ~5 minutes (150 * 2s)
+// --- Constants for Adaptive Job Polling ---
+const INITIAL_POLLING_INTERVAL_MS = 1000; // Start with 1 second
+const MAX_POLLING_INTERVAL_MS = 10000; // Maximum 10 seconds between polls
+const POLLING_BACKOFF_FACTOR = 1.5; // Increase interval by 50% each time
+const MAX_POLLING_DURATION_MS = 300000; // Maximum 5 minutes total polling time
 
 // --- Interfaces ---
 
@@ -230,6 +232,7 @@ function getJobIdFromResult(result: CallToolResult): string | null {
 
 /**
  * Waits for a background job to complete by polling the JobManager.
+ * Uses an adaptive polling strategy with exponential backoff.
  * Sends progress updates via SSE.
  * @param jobId The ID of the job to wait for.
  * @param stepId The ID of the workflow step associated with this job.
@@ -239,12 +242,22 @@ function getJobIdFromResult(result: CallToolResult): string | null {
  */
 async function waitForJobCompletion(jobId: string, stepId: string, sessionId: string): Promise<CallToolResult> {
     logger.info({ jobId, stepId, sessionId }, `Waiting for background job to complete...`);
+
+    let currentInterval = INITIAL_POLLING_INTERVAL_MS;
+    let totalWaitTime = 0;
     let attempts = 0;
 
-    while (attempts < MAX_POLLING_ATTEMPTS) {
-        await new Promise(resolve => setTimeout(resolve, POLLING_INTERVAL_MS));
+    const startTime = Date.now();
+
+    while (totalWaitTime < MAX_POLLING_DURATION_MS) {
+        // Wait for the current interval
+        await new Promise(resolve => setTimeout(resolve, currentInterval));
+
+        // Update tracking variables
+        totalWaitTime = Date.now() - startTime;
         attempts++;
 
+        // Get the job
         const job = jobManager.getJob(jobId);
 
         if (!job) {
@@ -252,28 +265,48 @@ async function waitForJobCompletion(jobId: string, stepId: string, sessionId: st
             throw new ToolExecutionError(`Background job ${jobId} for step ${stepId} was not found.`);
         }
 
+        // Check if the job is completed or failed
         if (job.status === JobStatus.COMPLETED || job.status === JobStatus.FAILED) {
-            logger.info({ jobId, stepId, sessionId, status: job.status }, `Job finished with status: ${job.status}.`);
+            logger.info({ jobId, stepId, sessionId, status: job.status }, `Job ${job.status.toLowerCase()}.`);
+
             if (!job.result) {
-                 logger.error({ jobId, stepId, sessionId, status: job.status }, `Job finished but has no result stored.`);
-                 throw new ToolExecutionError(`Background job ${jobId} for step ${stepId} finished with status ${job.status} but has no result.`);
+                logger.error({ jobId, stepId, sessionId, status: job.status }, `Job finished but has no result stored.`);
+                throw new ToolExecutionError(`Background job ${jobId} for step ${stepId} finished with status ${job.status} but has no result.`);
             }
-            // Send final SSE update before returning
-            sseNotifier.sendProgress(sessionId, jobId, job.status, `Job ${job.status.toLowerCase()}.`);
+
+            // Send final status update via SSE
+            sseNotifier.sendProgress(sessionId, jobId, job.status,
+                job.status === JobStatus.COMPLETED
+                    ? `Job completed successfully.`
+                    : `Job failed: ${job.progressMessage || 'No error message available.'}`
+            );
+
             return job.result;
         }
 
         // Still running or pending
-        logger.debug({ jobId, stepId, sessionId, status: job.status, attempt: attempts }, `Polling job status: ${job.status}`);
-        // Send intermediate progress update via SSE - Use status as message base
-        const progressMessage = `Job status: ${job.status}... (Polling attempt ${attempts}/${MAX_POLLING_ATTEMPTS})`;
+        logger.debug({
+            jobId,
+            stepId,
+            sessionId,
+            status: job.status,
+            attempt: attempts,
+            currentInterval,
+            totalWaitTime,
+            maxWaitTime: MAX_POLLING_DURATION_MS
+        }, `Polling job status: ${job.status}`);
+
+        // Send intermediate progress update via SSE
+        const progressMessage = `Job status: ${job.status}... (Polling for ${Math.floor(totalWaitTime / 1000)}s, next check in ${currentInterval / 1000}s)`;
         sseNotifier.sendProgress(sessionId, jobId, job.status, progressMessage);
 
+        // Increase the polling interval for next iteration (with a maximum)
+        currentInterval = Math.min(currentInterval * POLLING_BACKOFF_FACTOR, MAX_POLLING_INTERVAL_MS);
     }
 
     // If loop finishes, it means timeout
-    logger.error({ jobId, stepId, sessionId, attempts }, `Polling timed out for job.`);
-    throw new ToolExecutionError(`Timed out waiting for background job ${jobId} for step ${stepId} to complete after ${attempts} attempts.`);
+    logger.error({ jobId, stepId, sessionId, attempts, totalWaitTime }, `Polling timed out for job.`);
+    throw new ToolExecutionError(`Timed out waiting for background job ${jobId} for step ${stepId} to complete after ${Math.floor(totalWaitTime / 1000)} seconds.`);
 }
 
 

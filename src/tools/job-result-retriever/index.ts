@@ -5,6 +5,7 @@ import { OpenRouterConfig } from '../../types/workflow.js'; // Although not used
 import logger from '../../logger.js';
 import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js';
 import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import JobManager and types
+import { createJobStatusMessage } from '../../services/job-manager/jobStatusMessage.js'; // Import standard message format
 
 // --- Zod Schema ---
 const getJobResultInputSchemaShape = {
@@ -19,13 +20,17 @@ const getJobResultInputSchemaShape = {
 export const getJobResult: ToolExecutor = async (
   params: Record<string, unknown>,
   _config: OpenRouterConfig, // Config might not be needed here, but keep for signature
-  _context?: ToolExecutionContext // Context might not be needed here
+  context?: ToolExecutionContext // Context might be needed for transport type
 ): Promise<CallToolResult> => {
   const { jobId } = params as { jobId: string };
+  const sessionId = context?.sessionId || 'unknown-session';
+  const transportType = context?.transportType || 'unknown';
 
   try {
-    logger.info({ jobId }, `Attempting to retrieve result for job.`);
-    const job = jobManager.getJob(jobId);
+    logger.info({ jobId, sessionId, transportType }, `Attempting to retrieve result for job.`);
+
+    // Use the new rate-limited job retrieval
+    const { job, waitTime, shouldWait } = jobManager.getJobWithRateLimit(jobId);
 
     if (!job) {
       logger.warn({ jobId }, `Job not found.`);
@@ -35,6 +40,32 @@ export const getJobResult: ToolExecutor = async (
         content: [{ type: 'text', text: notFoundError.message }],
         isError: true,
         errorDetails: notFoundError
+      };
+    }
+
+    // If rate limited, return a message with the wait time
+    if (shouldWait) {
+      logger.info({ jobId, waitTime }, `Rate limited job status request.`);
+
+      // Create a standardized job status message
+      const statusMessage = createJobStatusMessage(
+        jobId,
+        job.toolName,
+        job.status,
+        `Rate limited: Please wait ${Math.ceil(waitTime / 1000)} seconds before checking again.`,
+        undefined,
+        job.createdAt,
+        job.updatedAt
+      );
+
+      return {
+        content: [{
+          type: 'text',
+          text: `Job '${jobId}' (${job.toolName}) status is being checked too frequently. Please wait ${Math.ceil(waitTime / 1000)} seconds before checking again. Current status: ${job.status}, last updated at: ${new Date(job.updatedAt).toISOString()}.`
+        }],
+        isError: false,
+        pollInterval: waitTime,
+        jobStatus: statusMessage
       };
     }
 
@@ -113,11 +144,29 @@ export const getJobResult: ToolExecutor = async (
         return finalResult;
     }
 
-    // Otherwise, return the status text
+    // For PENDING or RUNNING jobs, create a standardized status message
+    const statusMessage = createJobStatusMessage(
+      jobId,
+      job.toolName,
+      job.status,
+      job.progressMessage,
+      undefined, // progress percentage not available
+      job.createdAt,
+      job.updatedAt
+    );
+
+    // Add polling recommendation to the response
+    if (statusMessage.pollingRecommendation) {
+      responseText += `\n\nRecommended polling interval: ${statusMessage.pollingRecommendation.interval / 1000} seconds.`;
+    }
+
+    // Return the status message
     logger.info({ jobId, status: job.status }, `Returning current status for job.`);
     return {
       content: [{ type: "text", text: responseText }],
-      isError: false // It's not an error to report pending/running status
+      isError: false, // It's not an error to report pending/running status
+      jobStatus: statusMessage,
+      pollingRecommendation: statusMessage.pollingRecommendation
     };
 
   } catch (error) {

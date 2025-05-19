@@ -1,7 +1,0 @@
-{
-  "name": "generate-task-list",
-  "params": {
-    "productDescription": "A simple todo list application with user authentication and cloud sync",
-    "userStories": "US-1: As a user, I want to create new todo items\nUS-2: As a user, I want to mark todo items as complete\nUS-3: As a user, I want to delete todo items\nUS-4: As a user, I want to sync my todos across devices"
-  }
-}

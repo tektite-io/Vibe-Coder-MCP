@@ -14,7 +14,7 @@ export interface FunctionInfo {
 export interface ClassInfo {
   name: string;
   methods: FunctionInfo[];
-  properties?: Array<{ name: string; type?: string; comment?: string; startLine: number; endLine: number }>;
+  properties: Array<{ name: string; type?: string; comment?: string; startLine: number; endLine: number }>;
   parentClass?: string; // Name of parent class
   implementedInterfaces?: string[];
   comment?: string;
@@ -29,6 +29,7 @@ export interface ImportInfo {
   importedItems?: string[]; // Specific items imported, e.g., { parse } from 'url' -> ['parse']
   isDefault?: boolean; // If it's a default import
   alias?: string; // If the import is aliased
+  comment?: string; // Optional comment for the import
   startLine: number;
   endLine: number;
 }

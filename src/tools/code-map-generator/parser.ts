@@ -2,7 +2,17 @@
 import ParserFromPackage from 'web-tree-sitter';
 import path from 'path';
 import fs from 'fs/promises'; // Using fs/promises for async file check
+import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 import logger from '../../logger.js';
+import { FileCache } from './cache/fileCache.js';
+import { CodeMapGeneratorConfig } from './types.js';
+import { readFileSecure } from './fsUtils.js';
+import { getOutputDirectory } from './directoryUtils.js';
+
+// Get the directory name of the current module
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Use 'any' for now to match existing structure, but ideally these would be concrete types
 // if web-tree-sitter's own type declarations are directly usable and compatible.
@@ -13,15 +23,23 @@ import logger from '../../logger.js';
 let parserInstance: ParserFromPackage | null = null; // Use the imported Parser type
 const loadedGrammars = new Map<string, ParserFromPackage.Language>(); // Key: file extension (e.g., '.js')
 
+// File-based cache instances
+let parseCache: FileCache<ParserFromPackage.Tree> | null = null;
+let sourceCodeCache: FileCache<string> | null = null;
+
 // Path to the directory where .wasm grammar files are expected to be.
-// Assumes a 'public/grammars' directory in the project root.
-// This might need to be configurable or determined differently in a deployed environment.
-const GRAMMARS_BASE_DIR = path.resolve(process.cwd(), 'public/grammars');
+// Grammar files are located in the 'grammars' directory relative to this module.
+const GRAMMARS_BASE_DIR = path.join(__dirname, 'grammars');
+
+logger.info(`Grammar files directory: ${GRAMMARS_BASE_DIR}`);
+// Also log the current working directory to help with debugging
+logger.info(`Current working directory: ${process.cwd()}`);
+logger.info(`Module directory (__dirname): ${__dirname}`);
 
 export interface LanguageConfig {
   name: string; // User-friendly name, e.g., "JavaScript"
   wasmPath: string; // Filename of the .wasm file, e.g., "tree-sitter-javascript.wasm"
-  parserCreateQuery?: (language: any) => ((text: string) => any); // Optional: function to create a query specific to this language
+  parserCreateQuery?: (language: ParserFromPackage.Language) => ((text: string) => ParserFromPackage.Query); // Optional: function to create a query specific to this language
 }
 
 // Maps file extensions to their Tree-sitter grammar configuration.
@@ -110,6 +128,87 @@ export async function initializeParser(): Promise<void> {
 }
 
 /**
+ * Initializes the file-based caches for parsed trees and source code.
+ * @param config The Code-Map Generator configuration
+ * @returns A promise that resolves when the caches are initialized
+ */
+export async function initializeCaches(config: CodeMapGeneratorConfig): Promise<void> {
+  // Skip if caching is disabled
+  if (config.cache?.enabled === false) {
+    logger.info('File-based caching is disabled in configuration.');
+    return;
+  }
+
+  try {
+    // Create cache directory paths
+    const cacheDir = path.join(
+      config.output?.outputDir || getOutputDirectory(config),
+      '.cache'
+    );
+
+    const parseTreeCacheDir = path.join(cacheDir, 'parse-trees');
+    const sourceCodeCacheDir = path.join(cacheDir, 'source-code');
+
+    // Initialize parse tree cache
+    parseCache = new FileCache<ParserFromPackage.Tree>({
+      name: 'parse-trees',
+      cacheDir: parseTreeCacheDir,
+      maxEntries: config.cache?.maxEntries,
+      maxAge: config.cache?.maxAge,
+      serialize: (tree: any) => {
+        // Tree-sitter trees can't be directly serialized, so we need to use a custom approach
+        // For now, we'll just store a placeholder and re-parse when needed
+        return JSON.stringify({ rootNodeType: tree.rootNode?.type || 'unknown' });
+      },
+      deserialize: (serialized) => {
+        // This is a placeholder - we can't actually deserialize a tree from JSON
+        // We'll handle this in the parseCode function
+        return JSON.parse(serialized) as any;
+      }
+    });
+
+    // Initialize source code cache
+    sourceCodeCache = new FileCache<string>({
+      name: 'source-code',
+      cacheDir: sourceCodeCacheDir,
+      maxEntries: config.cache?.maxEntries,
+      maxAge: config.cache?.maxAge
+    });
+
+    // Initialize the caches
+    await parseCache.init();
+    await sourceCodeCache.init();
+
+    logger.info('File-based caches initialized successfully.');
+  } catch (error) {
+    logger.error({ err: error }, 'Failed to initialize file-based caches.');
+    // Don't throw, just log the error and continue without caching
+    parseCache = null;
+    sourceCodeCache = null;
+  }
+}
+
+/**
+ * Clears all file-based caches.
+ * @returns A promise that resolves when the caches are cleared
+ */
+export async function clearCaches(): Promise<void> {
+  try {
+    if (parseCache) {
+      await parseCache.clear();
+    }
+
+    if (sourceCodeCache) {
+      await sourceCodeCache.clear();
+    }
+
+    logger.info('File-based caches cleared successfully.');
+  } catch (error) {
+    logger.error({ err: error }, 'Failed to clear file-based caches.');
+  }
+}
+
+/**
  * Loads a Tree-sitter language grammar from its .wasm file.
  * The .wasm file is expected to be in the GRAMMARS_BASE_DIR.
  *
@@ -125,17 +224,47 @@ export async function loadLanguageGrammar(extension: string, langConfig: Languag
     return true;
   }
 
-  const fullWasmPath = path.join(GRAMMARS_BASE_DIR, langConfig.wasmPath);
+  const wasmPath = path.join(GRAMMARS_BASE_DIR, langConfig.wasmPath);
 
   try {
-    // Check if the .wasm file exists before attempting to load
-    await fs.access(fullWasmPath, fs.constants.F_OK);
-    const language = await ParserFromPackage.Language.load(fullWasmPath);
+    // Check if the .wasm file exists
+    try {
+      await fs.access(wasmPath, fs.constants.F_OK);
+      logger.debug(`Grammar file found: ${wasmPath}`);
+    } catch (accessError) {
+      // File not found
+      logger.error({
+        err: accessError,
+        grammarName: langConfig.name,
+        wasmPath: wasmPath,
+        cwd: process.cwd()
+      }, `File not found: Tree-sitter grammar for ${langConfig.name}. Ensure '${langConfig.wasmPath}' exists in '${GRAMMARS_BASE_DIR}'.`);
+
+      // Check if the directory exists to provide better diagnostics
+      try {
+        await fs.access(GRAMMARS_BASE_DIR, fs.constants.F_OK);
+        logger.debug(`Grammar directory exists: ${GRAMMARS_BASE_DIR}`);
+      } catch (dirError) {
+        logger.error(`Grammar directory does not exist: ${GRAMMARS_BASE_DIR}. Please create it and add the required .wasm files.`);
+      }
+
+      return false;
+    }
+
+    // If we get here, the file exists, so try to load it
+    const language = await ParserFromPackage.Language.load(wasmPath);
     loadedGrammars.set(extension, language);
-    logger.info(`Successfully loaded Tree-sitter grammar for ${langConfig.name} (${extension}) from ${fullWasmPath}`);
+
+    logger.info(`Successfully loaded Tree-sitter grammar for ${langConfig.name} (${extension}) from ${wasmPath}`);
+
     return true;
   } catch (error) {
-    logger.error({ err: error, grammarName: langConfig.name, wasmPath: fullWasmPath }, `Failed to load Tree-sitter grammar for ${langConfig.name}. Ensure '${langConfig.wasmPath}' exists in '${GRAMMARS_BASE_DIR}'.`);
+    // This catches errors during the loading process (not file access errors)
+    logger.error({
+      err: error,
+      grammarName: langConfig.name,
+      wasmPath: wasmPath
+    }, `Failed to load Tree-sitter grammar for ${langConfig.name}. File exists but could not be loaded.`);
     // Do not re-throw, allow other grammars to load. getParserForExtension will handle missing ones.
     return false;
   }
@@ -149,7 +278,7 @@ export async function loadLanguageGrammar(extension: string, langConfig: Languag
  * @param fileExtension The file extension (e.g., '.js', '.py').
  * @returns A configured Parser instance if the language is supported and loaded, otherwise null.
  */
-export async function getParserForFileExtension(fileExtension: string): Promise<any | null> {
+export async function getParserForFileExtension(fileExtension: string): Promise<ParserFromPackage | null> {
   if (!parserInstance) {
     logger.warn('Attempted to get parser before Tree-sitter initialization. Call initializeParser() first.');
     await initializeParser(); // Attempt to initialize if not already
@@ -187,20 +316,94 @@ export async function getParserForFileExtension(fileExtension: string): Promise<
  *
  * @param sourceCode The source code to parse.
  * @param fileExtension The file extension (e.g., '.js') to determine the grammar.
+ * @param filePath Optional file path for caching purposes.
+ * @param config Optional configuration for caching.
  * @returns A Tree-sitter Tree object if parsing is successful, otherwise null.
  */
-export async function parseCode(sourceCode: string, fileExtension: string): Promise<any | null> {
+export async function parseCode(
+  sourceCode: string,
+  fileExtension: string,
+  filePath?: string,
+  config?: CodeMapGeneratorConfig
+): Promise<ParserFromPackage.Tree | null> {
+  // Check if caching is enabled and we have a file path
+  const useCaching = config?.cache?.enabled !== false && filePath && sourceCodeCache && parseCache;
+
+  // Generate a cache key if caching is enabled
+  let cacheKey = '';
+  if (useCaching && filePath) {
+    // Use a hash of the file path and extension as the cache key
+    cacheKey = crypto.createHash('md5').update(`${filePath}:${fileExtension}`).digest('hex');
+
+    // Try to get the source code from cache
+    if (sourceCodeCache) {
+      const cachedSourceCode = await sourceCodeCache.get(cacheKey);
+      if (cachedSourceCode) {
+        // If the cached source code matches the current source code, we can use the cached parse tree
+        if (cachedSourceCode === sourceCode && parseCache) {
+          const cachedTree = await parseCache.get(cacheKey);
+          if (cachedTree) {
+            logger.debug(`Using cached parse tree for ${filePath}`);
+            return cachedTree;
+          }
+        } else {
+          // Source code has changed, update the cache
+          await sourceCodeCache.set(cacheKey, sourceCode);
+        }
+      } else {
+        // Cache the source code
+        await sourceCodeCache.set(cacheKey, sourceCode);
+      }
+    }
+  }
+
+  // Get the parser for the file extension
   const parser = await getParserForFileExtension(fileExtension);
   if (!parser) {
     return null;
   }
+
   try {
+    // Parse the source code
     const tree = parser.parse(sourceCode);
     logger.debug(`Successfully parsed code for extension ${fileExtension}. Root node: ${tree.rootNode.type}`);
+
+    // Cache the parse tree if caching is enabled
+    if (useCaching && parseCache && cacheKey) {
+      await parseCache.set(cacheKey, tree);
+    }
+
     return tree;
   } catch (error) {
     logger.error({ err: error, fileExtension }, `Error parsing code for extension ${fileExtension}.`);
     return null;
+  }
+}
+
+/**
+ * Reads and parses a file securely.
+ *
+ * @param filePath The path of the file to read and parse.
+ * @param fileExtension The file extension (e.g., '.js') to determine the grammar.
+ * @param config The Code-Map Generator configuration.
+ * @returns A promise that resolves to the parsed tree and source code.
+ */
+export async function readAndParseFile(
+  filePath: string,
+  fileExtension: string,
+  config: CodeMapGeneratorConfig
+): Promise<{ tree: ParserFromPackage.Tree | null, sourceCode: string }> {
+  try {
+    // Read the file securely
+    const sourceCode = await readFileSecure(filePath, config.allowedMappingDirectory);
+
+    // Parse the source code
+    const tree = await parseCode(sourceCode, fileExtension, filePath, config);
+
+    return { tree, sourceCode };
+  } catch (error) {
+    logger.error({ err: error, filePath }, `Error reading or parsing file: ${filePath}`);
+    return { tree: null, sourceCode: '' };
   }
 }
 

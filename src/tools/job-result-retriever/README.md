@@ -25,7 +25,7 @@ This tool retrieves the final result of an asynchronous background job that was 
 
 ## Output Schema
 
- 
+
 The tool returns a standard `CallToolResult` object. The `content` field within this result will be an array, typically containing a single text element. The text describes the job's current status or provides its final result.
 
 The structure of the `text` content varies based on the job's state:
@@ -83,7 +83,7 @@ The structure of the `text` content varies based on the job's state:
       "text": "Job 'some-unique-job-identifier-123' failed. Error: Something went wrong during execution."
     }
   ],
-  "isError": false 
+  "isError": false
 }
 ```
 
@@ -123,7 +123,7 @@ flowchart TD
 {
   "tool_name": "get-job-result",
   "arguments": {
-    "jobId": "123e4567-e89b-12d3-a456-426614174000" 
+    "jobId": "123e4567-e89b-12d3-a456-426614174000"
   }
 }
 ```
@@ -131,42 +131,69 @@ flowchart TD
 Invoked via AI Assistant (after getting a Job ID from another tool):
 `"Get the result for job ID 123e4567-e89b-12d3-a456-426614174000"`
 
-### Conceptual Client-Side JavaScript Example
+### Improved Client-Side JavaScript Example
 
-A client application would typically call this tool periodically after initiating a long-running operation that returned a `jobId`.
+A client application would typically call this tool periodically after initiating a long-running operation that returned a `jobId`. This example implements adaptive polling with exponential backoff:
 
 ```javascript
-// Conceptual client-side JavaScript
-async function checkJobStatus(mcpClient, jobId) {
-  try {
-    const result = await mcpClient.callTool('get-job-result', { jobId });
-    if (result.isError) {
-      console.error("Error calling get-job-result tool:", result.content[0]?.text || "Unknown error");
-    } else {
-      console.log("Job Status/Result:", result.content[0]?.text);
-      // Further processing based on the text content.
-      // For example, parse the result if the job completed successfully.
-      const textContent = result.content[0]?.text || "";
-      if (textContent.includes("completed successfully. Result:")) {
-        // Attempt to parse the result part
-        try {
-          const resultJsonString = textContent.substring(textContent.indexOf("Result:") + "Result:".length).trim();
-          const jobOutput = JSON.parse(resultJsonString);
-          console.log("Parsed Job Output:", jobOutput);
-        } catch (parseError) {
-          console.warn("Could not parse job output from text:", parseError);
-        }
+// Improved client-side JavaScript with adaptive polling
+async function pollJobStatus(mcpClient, jobId, initialInterval = 1000) {
+  let interval = initialInterval;
+  let maxInterval = 10000; // 10 seconds
+
+  while (true) {
+    // Wait for the current interval
+    await new Promise(resolve => setTimeout(resolve, interval));
+
+    try {
+      // Check job status
+      const result = await mcpClient.callTool('get-job-result', { jobId });
+
+      if (result.isError) {
+        console.error("Error calling get-job-result tool:", result.content[0]?.text || "Unknown error");
+        return result; // Return the error result
       }
+
+      const textContent = result.content[0]?.text || "";
+      console.log("Job Status:", textContent);
+
+      // Check if the job is completed or failed
+      if (textContent.includes("completed successfully") || textContent.includes("failed")) {
+        // Job is done, return the result
+        return result;
+      }
+
+      // Check if rate limited
+      if (result.rateLimit) {
+        console.log(`Rate limited. Waiting ${result.rateLimit.waitTime / 1000} seconds before next check.`);
+        // Wait for the specified time
+        await new Promise(resolve => setTimeout(resolve, result.rateLimit.waitTime));
+        continue;
+      }
+
+      // Use recommended polling interval if provided
+      if (result.pollingRecommendation) {
+        interval = result.pollingRecommendation.interval;
+        console.log(`Using recommended polling interval: ${interval / 1000} seconds`);
+      } else {
+        // Otherwise, implement exponential backoff
+        interval = Math.min(interval * 2, maxInterval);
+        console.log(`Using exponential backoff interval: ${interval / 1000} seconds`);
+      }
+    } catch (error) {
+      console.error("Exception while calling get-job-result:", error);
+      // Implement exponential backoff on error
+      interval = Math.min(interval * 2, maxInterval);
+      console.log(`Error occurred. Using exponential backoff interval: ${interval / 1000} seconds`);
     }
-  } catch (error) {
-    console.error("Exception while calling get-job-result:", error);
   }
 }
 
 // Example usage:
 // const myJobId = "some-unique-job-identifier-123";
-// // Periodically check status, e.g., using setInterval or a polling mechanism
-// // setInterval(() => checkJobStatus(myMcpClientInstance, myJobId), 5000); 
+// pollJobStatus(myMcpClientInstance, myJobId).then(result => {
+//   console.log("Final result:", result);
+// });
 ```
 
 ## Error Handling
@@ -174,3 +201,62 @@ async function checkJobStatus(mcpClient, jobId) {
 *   **Input Validation Errors:** Returns an error if `jobId` is missing or not a string.
 *   **Job Not Found:** Returns an error if no job exists with the provided `jobId`.
 *   **Job Still Processing:** Returns an informational message (not strictly an error) if the job is still `PENDING` or `RUNNING`.
+*   **Rate Limiting:** Returns a message indicating the client is polling too frequently, with a recommended wait time.
+
+## Polling Best Practices
+
+When checking the status of long-running jobs, follow these best practices to reduce server load and improve responsiveness:
+
+### Adaptive Polling
+
+The `get-job-result` tool now includes polling recommendations in its response. For optimal performance:
+
+1. **Follow the recommended polling interval**: The response includes a recommended interval (in seconds) for the next status check.
+
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Job 'some-unique-job-identifier-123' is running. Status updated at: 2023-06-01T12:34:56.789Z. Progress: Processing batch 2 of 5.\n\nRecommended polling interval: 2 seconds."
+    }
+  ],
+  "isError": false,
+  "pollingRecommendation": {
+    "interval": 2000,
+    "nextCheckTime": 1685623456789
+  }
+}
+```
+
+2. **Implement exponential backoff**: If no recommendation is provided, start with a 1-second interval and double it after each check, up to a maximum of 10 seconds.
+
+3. **Reduce polling frequency for PENDING jobs**: Use longer intervals (5+ seconds) when a job is in the PENDING state.
+
+4. **Increase polling frequency for RUNNING jobs**: Use shorter intervals (1-2 seconds) when a job is in the RUNNING state.
+
+5. **Stop polling when job is COMPLETED or FAILED**: Once a job reaches a terminal state, no further polling is necessary.
+
+### Rate Limiting
+
+The server implements rate limiting for job status checks to prevent excessive polling:
+
+1. **Minimum wait time**: If you check status too frequently, the response will include a wait time before the next check.
+
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Job 'some-unique-job-identifier-123' status is being checked too frequently. Please wait 3 seconds before checking again. Current status: RUNNING, last updated at: 2023-06-01T12:34:56.789Z."
+    }
+  ],
+  "isError": false,
+  "rateLimit": {
+    "waitTime": 3000,
+    "nextCheckTime": 1685623459789
+  }
+}
+```
+
+2. **Exponential backoff**: The minimum wait time increases with the number of rapid successive checks.

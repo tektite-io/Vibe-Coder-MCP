@@ -7,12 +7,9 @@
 
 import {
   initializeParser,
-  languageConfigurations,
   getParserForFileExtension,
   parseCode
 } from './parser.js';
-import path from 'path';
-import fs from 'fs/promises';
 
 // Sample code snippets for testing different languages
 const sampleCode: Record<string, string> = {
@@ -93,7 +90,7 @@ async function testLanguage(extension: string): Promise<boolean> {
 
   // Print the first few children to verify structure
   console.log(`   First few children:`);
-  tree.rootNode.children.slice(0, 3).forEach((child: any, i: number) => {
+  tree.rootNode.children.slice(0, 3).forEach((child, i: number) => {
     console.log(`     ${i}: ${child.type} - "${child.text.substring(0, 30).replace(/\n/g, '\\n')}${child.text.length > 30 ? '...' : ''}"`);
   });
 

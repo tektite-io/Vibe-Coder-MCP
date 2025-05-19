@@ -1,6 +1,5 @@
-import { SyntaxNode, Tree } from './parser.js'; // Assuming SyntaxNode and Tree are exported from parser.ts
+import { SyntaxNode } from './parser.js'; // Assuming SyntaxNode is exported from parser.js
 import { FunctionInfo, ClassInfo, ImportInfo } from './codeMapModel.js';
-import logger from '../../logger.js';
 
 // Language-specific query strings or node types can be defined here or in a separate config
 // For simplicity, we'll use string comparisons for node types, but queries are more robust.
@@ -216,6 +215,7 @@ export function extractClasses(rootNode: SyntaxNode, sourceCode: string, languag
     classes.push({
       name,
       methods,
+      properties: [], // Add empty properties array
       parentClass,
       // implementedInterfaces: [], // TODO: Extract interfaces
       comment,

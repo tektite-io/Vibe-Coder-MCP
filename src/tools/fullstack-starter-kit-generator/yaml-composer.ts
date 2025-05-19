@@ -157,9 +157,9 @@ Ensure the output is a single, raw JSON object without any other text or formatt
     const llmResponse = await this.generateTemplateWithLLM(category, technology, modulePathSegment);
     const normalizedJson = normalizeJsonResponse(llmResponse, `dynamic-gen-${modulePathSegment}`);
 
-    let parsedJson: any;
+    let parsedJson: Record<string, unknown>;
     try {
-      parsedJson = JSON.parse(normalizedJson);
+      parsedJson = JSON.parse(normalizedJson) as Record<string, unknown>;
     } catch (error) {
       logger.error({ err: error, modulePathSegment, normalizedJson }, `Failed to parse LLM JSON response for ${modulePathSegment}`);
       throw new ParsingError(`Failed to parse dynamically generated template for ${modulePathSegment} as JSON. Normalized response: ${normalizedJson}`, { originalResponse: llmResponse }, error instanceof Error ? error : undefined);
@@ -202,7 +202,7 @@ Ensure the output is a single, raw JSON object without any other text or formatt
       logger.info(`Found existing YAML module: ${fullPath}`);
       try {
         const fileContent = await fs.readFile(fullPath, 'utf-8');
-        const parsed = yaml.load(fileContent) as any;
+        const parsed = yaml.load(fileContent) as Record<string, unknown>;
         const validationResult = parsedYamlModuleSchema.safeParse(parsed);
         if (!validationResult.success) {
           logger.error({ errors: validationResult.error.issues, filePath: fullPath, parsedContent: parsed }, "Loaded YAML module failed schema validation");
@@ -246,9 +246,9 @@ Ensure the output is a single, raw JSON object without any other text or formatt
       return data.map(item => this.substitutePlaceholders(item, params)) as T;
     }
     if (typeof data === 'object' && data !== null) {
-      const newData = { ...data } as Record<string, any>;
+      const newData = { ...data } as Record<string, unknown>;
       for (const key in newData) {
-        newData[key] = this.substitutePlaceholders(newData[key] as any, params);
+        newData[key] = this.substitutePlaceholders(newData[key] as string | object | null | undefined, params);
       }
       return newData as T;
     }
@@ -275,23 +275,6 @@ Ensure the output is a single, raw JSON object without any other text or formatt
     if (!sourceItems) return;
 
     const moduleRootPath = (moduleParams[moduleKey] as string) || '.';
-
-    const processItem = (item: FileStructureItem, currentTargetPath: string): FileStructureItem => {
-      const newItem: FileStructureItem = { ...item };
-      newItem.path = path.posix.join(currentTargetPath, item.path);
-
-      if (newItem.content) {
-        newItem.content = this.substitutePlaceholders(newItem.content, moduleParams);
-      }
-      if (newItem.generationPrompt) {
-        newItem.generationPrompt = this.substitutePlaceholders(newItem.generationPrompt, moduleParams);
-      }
-
-      if (item.children) {
-        newItem.children = item.children.map((child: FileStructureItem) => processItem(child, currentTargetPath));
-      }
-      return newItem;
-    };
 
     const findOrCreateTargetDirectory = (pathSegments: string[], currentLevel: FileStructureItem[]): FileStructureItem[] => {
       if (pathSegments.length === 0) return currentLevel;

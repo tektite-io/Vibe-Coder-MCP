@@ -14,6 +14,7 @@ Vibe Coder MCP integrates with MCP-compatible clients to provide the following c
 *   **Git Integration**: Summarizes current Git changes (`git-summary`).
 *   **Research & Planning**: Performs deep research (`research-manager`) and generates planning documents like PRDs (`generate-prd`), user stories (`generate-user-stories`), task lists (`generate-task-list`), and development rules (`generate-rules`).
 *   **Project Scaffolding**: Generates full-stack starter kits (`generate-fullstack-starter-kit`).
+*   **Code Map Generator**: Recursively scans a codebase, extracts semantic information, and generates token-efficient, context-dense Markdown index and Mermaid diagrams, including sequence diagrams (`map-codebase`).
 *   **Asynchronous Execution**: Many long-running tools (generators, research, workflows) now run asynchronously. They return a Job ID immediately, and the final result is retrieved using the `get-job-result` tool.
 *   **Session State Management**: Maintains basic state across requests within a session (in-memory).
 *   **Standardized Error Handling**: Consistent error patterns across all tools.
@@ -108,17 +109,17 @@ The setup script (from Step 3) automatically creates a `.env` file in the projec
     *   The file contains a template based on `.env.example`:
         ```dotenv
         # OpenRouter Configuration
-        ## Specifies your unique API key for accessing OpenRouter services. 
+        ## Specifies your unique API key for accessing OpenRouter services.
         ## Replace "Your OPENROUTER_API_KEY here" with your actual key obtained from OpenRouter.ai.
-        OPENROUTER_API_KEY="Your OPENROUTER_API_KEY here" 
-        
-        ## Defines the base URL for the OpenRouter API endpoints. 
+        OPENROUTER_API_KEY="Your OPENROUTER_API_KEY here"
+
+        ## Defines the base URL for the OpenRouter API endpoints.
         ## The default value is usually correct and should not need changing unless instructed otherwise.
         OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-        
-        ## Sets the specific Gemini model to be used via OpenRouter for certain AI tasks. 
+
+        ## Sets the specific Gemini model to be used via OpenRouter for certain AI tasks.
         ## ':free' indicates potential usage of a free tier model if available and supported by your key.
-        GEMINI_MODEL=google/gemini-2.0-flash-thinking-exp:free 
+        GEMINI_MODEL=google/gemini-2.0-flash-thinking-exp:free
         ```
     *   **Crucially, replace `"Your OPENROUTER_API_KEY here"` with your actual OpenRouter API key.** Remove the quotes if your key doesn't require them.
 
@@ -129,10 +130,18 @@ The setup script (from Step 3) automatically creates a `.env` file in the projec
         ```
     *   Replace the path with your preferred **absolute path**. Use forward slashes (`/`) for paths. If this variable is not set, the default directory (`VibeCoderOutput/`) will be used.
 
-4.  **Review Other Settings (Optional):**
+4.  **Configure Code-Map Generator Directory (Optional):**
+    *   To specify which directory the code-map-generator tool is allowed to scan, add this line to your `.env` file:
+        ```dotenv
+        CODE_MAP_ALLOWED_DIR=/path/to/your/source/code/directory
+        ```
+    *   Replace the path with the **absolute path** to the directory containing the source code you want to analyze. This is a security boundary - the tool will not access files outside this directory.
+    *   Note that `CODE_MAP_ALLOWED_DIR` (for reading source code) and `VIBE_CODER_OUTPUT_DIR` (for writing output files) are separate for security reasons. The code-map-generator tool uses separate validation for read and write operations.
+
+5.  **Review Other Settings (Optional):**
     *   You can add other environment variables supported by the server, such as `LOG_LEVEL` (e.g., `LOG_LEVEL=debug`) or `NODE_ENV` (e.g., `NODE_ENV=development`).
 
-5.  **Save the `.env` File.**
+6.  **Save the `.env` File.**
 
 ### Step 5: Integrate with Your AI Assistant (MCP Settings)
 
@@ -166,45 +175,47 @@ The location varies depending on your AI assistant:
 3.  Add the following configuration block **inside** the curly braces `{}` of the `mcpServers` object. If other servers are already listed, add a comma `,` after the previous server's closing brace `}` before pasting this block.
 
     ```json
-    ## This is the unique identifier for this MCP server instance within your client's settings. You can name it descriptively.
-    "vibe-coder-mcp": { 
-      ## Specifies the command used to execute the server. Should be 'node' if Node.js is in your system's PATH.
-      "command": "node", 
-      ## Provides the arguments to the 'command'. The primary argument is the absolute path to the compiled server entry point (`build/index.js`). 
-      ## !! IMPORTANT: Replace the placeholder path below with the actual absolute path on YOUR system. Use forward slashes (/) even on Windows. !!
-      "args": ["/path/to/your/vibe-coder-mcp/build/index.js"], 
-      ## Sets the current working directory for the server process when it runs. Should be the absolute path to the root of the vibe-coder-mcp project directory.
-      ## !! IMPORTANT: Replace the placeholder path below with the actual absolute path on YOUR system. Use forward slashes (/) even on Windows. !!
-      "cwd": "/path/to/your/vibe-coder-mcp", 
-      ## Defines the communication transport protocol between the client and server. 'stdio' (standard input/output) is typical for local servers.
-      "transport": "stdio", 
-      ## An object containing environment variables to be passed specifically to the Vibe Coder server process when it starts.
-      ## API Keys should be in the .env file, NOT here.
-      "env": { 
-        ## Absolute path to the LLM configuration file used by Vibe Coder. This file defines model preferences.
-        ## !! IMPORTANT: Replace the placeholder path below with the actual absolute path on YOUR system. Use forward slashes (/) even on Windows. !!
-        "LLM_CONFIG_PATH": "/path/to/your/vibe-coder-mcp/llm_config.json", 
-        ## Sets the logging level for the server. Options typically include 'debug', 'info', 'warn', 'error'. 'debug' provides the most detailed logs.
-        "LOG_LEVEL": "debug", 
-        ## Specifies the runtime environment. 'production' is recommended for stable use, 'development' may enable more verbose logging or different behaviors.
-        "NODE_ENV": "production", 
-        ## Absolute path to the directory where Vibe Coder tools will save their output files (e.g., generated documents, code). Ensure this directory exists or the server has permission to create it.
-        ## This can also be set in the .env file (which takes precedence if both are set).
-        ## !! IMPORTANT: Replace the placeholder path below with the actual absolute path on YOUR system. Use forward slashes (/) even on Windows. !!
-        "VIBE_CODER_OUTPUT_DIR": "/path/to/your/VibeCoderOutput" 
+    // This is the unique identifier for this MCP server instance within your client's settings
+    "vibe-coder-mcp": {
+      // Specifies the command used to execute the server. Should be 'node' if Node.js is in your system's PATH
+      "command": "node",
+      // Provides the arguments to the 'command'. The primary argument is the absolute path to the compiled server entry point
+      // !! IMPORTANT: Replace with the actual absolute path on YOUR system. Use forward slashes (/) even on Windows !!
+      "args": ["/Users/username/Documents/Dev Projects/Vibe-Coder-MCP/build/index.js"],
+      // Sets the current working directory for the server process when it runs
+      // !! IMPORTANT: Replace with the actual absolute path on YOUR system. Use forward slashes (/) even on Windows !!
+      "cwd": "/Users/username/Documents/Dev Projects/Vibe-Coder-MCP",
+      // Defines the communication transport protocol between the client and server
+      "transport": "stdio",
+      // Environment variables to be passed specifically to the Vibe Coder server process when it starts
+      // API Keys should be in the .env file, NOT here
+      "env": {
+        // Absolute path to the LLM configuration file used by Vibe Coder
+        // !! IMPORTANT: Replace with the actual absolute path on YOUR system !!
+        "LLM_CONFIG_PATH": "/Users/username/Documents/Dev Projects/Vibe-Coder-MCP/llm_config.json",
+        // Sets the logging level for the server
+        "LOG_LEVEL": "debug",
+        // Specifies the runtime environment
+        "NODE_ENV": "production",
+        // Directory where Vibe Coder tools will save their output files
+        // !! IMPORTANT: Replace with the actual absolute path on YOUR system !!
+        "VIBE_CODER_OUTPUT_DIR": "/Users/username/Documents/Dev Projects/Vibe-Coder-MCP/VibeCoderOutput",
+        // Directory that the code-map-generator tool is allowed to scan
+        // This is a security boundary - the tool will not access files outside this directory
+        "CODE_MAP_ALLOWED_DIR": "/Users/username/Documents/Dev Projects/Vibe-Coder-MCP/src"
       },
-      ## A boolean flag to enable (false) or disable (true) this server configuration without deleting it. Set to 'false' to use the server.
-      "disabled": false, 
-      ## A list of tool names provided by this server that the MCP client is allowed to execute automatically without requiring explicit user approval for each use. Add or remove tool names based on your trust and workflow preferences.
-      "autoApprove": [ 
-        "research", 
-        "generate-rules", 
-        "generate-user-stories", 
-        "generate-task-list", 
-        "generate-prd", 
+      // A boolean flag to enable (false) or disable (true) this server configuration
+      "disabled": false,
+      // A list of tool names that the MCP client is allowed to execute automatically
+      "autoApprove": [
+        "research",
+        "generate-rules",
+        "generate-user-stories",
+        "generate-task-list",
+        "generate-prd",
         "generate-fullstack-starter-kit",
         "refactor-code",
-        "git-summary", 
+        "git-summary",
         "run-workflow",
         "map-codebase"
       ]
@@ -332,7 +343,7 @@ Vibe Coder uses a sophisticated routing approach to select the right tool for ea
 flowchart TD
     Start[Client Request] --> Process[Process Request]
     Process --> Hybrid[Hybrid Matcher]
-    
+
     subgraph "Primary: Semantic Routing"
         Hybrid --> Semantic[Semantic Matcher]
         Semantic --> Embeddings[Query Embeddings]
@@ -341,9 +352,9 @@ flowchart TD
         Compare --> Score[Score & Rank Tools]
         Score --> Confidence{High Confidence?}
     end
-    
+
     Confidence -->|Yes| Registry[Tool Registry]
-    
+
     subgraph "Fallback: Sequential Thinking"
         Confidence -->|No| Sequential[Sequential Thinking]
         Sequential --> LLM[LLM Analysis]
@@ -351,7 +362,7 @@ flowchart TD
         ThoughtChain --> Extraction[Extract Tool Name]
         Extraction --> Registry
     end
-    
+
     Registry --> Executor[Execute Tool]
     Executor --> Response[Return Response]
 ```
@@ -366,21 +377,21 @@ flowchart TD
         Import[Import Tool] --> Register[Call registerTool]
         Register --> Store[Store in Registry Map]
     end
-    
+
     subgraph "Tool Definition"
         Def[ToolDefinition] --> Name[Tool Name]
         Def --> Desc[Description]
         Def --> Schema[Zod Schema]
         Def --> Exec[Executor Function]
     end
-    
+
     subgraph "Server Initialization"
         Init[server.ts] --> Import
         Init --> GetAll[getAllTools]
         GetAll --> Loop[Loop Through Tools]
         Loop --> McpReg[Register with MCP Server]
     end
-    
+
     subgraph "Tool Execution"
         McpReg --> ExecTool[executeTool Function]
         ExecTool --> GetTool[Get Tool from Registry]
@@ -404,7 +415,7 @@ flowchart TD
     Init --> First[Generate First Thought]
     First --> Context[Add to Context]
     Context --> Loop{Needs More Thoughts?}
-    
+
     Loop -->|Yes| Next[Generate Next Thought]
     Next -->|Standard| AddStd[Add to Context]
     Next -->|Revision| Rev[Mark as Revision]
@@ -414,10 +425,10 @@ flowchart TD
     AddStd --> Loop
     AddRev --> Loop
     AddBranch --> Loop
-    
+
     Loop -->|No| Extract[Extract Final Solution]
     Extract --> End[End With Tool Selection]
-    
+
     subgraph "Error Handling"
         Next -->|Error| Retry[Retry with Simplified Request]
         Retry -->|Success| AddRetry[Add to Context]
@@ -433,19 +444,19 @@ flowchart TD
 flowchart TD
     Start[Client Request] --> SessionID[Extract Session ID]
     SessionID --> Store{State Exists?}
-    
+
     Store -->|Yes| Retrieve[Retrieve Previous State]
     Store -->|No| Create[Create New State]
-    
+
     Retrieve --> Context[Add Context to Tool]
     Create --> NoContext[Execute Without Context]
-    
+
     Context --> Execute[Execute Tool]
     NoContext --> Execute
-    
+
     Execute --> SaveState[Update Session State]
     SaveState --> Response[Return Response to Client]
-    
+
     subgraph "Session State Structure"
         State[SessionState] --> PrevCall[Previous Tool Call]
         State --> PrevResp[Previous Response]
@@ -462,19 +473,19 @@ flowchart TD
     Start[Client Request] --> Parse[Parse Workflow Request]
     Parse --> FindFlow[Find Workflow in workflows.json]
     FindFlow --> Steps[Extract Steps]
-    
+
     Steps --> Loop[Process Each Step]
     Loop --> PrepInput[Prepare Step Input]
     PrepInput --> ExecuteTool[Execute Tool via Registry]
     ExecuteTool --> SaveOutput[Save Step Output]
     SaveOutput --> NextStep{More Steps?}
-    
+
     NextStep -->|Yes| MapOutput[Map Output to Next Input]
     MapOutput --> Loop
-    
+
     NextStep -->|No| FinalOutput[Prepare Final Output]
     FinalOutput --> End[Return Workflow Result]
-    
+
     subgraph "Input/Output Mapping"
         MapOutput --> Direct[Direct Value]
         MapOutput --> Extract[Extract From Previous]
@@ -593,8 +604,17 @@ Refer to these individual READMEs for in-depth information:
 
 By default, outputs from the generator tools are stored for historical reference in the `VibeCoderOutput/` directory within the project. This location can be overridden by setting the `VIBE_CODER_OUTPUT_DIR` environment variable in your `.env` file or AI assistant configuration.
 
+### Security Boundaries for Read and Write Operations
+
+For security reasons, the Vibe Coder MCP tools maintain separate security boundaries for read and write operations:
+
+* **Read Operations**: Tools like the code-map-generator only read from directories explicitly authorized through the `CODE_MAP_ALLOWED_DIR` environment variable. This creates a clear security boundary and prevents unauthorized access to files outside the allowed directory.
+
+* **Write Operations**: All output files are written to the `VIBE_CODER_OUTPUT_DIR` directory (or its subdirectories). This separation ensures that tools can only write to designated output locations, protecting your source code from accidental modifications.
+
 Example structure (default location):
-```
+
+```bash
 VibeCoderOutput/
   ├── research-manager/         # Research reports
   │   └── TIMESTAMP-QUERY-research.md
@@ -608,6 +628,8 @@ VibeCoderOutput/
   │   └── TIMESTAMP-PROJECT-task-list.md
   ├── fullstack-starter-kit-generator/  # Project templates
   │   └── TIMESTAMP-PROJECT/
+  ├── code-map-generator/       # Code maps and diagrams
+  │   └── TIMESTAMP-code-map/
   └── workflow-runner/          # Workflow outputs
       └── TIMESTAMP-WORKFLOW/
 ```
@@ -634,14 +656,14 @@ While the primary use is integration with an AI assistant (using stdio), you can
 
 ### Running Modes
 
-*   **Production Mode (Stdio):** 
+*   **Production Mode (Stdio):**
     ```bash
     npm start
     ```
     * Logs go to stderr (mimics AI assistant launch)
     * Use NODE_ENV=production
 
-*   **Development Mode (Stdio, Pretty Logs):** 
+*   **Development Mode (Stdio, Pretty Logs):**
     ```bash
     npm run dev
     ```
@@ -649,11 +671,11 @@ While the primary use is integration with an AI assistant (using stdio), you can
     * Requires `nodemon` and `pino-pretty`
     * Use NODE_ENV=development
 
-*   **SSE Mode (HTTP Interface):** 
+*   **SSE Mode (HTTP Interface):**
     ```bash
     # Production mode over HTTP
     npm run start:sse
-    
+
     # Development mode over HTTP
     npm run dev:sse
     ```
@@ -729,4 +751,7 @@ While the primary use is integration with an AI assistant (using stdio), you can
    * First run may download embedding model - check for download messages
    * Try a more explicit request that mentions the tool name
 
-2. **Git Summary Tool
+2. **Git Summary Tool Issues:**
+   * Check if git is installed and accessible in the PATH
+   * Verify the current directory is a git repository
+   * Try running with explicit repository path
