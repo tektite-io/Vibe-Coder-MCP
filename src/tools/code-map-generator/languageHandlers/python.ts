@@ -65,7 +65,7 @@ export class PythonHandler extends BaseLanguageHandler {
 
           // Check for dunder methods
           if (name.startsWith('__') && name.endsWith('__')) {
-            return `dunder_${name.slice(2, -2)}`;
+            return name; // Return the original name for dunder methods
           }
 
           // Check for decorators
@@ -359,6 +359,41 @@ export class PythonHandler extends BaseLanguageHandler {
     } catch (error) {
       logger.warn({ err: error }, 'Error parsing Python docstring');
       return docstring;
+    }
+  }
+
+  /**
+   * Checks if a function is a generator.
+   */
+  protected isGeneratorFunction(node: SyntaxNode, sourceCode: string): boolean {
+    try {
+      if (node.type === 'function_definition') {
+        const bodyNode = node.childForFieldName('body');
+        if (bodyNode) {
+          // Check for yield statements in the function body
+          return bodyNode.descendantsOfType('yield').length > 0;
+        }
+      }
+      return false;
+    } catch (error) {
+      logger.warn({ err: error, nodeType: node.type }, 'Error checking if Python function is a generator');
+      return false;
+    }
+  }
+
+  /**
+   * Override the isAsyncFunction method to detect async functions.
+   */
+  protected isAsyncFunction(node: SyntaxNode, sourceCode: string): boolean {
+    try {
+      if (node.type === 'function_definition') {
+        // Check for async keyword
+        return node.text.startsWith('async ');
+      }
+      return false;
+    } catch (error) {
+      logger.warn({ err: error, nodeType: node.type }, 'Error checking if Python function is async');
+      return false;
     }
   }
 

@@ -80,6 +80,15 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
               endLine: node.endPosition.row + 1,
               isAsync: this.isAsyncFunction(node, sourceCode),
               isExported: this.isExportedFunction(node, sourceCode),
+              isMethod: options.isMethodExtraction || false,
+              isConstructor: name === 'constructor',
+              isGetter: name.startsWith('get') && name.length > 3,
+              isSetter: name.startsWith('set') && name.length > 3,
+              isGenerator: this.isGeneratorFunction ? this.isGeneratorFunction(node, sourceCode) : false,
+              isHook: name.startsWith('use') && name.length > 3 && name[3] === name[3].toUpperCase(),
+              isEventHandler: name.startsWith('handle') || name.startsWith('on'),
+              framework: this.detectFramework(sourceCode) || undefined,
+              class: options.className,
             };
           });
 
@@ -440,6 +449,15 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
   protected isAsyncFunction(node: SyntaxNode, sourceCode: string): boolean {
     // Default implementation checks if the function has the 'async' keyword
     return node.text.startsWith('async ');
+  }
+
+  /**
+   * Checks if a function is a generator.
+   * This can be overridden by language-specific handlers.
+   */
+  protected isGeneratorFunction(node: SyntaxNode, sourceCode: string): boolean {
+    // Default implementation returns false
+    return false;
   }
 
   /**
