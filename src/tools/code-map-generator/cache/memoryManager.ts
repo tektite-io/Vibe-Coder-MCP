@@ -50,39 +50,179 @@ export interface MemoryManagerOptions {
  */
 export interface MemoryStats {
   /**
-   * The total system memory in bytes.
+   * Formatted memory statistics for human readability.
    */
-  totalSystemMemory: number;
+  formatted: {
+    /**
+     * Total system memory.
+     */
+    totalSystemMemory: string;
+
+    /**
+     * Free system memory.
+     */
+    freeSystemMemory: string;
+
+    /**
+     * Used system memory.
+     */
+    usedSystemMemory: string;
+
+    /**
+     * Memory usage percentage.
+     */
+    memoryUsagePercentage: string;
+
+    /**
+     * Memory status (normal, high, critical).
+     */
+    memoryStatus: 'normal' | 'high' | 'critical';
+
+    /**
+     * Process memory statistics.
+     */
+    process: {
+      /**
+       * Resident set size.
+       */
+      rss: string;
+
+      /**
+       * Total heap size.
+       */
+      heapTotal: string;
+
+      /**
+       * Used heap size.
+       */
+      heapUsed: string;
+
+      /**
+       * External memory.
+       */
+      external: string;
+
+      /**
+       * Array buffers memory.
+       */
+      arrayBuffers: string;
+    };
+
+    /**
+     * V8 memory statistics.
+     */
+    v8: {
+      /**
+       * Heap size limit.
+       */
+      heapSizeLimit: string;
+
+      /**
+       * Total heap size.
+       */
+      totalHeapSize: string;
+
+      /**
+       * Used heap size.
+       */
+      usedHeapSize: string;
+
+      /**
+       * Heap size executable.
+       */
+      heapSizeExecutable: string;
+
+      /**
+       * Malloced memory.
+       */
+      mallocedMemory: string;
+
+      /**
+       * Peak malloced memory.
+       */
+      peakMallocedMemory: string;
+    };
+
+    /**
+     * Cache statistics.
+     */
+    cache: {
+      /**
+       * Total cache size.
+       */
+      totalSize: string;
+
+      /**
+       * Number of caches.
+       */
+      cacheCount: number;
+    };
+
+    /**
+     * Memory usage thresholds.
+     */
+    thresholds: {
+      /**
+       * High memory threshold.
+       */
+      highMemoryThreshold: string;
+
+      /**
+       * Critical memory threshold.
+       */
+      criticalMemoryThreshold: string;
+    };
+  };
 
   /**
-   * The free system memory in bytes.
+   * Raw memory statistics.
    */
-  freeSystemMemory: number;
+  raw: {
+    /**
+     * Total system memory in bytes.
+     */
+    totalSystemMemory: number;
+
+    /**
+     * Free system memory in bytes.
+     */
+    freeSystemMemory: number;
+
+    /**
+     * Memory usage percentage (0-1).
+     */
+    memoryUsagePercentage: number;
+
+    /**
+     * Process memory statistics.
+     */
+    processMemory: NodeJS.MemoryUsage;
+
+    /**
+     * V8 heap statistics.
+     */
+    heapStats: v8.HeapInfo;
+
+    /**
+     * V8 heap space statistics.
+     */
+    heapSpaceStats: v8.HeapSpaceInfo[];
+  };
 
   /**
-   * The memory usage percentage.
-   */
-  memoryUsagePercentage: number;
-
-  /**
-   * The heap statistics.
-   */
-  heapStats: v8.HeapInfo;
-
-  /**
-   * The heap space statistics.
-   */
-  heapSpaceStats: v8.HeapSpaceInfo[];
-
-  /**
-   * The cache statistics.
+   * Cache statistics.
    */
   cacheStats: MemoryCacheStats[];
 
   /**
-   * The grammar manager statistics.
+   * Grammar statistics.
    */
   grammarStats: Record<string, any>;
+
+  /**
+   * Timestamp when the statistics were collected.
+   */
+  timestamp: number;
 }
 
 /**
@@ -93,6 +233,7 @@ export class MemoryManager {
   private caches: Map<string, MemoryCache<any, any>> = new Map();
   private grammarManager: GrammarManager | null = null;
   private monitorTimer: NodeJS.Timeout | null = null;
+  private gcTimer: NodeJS.Timeout | null = null;
   private maxMemoryBytes: number;
 
   /**
@@ -184,12 +325,52 @@ export class MemoryManager {
   }
 
   /**
+   * Starts periodic garbage collection.
+   * @param interval The interval in milliseconds
+   */
+  public startPeriodicGC(interval: number = 5 * 60 * 1000): void {
+    // Clear existing timer if any
+    if (this.gcTimer) {
+      clearInterval(this.gcTimer);
+    }
+
+    // Start new timer
+    this.gcTimer = setInterval(() => {
+      const stats = this.getMemoryStats();
+
+      // Run GC if memory usage is high or critical
+      if (stats.formatted.memoryStatus !== 'normal') {
+        logger.info(`Memory status is ${stats.formatted.memoryStatus}, running garbage collection`);
+        this.runGarbageCollection();
+      } else {
+        logger.debug('Memory status is normal, skipping garbage collection');
+      }
+    }, interval);
+
+    // Make sure the timer doesn't prevent the process from exiting
+    this.gcTimer.unref();
+
+    logger.info(`Started periodic garbage collection with interval: ${interval}ms`);
+  }
+
+  /**
+   * Stops periodic garbage collection.
+   */
+  public stopPeriodicGC(): void {
+    if (this.gcTimer) {
+      clearInterval(this.gcTimer);
+      this.gcTimer = null;
+      logger.info('Stopped periodic garbage collection');
+    }
+  }
+
+  /**
    * Checks memory usage and prunes caches if necessary.
    */
   private checkMemoryUsage(): void {
     const stats = this.getMemoryStats();
-    const heapUsed = stats.heapStats.used_heap_size;
-    const heapLimit = stats.heapStats.heap_size_limit;
+    const heapUsed = stats.raw.heapStats.used_heap_size;
+    const heapLimit = stats.raw.heapStats.heap_size_limit;
     const heapPercentage = heapUsed / heapLimit;
 
     logger.debug(`Memory usage: ${this.formatBytes(heapUsed)} / ${this.formatBytes(heapLimit)} (${(heapPercentage * 100).toFixed(2)}%)`);
@@ -248,41 +429,111 @@ export class MemoryManager {
     const totalMemory = os.totalmem();
     const freeMemory = os.freemem();
     const memoryUsage = (totalMemory - freeMemory) / totalMemory;
+    const memoryUsagePercentage = memoryUsage * 100;
 
+    // Get Node.js process memory usage
+    const processMemory = process.memoryUsage();
+
+    // Get V8 heap statistics
     const heapStats = v8.getHeapStatistics();
     const heapSpaceStats = v8.getHeapSpaceStatistics();
 
+    // Calculate memory usage thresholds
+    const highMemoryThreshold = 0.8; // 80%
+    const criticalMemoryThreshold = 0.9; // 90%
+
+    // Determine memory status
+    let memoryStatus: 'normal' | 'high' | 'critical' = 'normal';
+    if (memoryUsage > criticalMemoryThreshold) {
+      memoryStatus = 'critical';
+    } else if (memoryUsage > highMemoryThreshold) {
+      memoryStatus = 'high';
+    }
+
+    // Get cache statistics
     const cacheStats = Array.from(this.caches.values()).map(cache => cache.getStats());
 
+    // Calculate total cache size
+    const totalCacheSize = cacheStats.reduce((total, cache) => total + (cache.totalSize || 0), 0);
+
+    // Get grammar statistics
     const grammarStats = this.grammarManager ? this.grammarManager.getStats() : {};
 
+    // Format human-readable values
+    const formattedStats = {
+      totalSystemMemory: this.formatBytes(totalMemory),
+      freeSystemMemory: this.formatBytes(freeMemory),
+      usedSystemMemory: this.formatBytes(totalMemory - freeMemory),
+      memoryUsagePercentage: memoryUsagePercentage.toFixed(2) + '%',
+      memoryStatus,
+
+      process: {
+        rss: this.formatBytes(processMemory.rss),
+        heapTotal: this.formatBytes(processMemory.heapTotal),
+        heapUsed: this.formatBytes(processMemory.heapUsed),
+        external: this.formatBytes(processMemory.external),
+        arrayBuffers: this.formatBytes(processMemory.arrayBuffers || 0),
+      },
+
+      v8: {
+        heapSizeLimit: this.formatBytes(heapStats.heap_size_limit),
+        totalHeapSize: this.formatBytes(heapStats.total_heap_size),
+        usedHeapSize: this.formatBytes(heapStats.used_heap_size),
+        heapSizeExecutable: this.formatBytes(heapStats.total_heap_size_executable),
+        mallocedMemory: this.formatBytes(heapStats.malloced_memory),
+        peakMallocedMemory: this.formatBytes(heapStats.peak_malloced_memory),
+      },
+
+      cache: {
+        totalSize: this.formatBytes(totalCacheSize),
+        cacheCount: cacheStats.length,
+      },
+
+      thresholds: {
+        highMemoryThreshold: (highMemoryThreshold * 100) + '%',
+        criticalMemoryThreshold: (criticalMemoryThreshold * 100) + '%',
+      }
+    };
+
+    // Return both formatted and raw values
     return {
-      totalSystemMemory: totalMemory,
-      freeSystemMemory: freeMemory,
-      memoryUsagePercentage: memoryUsage,
-      heapStats,
-      heapSpaceStats,
+      formatted: formattedStats,
+
+      raw: {
+        totalSystemMemory: totalMemory,
+        freeSystemMemory: freeMemory,
+        memoryUsagePercentage: memoryUsage,
+        processMemory,
+        heapStats,
+        heapSpaceStats,
+      },
+
       cacheStats,
-      grammarStats
+      grammarStats,
+
+      // Add timestamp
+      timestamp: Date.now(),
     };
   }
 
   /**
    * Formats a byte value into a human-readable string.
    * @param bytes The byte value
+   * @param decimals The number of decimal places to include
    * @returns The formatted string
    */
-  private formatBytes(bytes: number): string {
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let value = bytes;
-    let unitIndex = 0;
+  public formatBytes(bytes: number, decimals: number = 2): string {
+    if (bytes === 0) return '0 Bytes';
+    if (!bytes || isNaN(bytes)) return 'Unknown';
 
-    while (value >= 1024 && unitIndex < units.length - 1) {
-      value /= 1024;
-      unitIndex++;
-    }
+    const k = 1024;
+    const dm = decimals < 0 ? 0 : decimals;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
 
-    return `${value.toFixed(2)} ${units[unitIndex]}`;
+    const i = Math.floor(Math.log(Math.abs(bytes)) / Math.log(k));
+    if (i < 0 || i >= sizes.length) return `${bytes} Bytes`;
+
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
   }
 
   /**
@@ -363,14 +614,20 @@ export class MemoryManager {
   public runGarbageCollection(): void {
     logger.info('Running manual garbage collection...');
 
+    // Get memory stats before cleanup
+    const beforeStats = this.getMemoryStats();
+
     // Clear all caches
     for (const cache of this.caches.values()) {
       cache.clear();
     }
 
+    logger.info('All caches cleared successfully.');
+
     // Unload unused grammars if grammar manager is available
     if (this.grammarManager) {
       this.grammarManager.unloadUnusedGrammars();
+      logger.info('Unused grammars unloaded successfully.');
     }
 
     // Suggest to V8 that now might be a good time for GC
@@ -387,7 +644,25 @@ export class MemoryManager {
     }
 
     // Log memory usage after cleanup
-    const stats = this.getMemoryStats();
-    logger.info(`Memory usage after cleanup: ${this.formatBytes(stats.heapStats.used_heap_size)} / ${this.formatBytes(stats.heapStats.heap_size_limit)}`);
+    const afterStats = this.getMemoryStats();
+
+    // Calculate memory freed
+    const memoryFreed = beforeStats.raw.processMemory.heapUsed - afterStats.raw.processMemory.heapUsed;
+
+    logger.info(`Memory usage after cleanup: ${afterStats.formatted.process.heapUsed} / ${afterStats.formatted.v8.heapSizeLimit}`);
+
+    if (memoryFreed > 0) {
+      logger.info(`Memory freed: ${this.formatBytes(memoryFreed)}`);
+    } else {
+      logger.warn(`Memory usage increased by: ${this.formatBytes(Math.abs(memoryFreed))}`);
+    }
+
+    // Log memory status
+    logger.info(`Memory status: ${afterStats.formatted.memoryStatus}`);
+
+    // If memory status is still high or critical, log a warning
+    if (afterStats.formatted.memoryStatus !== 'normal') {
+      logger.warn(`Memory usage is still ${afterStats.formatted.memoryStatus} after cleanup. Consider restarting the process.`);
+    }
   }
 }

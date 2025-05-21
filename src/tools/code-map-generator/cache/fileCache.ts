@@ -44,7 +44,7 @@ export class FileCache<T> {
     this.name = options.name;
     this.cacheDir = path.resolve(options.cacheDir);
     this.metadataPath = path.join(this.cacheDir, `${this.name}-metadata.json`);
-    
+
     // Apply default options
     this.options = {
       ...FileCache.DEFAULT_OPTIONS,
@@ -58,7 +58,7 @@ export class FileCache<T> {
       serialize: options.serialize ?? FileCache.DEFAULT_OPTIONS.serialize,
       deserialize: options.deserialize ?? FileCache.DEFAULT_OPTIONS.deserialize,
     };
-    
+
     // Initialize metadata
     this.metadata = {
       name: this.name,
@@ -68,8 +68,9 @@ export class FileCache<T> {
       keys: [],
       maxEntries: this.options.maxEntries,
       maxAge: this.options.maxAge,
+      sizeInBytes: 0
     };
-    
+
     // Initialize stats
     this.stats = {
       name: this.name,
@@ -92,11 +93,23 @@ export class FileCache<T> {
     if (this.initialized) {
       return;
     }
-    
+
     try {
       // Create the cache directory if it doesn't exist
-      await fs.mkdir(this.cacheDir, { recursive: true });
-      
+      await this.createCacheDirectory();
+
+      // Initialize metadata with default values
+      this.metadata = {
+        name: this.name,
+        size: 0,
+        createdAt: Date.now(),
+        lastUpdated: Date.now(),
+        keys: [],
+        maxEntries: this.options.maxEntries || 10000,
+        maxAge: this.options.maxAge || 24 * 60 * 60 * 1000, // 24 hours
+        sizeInBytes: 0,
+      };
+
       // Load metadata if it exists
       try {
         const metadataContent = await fs.readFile(this.metadataPath, 'utf-8');
@@ -108,17 +121,25 @@ export class FileCache<T> {
           await this.saveMetadata();
           logger.debug(`Created new cache metadata for ${this.name}`);
         } else {
-          // Other error, log and re-throw
-          logger.error({ err: error, metadataPath: this.metadataPath }, `Error loading cache metadata for ${this.name}`);
-          throw error;
+          // Other error, log but continue with default metadata
+          logger.warn({ err: error, metadataPath: this.metadataPath }, `Error loading cache metadata for ${this.name}, using default metadata`);
+          await this.saveMetadata();
         }
       }
-      
+
+      // Mark as initialized before pruning to avoid circular dependency
+      this.initialized = true;
+
       // Prune expired entries if enabled
       if (this.options.pruneOnStartup) {
-        await this.prune();
+        try {
+          await this.prune();
+        } catch (pruneError) {
+          // Log but don't fail initialization
+          logger.warn({ err: pruneError }, `Error pruning cache ${this.name} during initialization`);
+        }
       }
-      
+
       // Start automatic pruning if enabled
       if (this.options.pruneInterval > 0) {
         this.pruneTimer = setInterval(() => {
@@ -127,8 +148,8 @@ export class FileCache<T> {
           });
         }, this.options.pruneInterval);
       }
-      
-      this.initialized = true;
+
+      logger.info(`Cache ${this.name} initialized successfully at ${this.cacheDir}`);
     } catch (error) {
       logger.error({ err: error, cacheDir: this.cacheDir }, `Error initializing cache ${this.name}`);
       throw error;
@@ -136,13 +157,57 @@ export class FileCache<T> {
   }
 
   /**
+   * Creates the cache directory with retry logic.
+   * @returns A promise that resolves when the directory is created
+   * @throws Error if the directory cannot be created after retries
+   */
+  private async createCacheDirectory(): Promise<void> {
+    const maxRetries = 3;
+    let retryCount = 0;
+    let lastError: Error | null = null;
+
+    while (retryCount < maxRetries) {
+      try {
+        // Create the cache directory if it doesn't exist
+        await fs.mkdir(this.cacheDir, { recursive: true });
+
+        // Verify the directory is writable by creating a test file
+        const testFilePath = path.join(this.cacheDir, `.write-test-${Date.now()}.tmp`);
+        await fs.writeFile(testFilePath, 'test');
+        await fs.unlink(testFilePath);
+
+        logger.debug(`Cache directory ${this.cacheDir} created and verified as writable`);
+        return;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        logger.warn({
+          err: error,
+          cacheDir: this.cacheDir,
+          retry: retryCount + 1,
+          maxRetries
+        }, `Error creating cache directory, retrying (${retryCount + 1}/${maxRetries})...`);
+
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        retryCount++;
+      }
+    }
+
+    // If we get here, all retries failed
+    throw new Error(`Failed to create cache directory after ${maxRetries} attempts: ${lastError?.message}`);
+  }
+
+  /**
    * Ensures the cache is initialized.
    * @throws Error if the cache is not initialized
+   * @returns True if the cache is initialized
    */
-  private ensureInitialized(): void {
+  private ensureInitialized(): boolean {
     if (!this.initialized) {
-      throw new Error(`Cache ${this.name} is not initialized. Call init() first.`);
+      logger.warn(`Cache ${this.name} is not initialized. Call init() first.`);
+      return false;
     }
+    return true;
   }
 
   /**
@@ -183,10 +248,12 @@ export class FileCache<T> {
    * @returns A promise that resolves to the cached value, or undefined if not found
    */
   public async get(key: string): Promise<T | undefined> {
-    this.ensureInitialized();
-    
+    if (!this.ensureInitialized()) {
+      return undefined;
+    }
+
     const entryPath = this.getEntryPath(key);
-    
+
     try {
       // Check if the entry exists
       try {
@@ -196,19 +263,23 @@ export class FileCache<T> {
         this.stats.misses++;
         return undefined;
       }
-      
+
       // Read the entry
       const entryContent = await fs.readFile(entryPath, 'utf-8');
       const entry = this.options.deserialize<CacheEntry<T>>(entryContent);
-      
+
       // Validate the entry if enabled
       if (this.options.validateOnGet && entry.expiry < Date.now()) {
         // Entry is expired, delete it
-        await this.delete(key);
+        try {
+          await this.delete(key);
+        } catch (error) {
+          logger.warn({ err: error, key }, `Error deleting expired cache entry for ${key}`);
+        }
         this.stats.misses++;
         return undefined;
       }
-      
+
       // Entry is valid
       this.stats.hits++;
       this.stats.hitRatio = this.stats.hits / (this.stats.hits + this.stats.misses);
@@ -228,12 +299,20 @@ export class FileCache<T> {
    * @returns A promise that resolves when the value is cached
    */
   public async set(key: string, value: T, ttl?: number): Promise<void> {
-    this.ensureInitialized();
-    
+    if (!this.ensureInitialized()) {
+      // Try to initialize the cache
+      try {
+        await this.init();
+      } catch (error) {
+        logger.error({ err: error }, `Failed to initialize cache ${this.name} during set operation`);
+        throw new Error(`Cannot set cache entry - initialization failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
     const entryPath = this.getEntryPath(key);
     const now = Date.now();
     const expiry = now + (ttl ?? this.options.maxAge);
-    
+
     // Create the cache entry
     const entry: CacheEntry<T> = {
       key,
@@ -241,28 +320,43 @@ export class FileCache<T> {
       timestamp: now,
       expiry,
     };
-    
+
     try {
+      // Create the directory if it doesn't exist (in case it was deleted)
+      try {
+        await fs.mkdir(path.dirname(entryPath), { recursive: true });
+      } catch (error) {
+        // Ignore if directory already exists
+      }
+
       // Write the entry to disk
       await fs.writeFile(entryPath, this.options.serialize(entry), 'utf-8');
-      
+
       // Update metadata
       if (!this.metadata.keys.includes(key)) {
         this.metadata.keys.push(key);
         this.metadata.size++;
       }
       this.metadata.lastUpdated = now;
-      
+
       // Save metadata
-      await this.saveMetadata();
-      
+      try {
+        await this.saveMetadata();
+      } catch (error) {
+        logger.warn({ err: error }, `Error saving metadata after setting cache entry for ${key}`);
+      }
+
       // Update stats
       this.stats.size = this.metadata.size;
       this.stats.lastUpdated = now;
-      
+
       // Prune if we've exceeded maxEntries
       if (this.metadata.size > this.options.maxEntries) {
-        await this.prune();
+        try {
+          await this.prune();
+        } catch (error) {
+          logger.warn({ err: error }, `Error pruning cache after setting entry for ${key}`);
+        }
       }
     } catch (error) {
       logger.error({ err: error, key, entryPath }, `Error setting cache entry for ${key}`);
@@ -276,25 +370,36 @@ export class FileCache<T> {
    * @returns A promise that resolves to true if the key exists, false otherwise
    */
   public async has(key: string): Promise<boolean> {
-    this.ensureInitialized();
-    
+    if (!this.ensureInitialized()) {
+      return false;
+    }
+
     const entryPath = this.getEntryPath(key);
-    
+
     try {
       await fs.access(entryPath, fsSync.constants.R_OK);
-      
+
       // If validateOnGet is enabled, check if the entry is expired
       if (this.options.validateOnGet) {
-        const entryContent = await fs.readFile(entryPath, 'utf-8');
-        const entry = this.options.deserialize<CacheEntry<T>>(entryContent);
-        
-        if (entry.expiry < Date.now()) {
-          // Entry is expired, delete it
-          await this.delete(key);
+        try {
+          const entryContent = await fs.readFile(entryPath, 'utf-8');
+          const entry = this.options.deserialize<CacheEntry<T>>(entryContent);
+
+          if (entry.expiry < Date.now()) {
+            // Entry is expired, delete it
+            try {
+              await this.delete(key);
+            } catch (error) {
+              logger.warn({ err: error, key }, `Error deleting expired cache entry for ${key}`);
+            }
+            return false;
+          }
+        } catch (error) {
+          logger.warn({ err: error, key }, `Error validating cache entry for ${key}`);
           return false;
         }
       }
-      
+
       return true;
     } catch (error) {
       return false;
@@ -307,36 +412,42 @@ export class FileCache<T> {
    * @returns A promise that resolves to true if the key was deleted, false otherwise
    */
   public async delete(key: string): Promise<boolean> {
-    this.ensureInitialized();
-    
+    if (!this.ensureInitialized()) {
+      return false;
+    }
+
     const entryPath = this.getEntryPath(key);
-    
+
     try {
       // Delete the entry file
       await fs.unlink(entryPath);
-      
+
       // Update metadata
       const keyIndex = this.metadata.keys.indexOf(key);
       if (keyIndex !== -1) {
         this.metadata.keys.splice(keyIndex, 1);
         this.metadata.size--;
         this.metadata.lastUpdated = Date.now();
-        
+
         // Save metadata
-        await this.saveMetadata();
-        
+        try {
+          await this.saveMetadata();
+        } catch (error) {
+          logger.warn({ err: error }, `Error saving metadata after deleting cache entry for ${key}`);
+        }
+
         // Update stats
         this.stats.size = this.metadata.size;
         this.stats.lastUpdated = Date.now();
       }
-      
+
       return true;
     } catch (error) {
       if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
         // Entry doesn't exist, that's fine
         return false;
       }
-      
+
       logger.error({ err: error, key, entryPath }, `Error deleting cache entry for ${key}`);
       throw error;
     }
@@ -347,8 +458,16 @@ export class FileCache<T> {
    * @returns A promise that resolves when the cache is cleared
    */
   public async clear(): Promise<void> {
-    this.ensureInitialized();
-    
+    if (!this.ensureInitialized()) {
+      // Try to initialize the cache
+      try {
+        await this.init();
+      } catch (error) {
+        logger.error({ err: error }, `Failed to initialize cache ${this.name} during clear operation`);
+        throw new Error(`Cannot clear cache - initialization failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
     try {
       // Delete all entry files
       for (const key of this.metadata.keys) {
@@ -361,20 +480,24 @@ export class FileCache<T> {
           }
         }
       }
-      
+
       // Reset metadata
       this.metadata.keys = [];
       this.metadata.size = 0;
       this.metadata.lastUpdated = Date.now();
-      
+
       // Save metadata
-      await this.saveMetadata();
-      
+      try {
+        await this.saveMetadata();
+      } catch (error) {
+        logger.warn({ err: error }, `Error saving metadata after clearing cache ${this.name}`);
+      }
+
       // Reset stats
       this.stats.size = 0;
       this.stats.lastUpdated = Date.now();
-      
-      logger.debug(`Cleared cache ${this.name}`);
+
+      logger.info(`Cleared cache ${this.name}`);
     } catch (error) {
       logger.error({ err: error }, `Error clearing cache ${this.name}`);
       throw error;
@@ -386,20 +509,24 @@ export class FileCache<T> {
    * @returns A promise that resolves to the number of entries pruned
    */
   public async prune(): Promise<number> {
-    this.ensureInitialized();
-    
+    // If not initialized, just return
+    if (!this.initialized) {
+      logger.warn(`Cannot prune cache ${this.name} - not initialized`);
+      return 0;
+    }
+
     const now = Date.now();
     const prunedKeys: string[] = [];
-    
+
     try {
       // Check each entry for expiration
       for (const key of this.metadata.keys) {
         const entryPath = this.getEntryPath(key);
-        
+
         try {
           const entryContent = await fs.readFile(entryPath, 'utf-8');
           const entry = this.options.deserialize<CacheEntry<T>>(entryContent);
-          
+
           if (entry.expiry < now) {
             // Entry is expired, delete it
             await fs.unlink(entryPath);
@@ -414,7 +541,7 @@ export class FileCache<T> {
           }
         }
       }
-      
+
       // Update metadata
       for (const key of prunedKeys) {
         const keyIndex = this.metadata.keys.indexOf(key);
@@ -422,17 +549,21 @@ export class FileCache<T> {
           this.metadata.keys.splice(keyIndex, 1);
         }
       }
-      
+
       this.metadata.size = this.metadata.keys.length;
       this.metadata.lastUpdated = now;
-      
+
       // Save metadata
-      await this.saveMetadata();
-      
+      try {
+        await this.saveMetadata();
+      } catch (error) {
+        logger.warn({ err: error }, `Error saving metadata after pruning cache ${this.name}`);
+      }
+
       // Update stats
       this.stats.size = this.metadata.size;
       this.stats.lastUpdated = now;
-      
+
       logger.debug(`Pruned ${prunedKeys.length} entries from cache ${this.name}`);
       return prunedKeys.length;
     } catch (error) {
