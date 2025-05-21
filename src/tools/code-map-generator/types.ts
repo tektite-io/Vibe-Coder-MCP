@@ -130,6 +130,23 @@ export interface ImportExtractionOptions {
    * Whether to extract comments for imports.
    */
   extractComments?: boolean;
+
+  /**
+   * Whether to use import resolution to resolve import paths.
+   */
+  useImportResolver?: boolean;
+
+  /**
+   * The file path of the file containing the import.
+   * Required when useImportResolver is true.
+   */
+  filePath?: string;
+
+  /**
+   * The project root directory.
+   * Required when useImportResolver is true.
+   */
+  projectRoot?: string;
 }
 
 /**
@@ -150,6 +167,23 @@ export interface FunctionContext {
    * The parent context, if any.
    */
   parent?: FunctionContext;
+}
+
+/**
+ * Debug configuration options.
+ */
+export interface DebugConfig {
+  /**
+   * Whether to show detailed information for unknown imports.
+   * Default is false.
+   */
+  showDetailedImports?: boolean;
+
+  /**
+   * Whether to generate debug files with raw AST information.
+   * Default is false.
+   */
+  generateASTDebugFiles?: boolean;
 }
 
 /**
@@ -181,6 +215,16 @@ export interface CodeMapGeneratorConfig {
    * Optional feature flags for enabling or disabling enhanced function detection features.
    */
   featureFlags?: FeatureFlagsConfig;
+
+  /**
+   * Optional import resolution configuration for resolving import paths.
+   */
+  importResolver?: ImportResolverConfig;
+
+  /**
+   * Debug configuration options.
+   */
+  debug?: DebugConfig;
 }
 
 /**
@@ -203,10 +247,28 @@ export interface CacheConfig {
   maxAge?: number;
 
   /**
-   * Directory where cache files are stored. If not specified, defaults to
-   * a '.cache' directory within the code-map-generator output directory.
+   * Cache directory path. This is used internally and should not be set directly.
+   * @internal
    */
   cacheDir?: string;
+
+  /**
+   * Whether to use file-based source code access.
+   * Default is true.
+   */
+  useFileBasedAccess?: boolean;
+
+  /**
+   * Maximum number of files to cache in memory.
+   * Default is 100.
+   */
+  maxCachedFiles?: number;
+
+  /**
+   * Whether to use file hashes for change detection.
+   * Default is true.
+   */
+  useFileHashes?: boolean;
 }
 
 /**
@@ -227,6 +289,70 @@ export interface ProcessingConfig {
    * Maximum memory usage in MB before triggering garbage collection. Default is 1024 (1GB).
    */
   maxMemoryUsage?: number;
+
+  /**
+   * Whether to use incremental processing.
+   * Default is true.
+   */
+  incremental?: boolean;
+
+  /**
+   * Whether to run periodic garbage collection.
+   * Default is true.
+   */
+  periodicGC?: boolean;
+
+  /**
+   * Interval for periodic garbage collection in milliseconds.
+   * Default is 5 minutes.
+   */
+  gcInterval?: number;
+
+  /**
+   * Configuration for incremental processing.
+   */
+  incrementalConfig?: IncrementalProcessingConfig;
+}
+
+/**
+ * Configuration for incremental processing.
+ */
+export interface IncrementalProcessingConfig {
+  /**
+   * Whether to use file hashes for change detection.
+   * Default is true.
+   */
+  useFileHashes?: boolean;
+
+  /**
+   * Whether to use file metadata (size, modification time) for change detection.
+   * Default is true.
+   */
+  useFileMetadata?: boolean;
+
+  /**
+   * Maximum number of file hashes to cache.
+   * Default is 10000.
+   */
+  maxCachedHashes?: number;
+
+  /**
+   * Maximum age of cached hashes in milliseconds.
+   * Default is 24 hours.
+   */
+  maxHashAge?: number;
+
+  /**
+   * Path to the file containing the list of previously processed files.
+   * If not specified, a default path will be used.
+   */
+  previousFilesListPath?: string;
+
+  /**
+   * Whether to save the list of processed files for the next run.
+   * Default is true.
+   */
+  saveProcessedFilesList?: boolean;
 }
 
 /**
@@ -253,6 +379,24 @@ export interface OutputConfig {
    * Custom prefix for output filenames. Default is timestamp.
    */
   filePrefix?: string;
+
+  /**
+   * Maximum age of output files in milliseconds.
+   * Default: 7 days
+   */
+  maxAge?: number;
+
+  /**
+   * Maximum number of output directories to keep.
+   * Default: 10
+   */
+  maxOutputDirs?: number;
+
+  /**
+   * Whether to clean up old outputs automatically.
+   * Default: true
+   */
+  cleanupOldOutputs?: boolean;
 }
 
 /**
@@ -354,4 +498,46 @@ export interface FeatureFlagsConfig {
    * This includes lazy grammar loading, AST caching, and incremental processing.
    */
   memoryOptimization?: boolean;
+}
+
+/**
+ * Configuration for import resolution.
+ */
+export interface ImportResolverConfig {
+  /**
+   * Whether to enable import resolution.
+   * Default is false.
+   */
+  enabled: boolean;
+
+  /**
+   * Maximum size of the import cache.
+   * Default is 10000.
+   */
+  cacheSize?: number;
+
+  /**
+   * Whether to use the cache.
+   * Default is true.
+   */
+  useCache?: boolean;
+
+  /**
+   * Extensions to try when resolving imports for each language.
+   */
+  extensions?: Record<string, string[]>;
+
+  /**
+   * Whether to generate import graphs.
+   * Default is false.
+   */
+  generateImportGraph?: boolean;
+
+  /**
+   * Whether to temporarily expand the security boundary for import resolution.
+   * When true, the import resolver will attempt to resolve imports outside the
+   * allowed mapping directory, but will not access their content.
+   * Default is true.
+   */
+  expandSecurityBoundary?: boolean;
 }

@@ -23,16 +23,102 @@ export function formatCodeMapToMarkdown(codeMap: CodeMap, projectRoot: string): 
     if (fileInfo.imports.length > 0) {
         markdownOutput += `### Imports\n`;
         fileInfo.imports.forEach(imp => {
-            let impDetails = imp.importedItems ? `(${imp.importedItems.join(', ')})` : '';
-            if (imp.isDefault && imp.importedItems && imp.importedItems.length > 0) {
+            // Try to extract a better display path from the node text if available
+            let displayPath = imp.path;
+
+            if (imp.path === 'unknown' && imp.nodeText) {
+                // Try to match ES6 import patterns
+                const es6ImportMatch = imp.nodeText.match(/from\s+['"]([^'"]+)['"]/);
+                if (es6ImportMatch && es6ImportMatch[1]) {
+                    displayPath = es6ImportMatch[1];
+                } else {
+                    // Try to match CommonJS require patterns
+                    const requireMatch = imp.nodeText.match(/require\s*\(\s*['"]([^'"]+)['"]\s*\)/);
+                    if (requireMatch && requireMatch[1]) {
+                        displayPath = requireMatch[1];
+                    } else {
+                        // Try to match dynamic import patterns
+                        const dynamicImportMatch = imp.nodeText.match(/import\s*\(\s*['"]([^'"]+)['"]\s*\)/);
+                        if (dynamicImportMatch && dynamicImportMatch[1]) {
+                            displayPath = dynamicImportMatch[1];
+                        } else {
+                            // Default fallback
+                            displayPath = imp.importedItems && imp.importedItems.length > 0 ?
+                                `${imp.importedItems[0]} (imported)` : 'module import';
+                        }
+                    }
+                }
+            }
+
+            let impDetails = imp.importedItems && imp.path !== 'unknown' ?
+                `(${imp.importedItems.join(', ')})` : '';
+
+            if (imp.isDefault && imp.importedItems && imp.importedItems.length > 0 && imp.path !== 'unknown') {
                  impDetails = `${imp.importedItems[0]} (default)`;
                  if (imp.importedItems.length > 1) {
                     impDetails += `, { ${imp.importedItems.slice(1).join(', ')} }`;
                  }
-            } else if (imp.isDefault) {
+            } else if (imp.isDefault && imp.path !== 'unknown') {
                 impDetails = `(default)`;
             }
-            markdownOutput += `- \`${imp.path}\` ${impDetails}\n`;
+
+            // Check if the import path is a resolved absolute path
+            const isResolved = imp.path !== 'unknown' &&
+                (imp.path.startsWith('/') || imp.path.includes(':\\') || imp.path.match(/^[a-zA-Z]:\//));
+
+            // Check if this is an external package
+            const isExternalPackage = imp.isExternalPackage ||
+                (!imp.path.startsWith('.') && !imp.path.startsWith('/') && imp.path !== 'unknown');
+
+            // Check if this is a project file
+            const isProjectFile = imp.isProjectFile ||
+                (imp.path.startsWith('./') || imp.path.startsWith('../'));
+
+            if (isResolved) {
+                // For resolved paths, show both the original import and the resolved path
+                const originalPath = imp.originalPath || imp.path;
+                const resolvedPath = imp.path;
+
+                // Get the filename from the resolved path
+                const fileName = path.basename(resolvedPath);
+
+                markdownOutput += `- \`${originalPath}\` → \`${fileName}\` ${impDetails}\n`;
+                markdownOutput += `  *Resolved to: ${resolvedPath}*\n`;
+            } else if (isProjectFile) {
+                // For project files, show the original import and the resolved path
+                const originalPath = imp.originalPath || imp.path;
+
+                markdownOutput += `- \`${originalPath}\` ${impDetails}\n`;
+                if (imp.path !== originalPath) {
+                    markdownOutput += `  *Project file: ${imp.path}*\n`;
+                }
+            } else if (isExternalPackage) {
+                // For external packages, show the package name
+                const packageName = imp.packageName || (imp.path.startsWith('@') ?
+                    imp.path.split('/').slice(0, 2).join('/') :
+                    imp.path.split('/')[0]);
+
+                markdownOutput += `- \`${displayPath}\` ${impDetails}\n`;
+                if (packageName && packageName !== imp.path) {
+                    markdownOutput += `  *Package: ${packageName}*\n`;
+                }
+            } else if (imp.path === 'unknown') {
+                // For unknown imports, provide a more helpful message
+                markdownOutput += `- \`${displayPath}\` ${impDetails}\n`;
+
+                // If we have the node text, show a snippet of it
+                if (imp.nodeText) {
+                    const cleanNodeText = imp.nodeText.replace(/\s+/g, ' ').trim();
+                    const snippet = cleanNodeText.length > 50 ?
+                        cleanNodeText.substring(0, 47) + '...' :
+                        cleanNodeText;
+                    markdownOutput += `  *Import snippet: \`${snippet}\`*\n`;
+                } else {
+                    markdownOutput += `  *Note: This is an unresolved import. It might be a built-in module, an external package, or a local file.*\n`;
+                }
+            } else {
+                markdownOutput += `- \`${displayPath}\` ${impDetails}\n`;
+            }
         });
         markdownOutput += `\n`;
     }
