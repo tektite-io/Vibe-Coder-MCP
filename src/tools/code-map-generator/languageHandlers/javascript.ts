@@ -269,8 +269,11 @@ export class JavaScriptHandler extends BaseLanguageHandler {
     try {
       if (node.type === 'import_statement') {
         const items: ImportedItem[] = [];
+<<<<<<< HEAD
         const sourceNode = node.childForFieldName('source');
         const sourcePath = sourceNode ? getNodeText(sourceNode, sourceCode).replace(/['"]/g, '') : '';
+=======
+>>>>>>> 2d9ae7b (fix: replaced any types with unknown and fixed import extraction)
 
         // Handle default import
         const clauseNode = node.childForFieldName('import_clause');
@@ -278,6 +281,7 @@ export class JavaScriptHandler extends BaseLanguageHandler {
           // Default import: import React from 'react'
           const defaultImport = clauseNode.childForFieldName('default');
           if (defaultImport) {
+<<<<<<< HEAD
             const name = getNodeText(defaultImport, sourceCode);
             items.push({
               name,
@@ -285,6 +289,12 @@ export class JavaScriptHandler extends BaseLanguageHandler {
               isDefault: true,
               isNamespace: false,
               nodeText: node.text
+=======
+            items.push({
+              name: getNodeText(defaultImport, sourceCode),
+              isDefault: true,
+              isNamespace: false
+>>>>>>> 2d9ae7b (fix: replaced any types with unknown and fixed import extraction)
             });
           }
 

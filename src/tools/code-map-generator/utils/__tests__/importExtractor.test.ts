@@ -5,6 +5,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { extractJSImports, isLikelyImport, tryExtractImportPath, extractImportedItemsFromES6Import } from '../importExtractor.js';
 import { SyntaxNode } from '../../parser.js';
+// @ts-ignore - Mock syntax node module doesn't have type definitions
 import { createMockSyntaxNode, MockSyntaxNode } from '../../__tests__/mocks/mockSyntaxNode.js';
 
 // Mock the logger

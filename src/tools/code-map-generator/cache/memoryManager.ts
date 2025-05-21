@@ -230,7 +230,7 @@ export interface MemoryStats {
  */
 export class MemoryManager {
   private options: Required<MemoryManagerOptions>;
-  private caches: Map<string, MemoryCache<unknown, unknown>> = new Map();
+  private caches: Map<string, MemoryCache<any, any>> = new Map();
   private grammarManager: GrammarManager | null = null;
   private monitorTimer: NodeJS.Timeout | null = null;
   private gcTimer: NodeJS.Timeout | null = null;
