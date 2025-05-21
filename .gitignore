@@ -126,8 +126,6 @@ plan_docs/
 # E2E test directories
 e2e/
 e2e
-e2e/
-e2e
 
 # Temporary script files
 fix-*.sh

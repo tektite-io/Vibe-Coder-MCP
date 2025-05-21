@@ -217,7 +217,7 @@ export interface MemoryStats {
   /**
    * Grammar statistics.
    */
-  grammarStats: Record<string, any>;
+  grammarStats: Record<string, unknown>;
 
   /**
    * Timestamp when the statistics were collected.
@@ -412,7 +412,7 @@ export class MemoryManager {
             for (let i = 0; i < entriesToRemove; i++) {
               // We're relying on the fact that the next get/set operation will trigger LRU eviction
               // This is not ideal, but it works for now
-              cache.set('__dummy__' + i, null as any);
+              cache.set('__dummy__' + i, null as unknown);
               cache.delete('__dummy__' + i);
             }
           }
@@ -572,7 +572,7 @@ export class MemoryManager {
         return nodeCount * 100;
       },
       maxSize: 100 * 1024 * 1024, // 100 MB
-      dispose: (key, tree) => {
+      dispose: (_key, _tree) => {
         // No need to do anything special here
       }
     });
@@ -595,7 +595,7 @@ export class MemoryManager {
         return sourceCode.length;
       },
       maxSize: 50 * 1024 * 1024, // 50 MB
-      dispose: (key, sourceCode) => {
+      dispose: (_key, _sourceCode) => {
         // No need to do anything special here
       }
     });
@@ -632,10 +632,10 @@ export class MemoryManager {
 
     // Suggest to V8 that now might be a good time for GC
     // This is just a hint, not a command
-    if (typeof global !== 'undefined' && (global as any).gc) {
+    if (typeof global !== 'undefined' && (global as unknown as { gc?: () => void }).gc) {
       try {
         logger.debug('Calling global.gc() to suggest garbage collection');
-        (global as any).gc();
+        (global as unknown as { gc: () => void }).gc();
       } catch (error) {
         logger.warn('Failed to suggest garbage collection', { error });
       }

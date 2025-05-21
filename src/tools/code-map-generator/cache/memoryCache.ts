@@ -147,7 +147,7 @@ export class MemoryCache<K, V> {
   /**
    * Default options for the MemoryCache.
    */
-  private static readonly DEFAULT_OPTIONS: Omit<Required<MemoryCacheOptions<any, any>>, 'name' | 'dispose'> = {
+  private static readonly DEFAULT_OPTIONS: Omit<Required<MemoryCacheOptions<unknown, unknown>>, 'name' | 'dispose'> = {
     maxEntries: 1000,
     maxAge: 60 * 60 * 1000, // 1 hour
     sizeCalculator: () => 1,
@@ -169,7 +169,7 @@ export class MemoryCache<K, V> {
       maxAge: options.maxAge ?? MemoryCache.DEFAULT_OPTIONS.maxAge,
       sizeCalculator: options.sizeCalculator ?? MemoryCache.DEFAULT_OPTIONS.sizeCalculator,
       maxSize: options.maxSize ?? MemoryCache.DEFAULT_OPTIONS.maxSize,
-      dispose: options.dispose ?? ((key, value) => {})
+      dispose: options.dispose ?? ((_key, _value) => {})
     };
 
     logger.debug(`Created memory cache "${this.name}" with max entries: ${this.options.maxEntries}, max size: ${this.options.maxSize}`);

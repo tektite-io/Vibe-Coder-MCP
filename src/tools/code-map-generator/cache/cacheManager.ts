@@ -11,7 +11,7 @@ import { CodeMapGeneratorConfig } from '../types.js';
 import { getCacheDirectory } from '../directoryUtils.js';
 
 // Map of cache instances by name
-const cacheInstances = new Map<string, FileCache<any>>();
+const cacheInstances = new Map<string, FileCache<unknown>>();
 
 /**
  * Creates a cache manager instance.
@@ -20,7 +20,7 @@ const cacheInstances = new Map<string, FileCache<any>>();
  */
 export function createCacheManager(config: CodeMapGeneratorConfig) {
   const cacheDir = getCacheDirectory(config);
-  
+
   /**
    * Gets or creates a cache instance.
    * @param name The name of the cache
@@ -32,7 +32,7 @@ export function createCacheManager(config: CodeMapGeneratorConfig) {
     if (cacheInstances.has(name)) {
       return cacheInstances.get(name) as FileCache<T>;
     }
-    
+
     // Create a new cache instance
     const cacheOptions: CacheOptions = {
       name,
@@ -45,17 +45,17 @@ export function createCacheManager(config: CodeMapGeneratorConfig) {
       serialize: options?.serialize,
       deserialize: options?.deserialize,
     };
-    
+
     const cache = new FileCache<T>(cacheOptions);
     await cache.init();
-    
+
     // Store the cache instance
     cacheInstances.set(name, cache);
-    
+
     logger.debug(`Created cache instance: ${name}`);
     return cache;
   }
-  
+
   /**
    * Clears a specific cache.
    * @param name The name of the cache
@@ -68,7 +68,7 @@ export function createCacheManager(config: CodeMapGeneratorConfig) {
       logger.debug(`Cleared cache: ${name}`);
     }
   }
-  
+
   /**
    * Clears all cache instances.
    * @returns A promise that resolves when all caches are cleared
@@ -78,11 +78,11 @@ export function createCacheManager(config: CodeMapGeneratorConfig) {
       await cache.clear();
       logger.debug(`Cleared cache: ${name}`);
     });
-    
+
     await Promise.all(clearPromises);
     logger.info(`Cleared all caches (${cacheInstances.size} instances)`);
   }
-  
+
   /**
    * Prunes a specific cache.
    * @param name The name of the cache
@@ -97,27 +97,27 @@ export function createCacheManager(config: CodeMapGeneratorConfig) {
     }
     return 0;
   }
-  
+
   /**
    * Prunes all cache instances.
    * @returns A promise that resolves to the total number of entries pruned
    */
   async function pruneAllCaches(): Promise<number> {
     let totalPruned = 0;
-    
+
     const prunePromises = Array.from(cacheInstances.entries()).map(async ([name, cache]) => {
       const prunedCount = await cache.prune();
       logger.debug(`Pruned ${prunedCount} entries from cache: ${name}`);
       return prunedCount;
     });
-    
+
     const results = await Promise.all(prunePromises);
     totalPruned = results.reduce((total, count) => total + count, 0);
-    
+
     logger.info(`Pruned ${totalPruned} entries from all caches (${cacheInstances.size} instances)`);
     return totalPruned;
   }
-  
+
   /**
    * Gets statistics about a specific cache.
    * @param name The name of the cache
@@ -127,21 +127,21 @@ export function createCacheManager(config: CodeMapGeneratorConfig) {
     const cache = cacheInstances.get(name);
     return cache?.getStats();
   }
-  
+
   /**
    * Gets statistics about all cache instances.
    * @returns An object mapping cache names to their statistics
    */
   function getAllCacheStats(): Record<string, CacheStats> {
     const stats: Record<string, CacheStats> = {};
-    
+
     for (const [name, cache] of cacheInstances.entries()) {
       stats[name] = cache.getStats();
     }
-    
+
     return stats;
   }
-  
+
   /**
    * Closes all cache instances.
    */
@@ -150,11 +150,11 @@ export function createCacheManager(config: CodeMapGeneratorConfig) {
       cache.close();
       logger.debug(`Closed cache: ${name}`);
     }
-    
+
     cacheInstances.clear();
     logger.info('Closed all cache instances');
   }
-  
+
   return {
     getCache,
     clearCache,
@@ -176,7 +176,7 @@ export async function clearAllCaches(): Promise<void> {
     await cache.clear();
     logger.debug(`Cleared cache: ${name}`);
   });
-  
+
   await Promise.all(clearPromises);
   logger.info(`Cleared all caches (${cacheInstances.size} instances)`);
 }
@@ -187,16 +187,16 @@ export async function clearAllCaches(): Promise<void> {
  */
 export async function pruneAllCaches(): Promise<number> {
   let totalPruned = 0;
-  
+
   const prunePromises = Array.from(cacheInstances.entries()).map(async ([name, cache]) => {
     const prunedCount = await cache.prune();
     logger.debug(`Pruned ${prunedCount} entries from cache: ${name}`);
     return prunedCount;
   });
-  
+
   const results = await Promise.all(prunePromises);
   totalPruned = results.reduce((total, count) => total + count, 0);
-  
+
   logger.info(`Pruned ${totalPruned} entries from all caches (${cacheInstances.size} instances)`);
   return totalPruned;
 }
@@ -207,11 +207,11 @@ export async function pruneAllCaches(): Promise<number> {
  */
 export function getCacheStats(): Record<string, CacheStats> {
   const stats: Record<string, CacheStats> = {};
-  
+
   for (const [name, cache] of cacheInstances.entries()) {
     stats[name] = cache.getStats();
   }
-  
+
   return stats;
 }
 
@@ -223,7 +223,7 @@ export function closeAllCaches(): void {
     cache.close();
     logger.debug(`Closed cache: ${name}`);
   }
-  
+
   cacheInstances.clear();
   logger.info('Closed all cache instances');
 }

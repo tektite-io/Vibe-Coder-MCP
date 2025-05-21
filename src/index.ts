@@ -69,7 +69,7 @@ async function main(mcpServer: import("@modelcontextprotocol/sdk/server/mcp.js")
         const transport = new SSEServerTransport('/messages', res);
 
         // Store the session ID in the request object for later use
-        (req as any).sessionId = sessionId;
+        (req as express.Request & { sessionId?: string }).sessionId = sessionId;
 
         // Log the session ID
         logger.info({ sessionId, transportSessionId: transport.sessionId }, 'Established SSE connection');
