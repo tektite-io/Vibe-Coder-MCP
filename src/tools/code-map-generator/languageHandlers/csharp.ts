@@ -201,7 +201,7 @@ export class CSharpHandler extends BaseLanguageHandler {
       const attributes: string[] = [];
 
       // Check for attributes before the method
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type === 'attribute_list') {

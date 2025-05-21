@@ -155,7 +155,7 @@ export class TypeScriptHandler extends JavaScriptHandler {
       // Handle TypeScript-specific nodes
       if (node.type === 'function_signature' || node.type === 'method_signature' || node.type === 'constructor_signature') {
         // Look for TSDoc comments
-        let current = node;
+        const current = node;
 
         // Check for comments before the node
         const startPosition = current.startPosition;

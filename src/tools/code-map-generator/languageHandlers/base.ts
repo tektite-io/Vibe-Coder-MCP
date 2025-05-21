@@ -250,7 +250,7 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
    * Detects the framework used in the source code.
    * This can be overridden by language-specific handlers.
    */
-  detectFramework(sourceCode: string): string | null {
+  detectFramework(_sourceCode: string): string | null {
     // Default implementation returns null
     return null;
   }

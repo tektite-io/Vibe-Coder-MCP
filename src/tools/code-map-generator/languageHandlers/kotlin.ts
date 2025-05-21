@@ -303,7 +303,7 @@ export class KotlinHandler extends BaseLanguageHandler {
   protected extractFunctionComment(node: SyntaxNode, sourceCode: string): string | undefined {
     try {
       // Look for KDoc comments
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type !== 'comment') {
@@ -327,7 +327,7 @@ export class KotlinHandler extends BaseLanguageHandler {
   protected extractClassComment(node: SyntaxNode, sourceCode: string): string | undefined {
     try {
       // Look for KDoc comments
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type !== 'comment') {
@@ -351,7 +351,7 @@ export class KotlinHandler extends BaseLanguageHandler {
   private parseKDocComment(comment: string): string {
     try {
       // Remove comment markers and asterisks
-      let text = comment.substring(3, comment.length - 2);
+      const text = comment.substring(3, comment.length - 2);
 
       // Split into lines and remove leading asterisks and whitespace
       const lines = text.split('\n')

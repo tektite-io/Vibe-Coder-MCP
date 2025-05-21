@@ -284,7 +284,7 @@ export class SwiftHandler extends BaseLanguageHandler {
   protected extractFunctionComment(node: SyntaxNode, sourceCode: string): string | undefined {
     try {
       // Look for documentation comments
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type !== 'comment') {
@@ -309,7 +309,7 @@ export class SwiftHandler extends BaseLanguageHandler {
   protected extractClassComment(node: SyntaxNode, sourceCode: string): string | undefined {
     try {
       // Look for documentation comments
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type !== 'comment') {
@@ -338,7 +338,7 @@ export class SwiftHandler extends BaseLanguageHandler {
         return comment.replace(/^\/\/\/\s*/mg, '').trim();
       } else if (comment.startsWith('/**')) {
         // Block doc comment
-        let text = comment.substring(3, comment.length - 2);
+        const text = comment.substring(3, comment.length - 2);
 
         // Split into lines and remove leading asterisks and whitespace
         const lines = text.split('\n')

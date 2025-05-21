@@ -214,7 +214,7 @@ export class GraphQLHandler extends BaseLanguageHandler {
       }
 
       // Look for comments before the node
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type !== 'comment') {
@@ -250,7 +250,7 @@ export class GraphQLHandler extends BaseLanguageHandler {
       }
 
       // Look for comments before the node
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type !== 'comment') {

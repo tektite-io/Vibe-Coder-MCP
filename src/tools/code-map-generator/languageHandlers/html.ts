@@ -887,7 +887,7 @@ export class HtmlHandler extends BaseLanguageHandler {
       }
 
       // Look for HTML comments before the node
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type !== 'comment') {
@@ -925,7 +925,7 @@ export class HtmlHandler extends BaseLanguageHandler {
       }
 
       // Look for HTML comments before the node
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type !== 'comment') {
