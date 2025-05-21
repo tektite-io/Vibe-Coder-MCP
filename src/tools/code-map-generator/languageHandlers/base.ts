@@ -313,7 +313,7 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
    * Extracts the function comment from an AST node.
    * This can be overridden by language-specific handlers.
    */
-  protected extractFunctionComment(node: SyntaxNode, sourceCode: string): string | undefined {
+  protected extractFunctionComment(_node: SyntaxNode, _sourceCode: string): string | undefined {
     // Default implementation looks for comments before the node
     // This is a basic implementation that should be overridden by language-specific handlers
     return undefined;
@@ -323,7 +323,7 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
    * Extracts the class comment from an AST node.
    * This can be overridden by language-specific handlers.
    */
-  protected extractClassComment(node: SyntaxNode, sourceCode: string): string | undefined {
+  protected extractClassComment(_node: SyntaxNode, _sourceCode: string): string | undefined {
     // Default implementation looks for comments before the node
     // This is a basic implementation that should be overridden by language-specific handlers
     return undefined;
@@ -333,7 +333,7 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
    * Extracts the import comment from an AST node.
    * This can be overridden by language-specific handlers.
    */
-  protected extractImportComment(node: SyntaxNode, sourceCode: string): string | undefined {
+  protected extractImportComment(_node: SyntaxNode, _sourceCode: string): string | undefined {
     // Default implementation looks for comments before the node
     // This is a basic implementation that should be overridden by language-specific handlers
     return undefined;
@@ -343,7 +343,7 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
    * Extracts class properties from an AST node.
    * This can be overridden by language-specific handlers.
    */
-  protected extractClassProperties(node: SyntaxNode, sourceCode: string): Array<{ name: string; type?: string; comment?: string; startLine: number; endLine: number }> {
+  protected extractClassProperties(_node: SyntaxNode, _sourceCode: string): Array<{ name: string; type?: string; comment?: string; startLine: number; endLine: number }> {
     // Default implementation returns an empty array
     return [];
   }
@@ -352,7 +352,7 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
    * Extracts the parent class from an AST node.
    * This can be overridden by language-specific handlers.
    */
-  protected extractParentClass(node: SyntaxNode, sourceCode: string): string | undefined {
+  protected extractParentClass(_node: SyntaxNode, _sourceCode: string): string | undefined {
     // Default implementation returns undefined
     return undefined;
   }
@@ -361,7 +361,7 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
    * Extracts implemented interfaces from an AST node.
    * This can be overridden by language-specific handlers.
    */
-  protected extractImplementedInterfaces(node: SyntaxNode, sourceCode: string): string[] | undefined {
+  protected extractImplementedInterfaces(_node: SyntaxNode, _sourceCode: string): string[] | undefined {
     // Default implementation returns undefined
     return undefined;
   }
@@ -370,7 +370,7 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
    * Extracts imported items from an AST node.
    * This can be overridden by language-specific handlers.
    */
-  protected extractImportedItems(node: SyntaxNode, sourceCode: string): ImportedItem[] | undefined {
+  protected extractImportedItems(_node: SyntaxNode, _sourceCode: string): ImportedItem[] | undefined {
     // Default implementation returns undefined
     return undefined;
   }
@@ -379,7 +379,7 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
    * Checks if an import is a default import.
    * This can be overridden by language-specific handlers.
    */
-  protected isDefaultImport(node: SyntaxNode, sourceCode: string): boolean | undefined {
+  protected isDefaultImport(_node: SyntaxNode, _sourceCode: string): boolean | undefined {
     // Default implementation returns undefined
     return undefined;
   }
@@ -388,7 +388,7 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
    * Extracts the import alias from an AST node.
    * This can be overridden by language-specific handlers.
    */
-  protected extractImportAlias(node: SyntaxNode, sourceCode: string): string | undefined {
+  protected extractImportAlias(_node: SyntaxNode, _sourceCode: string): string | undefined {
     // Default implementation returns undefined
     return undefined;
   }
@@ -446,7 +446,7 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
    * Checks if a function is asynchronous.
    * This can be overridden by language-specific handlers.
    */
-  protected isAsyncFunction(node: SyntaxNode, sourceCode: string): boolean {
+  protected isAsyncFunction(node: SyntaxNode, _sourceCode: string): boolean {
     // Default implementation checks if the function has the 'async' keyword
     return node.text.startsWith('async ');
   }
@@ -455,7 +455,7 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
    * Checks if a function is a generator.
    * This can be overridden by language-specific handlers.
    */
-  protected isGeneratorFunction(node: SyntaxNode, sourceCode: string): boolean {
+  protected isGeneratorFunction(_node: SyntaxNode, _sourceCode: string): boolean {
     // Default implementation returns false
     return false;
   }
@@ -464,7 +464,7 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
    * Checks if a function is exported.
    * This can be overridden by language-specific handlers.
    */
-  protected isExportedFunction(node: SyntaxNode, sourceCode: string): boolean {
+  protected isExportedFunction(node: SyntaxNode, _sourceCode: string): boolean {
     // Default implementation checks if the function is part of an export statement
     return node.parent?.type === 'export_statement';
   }
@@ -473,7 +473,7 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
    * Checks if a class is exported.
    * This can be overridden by language-specific handlers.
    */
-  protected isExportedClass(node: SyntaxNode, sourceCode: string): boolean {
+  protected isExportedClass(node: SyntaxNode, _sourceCode: string): boolean {
     // Default implementation checks if the class is part of an export statement
     return node.parent?.type === 'export_statement';
   }

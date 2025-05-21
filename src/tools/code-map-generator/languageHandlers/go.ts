@@ -54,7 +54,7 @@ export class GoHandler extends BaseLanguageHandler {
   protected extractFunctionName(
     node: SyntaxNode,
     sourceCode: string,
-    options?: FunctionExtractionOptions
+    _options?: FunctionExtractionOptions
   ): string {
     try {
       // Handle function declarations
@@ -165,7 +165,7 @@ export class GoHandler extends BaseLanguageHandler {
   /**
    * Checks if a function has a test signature.
    */
-  private hasTestSignature(node: SyntaxNode, sourceCode: string): boolean {
+  private hasTestSignature(node: SyntaxNode, _sourceCode: string): boolean {
     try {
       const paramsNode = node.childForFieldName('parameters');
       if (!paramsNode) return false;
@@ -181,7 +181,7 @@ export class GoHandler extends BaseLanguageHandler {
   /**
    * Checks if a function has a benchmark signature.
    */
-  private hasBenchmarkSignature(node: SyntaxNode, sourceCode: string): boolean {
+  private hasBenchmarkSignature(node: SyntaxNode, _sourceCode: string): boolean {
     try {
       const paramsNode = node.childForFieldName('parameters');
       if (!paramsNode) return false;
