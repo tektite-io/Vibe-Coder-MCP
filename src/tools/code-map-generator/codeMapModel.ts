@@ -53,7 +53,9 @@ export interface ImportedItem {
   name: string;
   alias?: string;
   isDefault: boolean;
-  isNamespace: boolean;
+  isNamespace?: boolean;
+  path?: string;
+  nodeText?: string;
 }
 
 export interface ImportInfo {

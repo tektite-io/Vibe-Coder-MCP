@@ -8,6 +8,7 @@ import { SyntaxNode } from '../parser.js';
 import { FunctionExtractionOptions } from '../types.js';
 import { getNodeText } from '../astAnalyzer.js';
 import logger from '../../../logger.js';
+import { ImportedItem } from '../codeMapModel.js';
 
 /**
  * Language handler for Java.
@@ -294,20 +295,33 @@ export class JavaHandler extends BaseLanguageHandler {
   /**
    * Extracts imported items from an AST node.
    */
-  protected extractImportedItems(node: SyntaxNode, sourceCode: string): string[] | undefined {
+  protected extractImportedItems(node: SyntaxNode, sourceCode: string): ImportedItem[] | undefined {
     try {
       if (node.type === 'import_declaration' || node.type === 'static_import_declaration') {
-        // Check for wildcard imports
-        if (node.text.includes('*')) {
-          return ['*'];
-        }
-
-        // Extract the last part of the import path
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
           const fullPath = getNodeText(nameNode, sourceCode);
           const parts = fullPath.split('.');
-          return [parts[parts.length - 1]];
+          const name = parts[parts.length - 1];
+
+          // Check for wildcard imports
+          if (name === '*') {
+            return [{
+              name: '*',
+              path: fullPath,
+              isDefault: false,
+              isNamespace: true,
+              nodeText: node.text
+            }];
+          }
+
+          return [{
+            name: name,
+            path: fullPath,
+            isDefault: false,
+            isNamespace: false,
+            nodeText: node.text
+          }];
         }
       }
 

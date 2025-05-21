@@ -8,6 +8,7 @@ import { SyntaxNode } from '../parser.js';
 import { FunctionExtractionOptions } from '../types.js';
 import { getNodeText } from '../astAnalyzer.js';
 import logger from '../../../logger.js';
+import { ImportedItem } from '../codeMapModel.js';
 
 /**
  * Language handler for Python.
@@ -248,28 +249,53 @@ export class PythonHandler extends BaseLanguageHandler {
   /**
    * Extracts imported items from an AST node.
    */
-  protected extractImportedItems(node: SyntaxNode, sourceCode: string): string[] | undefined {
+  protected extractImportedItems(node: SyntaxNode, sourceCode: string): ImportedItem[] | undefined {
     try {
       if (node.type === 'import_from_statement') {
-        const items: string[] = [];
+        const items: ImportedItem[] = [];
+
+        // Get the module path
+        const moduleNode = node.childForFieldName('module_name');
+        const modulePath = moduleNode ? getNodeText(moduleNode, sourceCode) : '';
 
         // Extract names from import_from_statement
         node.descendantsOfType(['dotted_name', 'identifier', 'aliased_import']).forEach(itemNode => {
           if (itemNode.parent?.type === 'import_from_statement' &&
               itemNode.previousSibling?.text === 'import') {
-            items.push(getNodeText(itemNode, sourceCode));
+            const name = getNodeText(itemNode, sourceCode);
+            items.push({
+              name,
+              path: modulePath,
+              isDefault: false,
+              isNamespace: false,
+              nodeText: itemNode.text
+            });
           } else if (itemNode.type === 'aliased_import') {
             const nameNode = itemNode.childForFieldName('name');
             const aliasNode = itemNode.childForFieldName('alias');
             if (nameNode && aliasNode) {
-              items.push(`${getNodeText(nameNode, sourceCode)} as ${getNodeText(aliasNode, sourceCode)}`);
+              const name = getNodeText(nameNode, sourceCode);
+              const alias = getNodeText(aliasNode, sourceCode);
+              items.push({
+                name: `${name} as ${alias}`,
+                path: modulePath,
+                isDefault: false,
+                isNamespace: false,
+                nodeText: itemNode.text
+              });
             }
           }
         });
 
         // Handle wildcard import
         if (node.descendantsOfType('wildcard_import').length > 0) {
-          items.push('*');
+          items.push({
+            name: '*',
+            path: modulePath,
+            isDefault: false,
+            isNamespace: true,
+            nodeText: '*'
+          });
         }
 
         return items.length > 0 ? items : undefined;
