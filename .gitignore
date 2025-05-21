@@ -120,6 +120,7 @@ plan_docs/
 # Planning documents
 plan_docs/
 *-implementation-plan*.md
+*-enhancement-plan*.md
 *-plan-*.md
 
 # E2E test directories
