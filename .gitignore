@@ -124,8 +124,8 @@ plan_docs/
 *-plan-*.md
 
 # E2E test directories
-@e2e/
-@e2e
+e2e/
+e2e
 e2e/
 e2e
 
