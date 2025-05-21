@@ -103,7 +103,7 @@ export class LRUCache<K, V> {
   /**
    * Default options for the LRUCache.
    */
-  private static readonly DEFAULT_OPTIONS: Omit<Required<LRUCacheOptions<any, any>>, 'name' | 'dispose'> = {
+  private static readonly DEFAULT_OPTIONS: Omit<Required<LRUCacheOptions<unknown, unknown>>, 'name' | 'dispose'> = {
     maxEntries: 1000,
     maxAge: 60 * 60 * 1000, // 1 hour
     sizeCalculator: () => 1,
@@ -125,7 +125,7 @@ export class LRUCache<K, V> {
       maxAge: options.maxAge ?? LRUCache.DEFAULT_OPTIONS.maxAge,
       sizeCalculator: options.sizeCalculator ?? LRUCache.DEFAULT_OPTIONS.sizeCalculator,
       maxSize: options.maxSize ?? LRUCache.DEFAULT_OPTIONS.maxSize,
-      dispose: options.dispose ?? ((key, value) => {})
+      dispose: options.dispose ?? ((_key, _value) => {})
     };
 
     logger.debug(`Created LRU cache "${this.name}" with max entries: ${this.options.maxEntries}, max size: ${this.options.maxSize}`);

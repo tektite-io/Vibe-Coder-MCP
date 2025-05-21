@@ -304,7 +304,11 @@ All generated artifacts are stored in structured directories.
             sessionId = extra.sessionId;
           } else if ('req' in extra && extra.req && typeof extra.req === 'object') {
             // Try to get session ID from request
-            const req = extra.req as any;
+            const req = extra.req as {
+              query?: { sessionId?: string },
+              body?: { session_id?: string },
+              headers?: { 'x-session-id'?: string }
+            };
             if (req.query && req.query.sessionId) {
               sessionId = req.query.sessionId as string;
             } else if (req.body && req.body.session_id) {
