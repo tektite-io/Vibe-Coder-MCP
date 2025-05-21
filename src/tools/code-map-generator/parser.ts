@@ -163,7 +163,7 @@ export async function initializeParser(): Promise<void> {
     memoryManager.registerGrammarManager(grammarManager);
 
     // Now that the grammar manager is fully initialized, preload grammars if enabled
-    if (grammarManager.isInitialized() && tempGrammarManager.options.preloadCommonGrammars) {
+    if (grammarManager.isInitialized() && grammarManager.getOptions().preloadCommonGrammars) {
       await grammarManager.preloadGrammars();
     }
 

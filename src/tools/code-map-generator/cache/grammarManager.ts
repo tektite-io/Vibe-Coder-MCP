@@ -123,7 +123,7 @@ export class GrammarManager {
    * Preloads common grammars.
    * @returns A promise that resolves when the grammars are preloaded
    */
-  private async preloadGrammars(): Promise<void> {
+  public async preloadGrammars(): Promise<void> {
     logger.debug(`Preloading grammars for extensions: ${this.options.preloadExtensions.join(', ')}`);
 
     const preloadPromises = this.options.preloadExtensions.map(ext =>
@@ -261,6 +261,14 @@ export class GrammarManager {
   }
 
   /**
+   * Checks if the grammar manager is initialized.
+   * @returns Whether the grammar manager is initialized
+   */
+  public isInitialized(): boolean {
+    return this.initialized;
+  }
+
+  /**
    * Gets the list of loaded grammar extensions.
    * @returns The list of loaded grammar extensions
    */
@@ -279,6 +287,14 @@ export class GrammarManager {
       lruList: [...this.lruList],
       initialized: this.initialized
     };
+  }
+
+  /**
+   * Gets the options used by the grammar manager.
+   * @returns The grammar manager options
+   */
+  public getOptions(): Required<GrammarManagerOptions> {
+    return { ...this.options };
   }
 
   /**
