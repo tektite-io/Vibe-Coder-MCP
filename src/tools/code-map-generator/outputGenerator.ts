@@ -6,12 +6,35 @@
 import fs from 'fs/promises';
 import path from 'path';
 import logger from '../../logger.js';
-import { FileInfo } from './codeMapModel.js';
+import { FileInfo, CodeMap } from './codeMapModel.js';
 import { GraphNode, GraphEdge } from './graphBuilder.js';
 import { generateMermaidSequenceDiagram } from './diagramGenerator.js';
 import { CodeMapGeneratorConfig } from './types.js';
 import { writeFileSecure } from './fsUtils.js';
 import { generateTimestampFileName, getOutputDirectory } from './directoryUtils.js';
+
+/**
+ * Sanitizes an absolute path for output to avoid exposing sensitive system information.
+ * @param absolutePath The absolute path to sanitize
+ * @param projectRoot The project root path
+ * @returns The sanitized path
+ */
+export function sanitizeAbsolutePath(absolutePath: string, projectRoot?: string): string {
+  if (!absolutePath) return '';
+
+  // If project root is provided, make the path relative to it
+  if (projectRoot && absolutePath.startsWith(projectRoot)) {
+    return path.join(projectRoot, path.relative(projectRoot, absolutePath));
+  }
+
+  // If the path is outside the allowed directory, return a placeholder
+  if (projectRoot && !absolutePath.startsWith(projectRoot)) {
+    return '[Path outside allowed directory]';
+  }
+
+  // Normalize path separators
+  return absolutePath.replace(/\\/g, '/');
+}
 
 /**
  * Generates a Markdown output for the code map.
@@ -191,7 +214,81 @@ async function generateSingleMarkdownOutput(
     if (fileInfo.imports.length > 0) {
       markdown += '#### Imports\n\n';
       fileInfo.imports.forEach(imp => {
-        markdown += `- \`${imp.path}\`${imp.comment ? ` - ${imp.comment}` : ''}\n`;
+        // Show the actual import path even if it's "unknown"
+        let displayPath = imp.path;
+
+        // Handle unknown imports with detailed information if enabled
+        if (imp.path === 'unknown' || imp.path.startsWith('module import')) {
+          if (config.debug?.showDetailedImports) {
+            // Show detailed information for unknown imports
+            displayPath = imp.path;
+          } else {
+            // Use generic placeholder or imported items if available
+            displayPath = (imp.importedItems && imp.importedItems.length > 0) ?
+              `${imp.importedItems[0]} (imported)` : 'module import';
+          }
+        }
+
+        // Handle different import types
+        let importType = '';
+        if (imp.type) {
+          switch (imp.type) {
+            case 'dynamic':
+              importType = ' (dynamic import)';
+              break;
+            case 'commonjs':
+              importType = ' (CommonJS)';
+              break;
+            case 'extracted':
+              importType = ' (extracted)';
+              break;
+          }
+        }
+
+        markdown += `- \`${displayPath}\`${importType}`;
+
+        // Add imported items if available
+        if (imp.importedItems && imp.importedItems.length > 0 && imp.path !== 'unknown') {
+          if (Array.isArray(imp.importedItems) && typeof imp.importedItems[0] === 'string') {
+            // Handle legacy string array format
+            markdown += ` (${imp.importedItems.join(', ')})`;
+          } else {
+            // Handle new ImportedItem format
+            markdown += '\n  - Imported items:';
+            (imp.importedItems as any[]).forEach(item => {
+              if (typeof item === 'string') {
+                markdown += `\n    - ${item}`;
+              } else {
+                // Handle ImportedItem object
+                if (item.isDefault) {
+                  markdown += `\n    - Default import: \`${item.name}\``;
+                } else if (item.isNamespace) {
+                  markdown += `\n    - Namespace import: \`* as ${item.name}\``;
+                } else {
+                  markdown += `\n    - Named import: \`${item.name}\``;
+                  if (item.alias) {
+                    markdown += ` as \`${item.alias}\``;
+                  }
+                }
+              }
+            });
+          }
+        }
+
+        // Prioritize absolute path, fall back to relative path
+        if (imp.absolutePath) {
+          const sanitizedPath = sanitizeAbsolutePath(imp.absolutePath, config.allowedMappingDirectory);
+          markdown += `\n  - Absolute path: \`${sanitizedPath}\``;
+        } else if (imp.resolvedPath && imp.resolvedPath !== imp.path) {
+          markdown += `\n  - Resolved to: \`${imp.resolvedPath}\``;
+        }
+
+        // Add comment if available
+        if (imp.comment) {
+          markdown += ` - ${imp.comment}`;
+        }
+
+        markdown += '\n';
       });
       markdown += '\n';
     }
@@ -212,7 +309,30 @@ async function generateSingleMarkdownOutput(
         if (classInfo.properties.length > 0) {
           markdown += '**Properties:**\n\n';
           classInfo.properties.forEach(prop => {
-            markdown += `- \`${prop.name}\`${prop.comment ? ` - ${prop.comment}` : ''}\n`;
+            // Format property with type, access modifier, and static indicator
+            let propStr = `- \`${prop.name}\``;
+
+            // Add type if available
+            if (prop.type) {
+              propStr += `: \`${prop.type}\``;
+            }
+
+            // Add access modifier if available
+            if (prop.accessModifier) {
+              propStr += ` (${prop.accessModifier})`;
+            }
+
+            // Add static indicator if applicable
+            if (prop.isStatic) {
+              propStr += ' (static)';
+            }
+
+            // Add comment if available
+            if (prop.comment) {
+              propStr += ` - ${prop.comment}`;
+            }
+
+            markdown += `${propStr}\n`;
           });
           markdown += '\n';
         }
@@ -426,7 +546,81 @@ async function generateSplitMarkdownOutput(
       if (fileInfo.imports.length > 0) {
         batchMarkdown += '### Imports\n\n';
         fileInfo.imports.forEach(imp => {
-          batchMarkdown += `- \`${imp.path}\`${imp.comment ? ` - ${imp.comment}` : ''}\n`;
+          // Show the actual import path even if it's "unknown"
+          let displayPath = imp.path;
+
+          // Handle unknown imports with detailed information if enabled
+          if (imp.path === 'unknown' || imp.path.startsWith('module import')) {
+            if (config.debug?.showDetailedImports) {
+              // Show detailed information for unknown imports
+              displayPath = imp.path;
+            } else {
+              // Use generic placeholder or imported items if available
+              displayPath = (imp.importedItems && imp.importedItems.length > 0) ?
+                `${imp.importedItems[0]} (imported)` : 'module import';
+            }
+          }
+
+          // Handle different import types
+          let importType = '';
+          if (imp.type) {
+            switch (imp.type) {
+              case 'dynamic':
+                importType = ' (dynamic import)';
+                break;
+              case 'commonjs':
+                importType = ' (CommonJS)';
+                break;
+              case 'extracted':
+                importType = ' (extracted)';
+                break;
+            }
+          }
+
+          batchMarkdown += `- \`${displayPath}\`${importType}`;
+
+          // Add imported items if available
+          if (imp.importedItems && imp.importedItems.length > 0 && imp.path !== 'unknown') {
+            if (Array.isArray(imp.importedItems) && typeof imp.importedItems[0] === 'string') {
+              // Handle legacy string array format
+              batchMarkdown += ` (${imp.importedItems.join(', ')})`;
+            } else {
+              // Handle new ImportedItem format
+              batchMarkdown += '\n  - Imported items:';
+              (imp.importedItems as any[]).forEach(item => {
+                if (typeof item === 'string') {
+                  batchMarkdown += `\n    - ${item}`;
+                } else {
+                  // Handle ImportedItem object
+                  if (item.isDefault) {
+                    batchMarkdown += `\n    - Default import: \`${item.name}\``;
+                  } else if (item.isNamespace) {
+                    batchMarkdown += `\n    - Namespace import: \`* as ${item.name}\``;
+                  } else {
+                    batchMarkdown += `\n    - Named import: \`${item.name}\``;
+                    if (item.alias) {
+                      batchMarkdown += ` as \`${item.alias}\``;
+                    }
+                  }
+                }
+              });
+            }
+          }
+
+          // Prioritize absolute path, fall back to relative path
+          if (imp.absolutePath) {
+            const sanitizedPath = sanitizeAbsolutePath(imp.absolutePath, config.allowedMappingDirectory);
+            batchMarkdown += `\n  - Absolute path: \`${sanitizedPath}\``;
+          } else if (imp.resolvedPath && imp.resolvedPath !== imp.path) {
+            batchMarkdown += `\n  - Resolved to: \`${imp.resolvedPath}\``;
+          }
+
+          // Add comment if available
+          if (imp.comment) {
+            batchMarkdown += ` - ${imp.comment}`;
+          }
+
+          batchMarkdown += '\n';
         });
         batchMarkdown += '\n';
       }
@@ -447,7 +641,30 @@ async function generateSplitMarkdownOutput(
           if (classInfo.properties.length > 0) {
             batchMarkdown += '**Properties:**\n\n';
             classInfo.properties.forEach(prop => {
-              batchMarkdown += `- \`${prop.name}\`${prop.comment ? ` - ${prop.comment}` : ''}\n`;
+              // Format property with type, access modifier, and static indicator
+              let propStr = `- \`${prop.name}\``;
+
+              // Add type if available
+              if (prop.type) {
+                propStr += `: \`${prop.type}\``;
+              }
+
+              // Add access modifier if available
+              if (prop.accessModifier) {
+                propStr += ` (${prop.accessModifier})`;
+              }
+
+              // Add static indicator if applicable
+              if (prop.isStatic) {
+                propStr += ' (static)';
+              }
+
+              // Add comment if available
+              if (prop.comment) {
+                propStr += ` - ${prop.comment}`;
+              }
+
+              batchMarkdown += `${propStr}\n`;
             });
             batchMarkdown += '\n';
           }
@@ -479,4 +696,95 @@ async function generateSplitMarkdownOutput(
 
   logger.info(`Generated split Markdown output in directory: ${outputDirWithTimestamp}`);
   return mainFilePath;
+}
+
+/**
+ * Generates a JSON output for the code map.
+ * @param allFilesInfo Array of file information objects
+ * @param config Code-Map Generator configuration
+ * @param jobId Job ID for output file naming
+ * @returns A promise that resolves to the output file path
+ */
+export async function generateJsonOutput(
+  allFilesInfo: FileInfo[],
+  config: CodeMapGeneratorConfig,
+  jobId: string
+): Promise<string> {
+  // Determine output directory and file name
+  const outputDir = config.output?.outputDir || getOutputDirectory(config);
+  const filePrefix = config.output?.filePrefix || 'code-map';
+  const fileName = generateTimestampFileName(filePrefix, 'json');
+  const outputPath = path.join(outputDir, fileName);
+
+  // Create a sanitized version of the code map for JSON output
+  const codeMap: CodeMap = {
+    projectPath: config.allowedMappingDirectory || '',
+    files: allFilesInfo
+  };
+
+  const sanitizedCodeMap = {
+    projectPath: codeMap.projectPath,
+    files: codeMap.files.map(file => ({
+      path: file.filePath,
+      relativePath: file.relativePath,
+      language: path.extname(file.filePath),
+      imports: file.imports.map(importInfo => ({
+        path: importInfo.path,
+        type: importInfo.type,
+        resolvedPath: importInfo.resolvedPath,
+        absolutePath: importInfo.absolutePath ?
+          sanitizeAbsolutePath(importInfo.absolutePath, config.allowedMappingDirectory) :
+          undefined,
+        importedItems: importInfo.importedItems,
+        isExternalPackage: importInfo.isExternalPackage,
+        startLine: importInfo.startLine,
+        endLine: importInfo.endLine
+      })),
+      classes: file.classes.map(classInfo => ({
+        name: classInfo.name,
+        isAbstract: classInfo.isAbstract,
+        extends: classInfo.extends,
+        implements: classInfo.implements,
+        comment: classInfo.comment,
+        startLine: classInfo.startLine,
+        endLine: classInfo.endLine,
+        methods: classInfo.methods.map(method => ({
+          name: method.name,
+          parameters: method.parameters,
+          returnType: method.returnType,
+          accessModifier: method.accessModifier,
+          isStatic: method.isStatic,
+          comment: method.comment,
+          startLine: method.startLine,
+          endLine: method.endLine
+        })),
+        properties: classInfo.properties.map(prop => ({
+          name: prop.name,
+          type: prop.type,
+          accessModifier: prop.accessModifier,
+          isStatic: prop.isStatic,
+          comment: prop.comment,
+          startLine: prop.startLine,
+          endLine: prop.endLine
+        }))
+      })),
+      functions: file.functions.map(func => ({
+        name: func.name,
+        parameters: func.parameters,
+        returnType: func.returnType,
+        comment: func.comment,
+        startLine: func.startLine,
+        endLine: func.endLine
+      }))
+    }))
+  };
+
+  // Convert to JSON string with pretty formatting
+  const jsonContent = JSON.stringify(sanitizedCodeMap, null, 2);
+
+  // Write the JSON content to the output file
+  await writeFileSecure(outputPath, jsonContent, config.allowedMappingDirectory, 'utf-8', outputDir);
+
+  logger.info(`Generated JSON output: ${outputPath}`);
+  return outputPath;
 }

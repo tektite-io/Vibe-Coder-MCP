@@ -35,6 +35,30 @@ export async function ensureDirectoryExists(dirPath: string): Promise<void> {
 }
 
 /**
+ * Validates that a directory is writable.
+ * @param dirPath The directory path to validate
+ * @returns A promise that resolves when the directory is validated
+ */
+export async function validateDirectoryIsWritable(dirPath: string): Promise<void> {
+  try {
+    // Ensure the directory exists
+    await ensureDirectoryExists(dirPath);
+
+    // Create a temporary file to test write access
+    const testFilePath = path.join(dirPath, `.write-test-${Date.now()}.tmp`);
+    await fs.writeFile(testFilePath, 'test');
+
+    // Clean up the test file
+    await fs.unlink(testFilePath);
+
+    logger.debug(`Validated directory is writable: ${dirPath}`);
+  } catch (error) {
+    logger.error({ err: error, path: dirPath }, `Directory is not writable: ${dirPath}`);
+    throw new Error(`Directory is not writable: ${dirPath}`);
+  }
+}
+
+/**
  * Gets the output directory path based on configuration.
  * @param config The Code-Map Generator configuration
  * @returns The output directory path

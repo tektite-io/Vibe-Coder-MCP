@@ -388,7 +388,7 @@ try {
     for (const fileInfo of allFileInfos) {
       try {
         // First try to get source code from cache
-        const cachedSourceCode = getSourceCodeFromCache(fileInfo.filePath);
+        const cachedSourceCode = await getSourceCodeFromCache(fileInfo.filePath);
         if (cachedSourceCode) {
           tempSourceCodeCache.set(fileInfo.filePath, cachedSourceCode);
         } else {

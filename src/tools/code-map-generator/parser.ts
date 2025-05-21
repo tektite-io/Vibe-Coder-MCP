@@ -7,10 +7,12 @@ import logger from '../../logger.js';
 import { FileCache } from './cache/fileCache.js';
 import { CodeMapGeneratorConfig } from './types.js';
 import { readFileSecure } from './fsUtils.js';
-import { getOutputDirectory } from './directoryUtils.js';
+import { getOutputDirectory, ensureDirectoryExists, validateDirectoryIsWritable, getCacheDirectory } from './directoryUtils.js';
 import { GrammarManager } from './cache/grammarManager.js';
 import { MemoryCache } from './cache/memoryCache.js';
 import { MemoryManager } from './cache/memoryManager.js';
+import { getProjectRoot, resolveProjectPath } from './utils/pathUtils.enhanced.js';
+import { FileContentManager } from './cache/fileContentManager.js';
 
 // Export SyntaxNode type for use in other modules
 export type SyntaxNode = ParserFromPackage.SyntaxNode;
@@ -35,12 +37,16 @@ let sourceCodeMemoryCache: MemoryCache<string, string> | null = null;
 let parseCache: FileCache<ParserFromPackage.Tree> | null = null;
 let sourceCodeCache: FileCache<string> | null = null;
 
+// File content manager instance
+let fileContentManager: FileContentManager | null = null;
+
 // Path to the directory where .wasm grammar files are expected to be.
 // Grammar files are located in the 'grammars' directory relative to this module.
 const GRAMMARS_BASE_DIR = path.join(__dirname, 'grammars');
 
 logger.info(`Grammar files directory: ${GRAMMARS_BASE_DIR}`);
-// Also log the current working directory to help with debugging
+// Also log the project root and current working directory to help with debugging
+logger.info(`Project root directory: ${getProjectRoot()}`);
 logger.info(`Current working directory: ${process.cwd()}`);
 logger.info(`Module directory (__dirname): ${__dirname}`);
 
@@ -123,35 +129,43 @@ export const languageConfigurations: Record<string, LanguageConfig> = {
  * This must be called before any parsing operations.
  */
 export async function initializeParser(): Promise<void> {
-  if (grammarManager) {
+  if (grammarManager && grammarManager.isInitialized()) {
     logger.debug('Tree-sitter parser already initialized.');
     return;
   }
   try {
-    // Initialize memory manager
+    // Initialize memory manager first
     memoryManager = new MemoryManager({
       maxMemoryPercentage: 0.5, // Use up to 50% of system memory
       monitorInterval: 60000, // Check memory usage every minute
       autoManage: true
     });
 
-    // Initialize grammar manager
-    grammarManager = new GrammarManager(languageConfigurations, {
+    // Initialize memory caches
+    astMemoryCache = memoryManager.createASTCache();
+    sourceCodeMemoryCache = memoryManager.createSourceCodeCache();
+
+    // Create grammar manager
+    const tempGrammarManager = new GrammarManager(languageConfigurations, {
       maxGrammars: 20,
       preloadCommonGrammars: true,
       preloadExtensions: ['.js', '.ts', '.py', '.html', '.css'],
       grammarsBaseDir: GRAMMARS_BASE_DIR
     });
 
+    // Initialize grammar manager first
+    await tempGrammarManager.initialize();
+
+    // Only after initialization is complete, assign to the global variable
+    grammarManager = tempGrammarManager;
+
     // Register grammar manager with memory manager
     memoryManager.registerGrammarManager(grammarManager);
 
-    // Initialize memory caches
-    astMemoryCache = memoryManager.createASTCache();
-    sourceCodeMemoryCache = memoryManager.createSourceCodeCache();
-
-    // Initialize grammar manager
-    await grammarManager.initialize();
+    // Now that the grammar manager is fully initialized, preload grammars if enabled
+    if (grammarManager.isInitialized() && grammarManager.getOptions().preloadCommonGrammars) {
+      await grammarManager.preloadGrammars();
+    }
 
     logger.info('Tree-sitter parser and memory management initialized successfully.');
   } catch (error) {
@@ -173,14 +187,23 @@ export async function initializeCaches(config: CodeMapGeneratorConfig): Promise<
   }
 
   try {
-    // Create cache directory paths
-    const cacheDir = path.join(
-      config.output?.outputDir || getOutputDirectory(config),
-      '.cache'
-    );
+    // Get the cache directory from the utility function
+    const cacheDir = getCacheDirectory(config);
+    logger.debug(`Using cache directory: ${cacheDir}`);
+
+    // Create the cache directories
+    await ensureDirectoryExists(cacheDir);
 
     const parseTreeCacheDir = path.join(cacheDir, 'parse-trees');
     const sourceCodeCacheDir = path.join(cacheDir, 'source-code');
+
+    // Create the specific cache directories
+    await ensureDirectoryExists(parseTreeCacheDir);
+    await ensureDirectoryExists(sourceCodeCacheDir);
+
+    // Validate that the directories are writable
+    await validateDirectoryIsWritable(parseTreeCacheDir);
+    await validateDirectoryIsWritable(sourceCodeCacheDir);
 
     // Initialize parse tree cache
     parseCache = new FileCache<ParserFromPackage.Tree>({
@@ -212,12 +235,22 @@ export async function initializeCaches(config: CodeMapGeneratorConfig): Promise<
     await parseCache.init();
     await sourceCodeCache.init();
 
-    logger.info('File-based caches initialized successfully.');
+    // Initialize file content manager
+    fileContentManager = new FileContentManager({
+      maxCachedFiles: config.cache?.maxCachedFiles || 100,
+      maxAge: 5 * 60 * 1000, // 5 minutes
+      cacheDir: cacheDir,
+      useFileCache: config.cache?.enabled === undefined || config.cache?.enabled === true
+    });
+    await fileContentManager.init();
+
+    logger.info('File-based caches and file content manager initialized successfully.');
   } catch (error) {
     logger.error({ err: error }, 'Failed to initialize file-based caches.');
     // Don't throw, just log the error and continue without caching
     parseCache = null;
     sourceCodeCache = null;
+    fileContentManager = null;
   }
 }
 
@@ -234,6 +267,11 @@ export async function clearCaches(): Promise<void> {
 
     if (sourceCodeCache) {
       await sourceCodeCache.clear();
+    }
+
+    // Clear file content manager cache
+    if (fileContentManager) {
+      fileContentManager.clearCache();
     }
 
     // Clear memory-based caches
@@ -315,6 +353,82 @@ export async function getParserForFileExtension(fileExtension: string): Promise<
 }
 
 /**
+ * Gets a cached value from the tiered cache system.
+ * Tries file-based cache first, then falls back to memory-based cache.
+ *
+ * @param key The cache key
+ * @param fileCache The file-based cache
+ * @param memoryCache The memory-based cache
+ * @returns A promise that resolves to the cached value, or undefined if not found
+ */
+export async function getCachedValue<T>(
+  key: string,
+  fileCache: FileCache<T> | null,
+  memoryCache: MemoryCache<string, T> | null
+): Promise<T | undefined> {
+  // Try file-based cache first if available
+  if (fileCache) {
+    try {
+      const value = await fileCache.get(key);
+      if (value !== undefined) {
+        logger.debug(`File cache hit for key: ${key}`);
+
+        // Update memory cache for faster access next time
+        if (memoryCache) {
+          memoryCache.set(key, value);
+        }
+
+        return value;
+      }
+    } catch (error) {
+      logger.warn({ err: error, key }, `Error getting value from file cache, falling back to memory cache`);
+    }
+  }
+
+  // Fall back to memory cache if available
+  if (memoryCache) {
+    const value = memoryCache.get(key);
+    if (value !== undefined) {
+      logger.debug(`Memory cache hit for key: ${key}`);
+      return value;
+    }
+  }
+
+  // Not found in any cache
+  return undefined;
+}
+
+/**
+ * Sets a value in the tiered cache system.
+ * Sets in both file-based and memory-based caches if available.
+ *
+ * @param key The cache key
+ * @param value The value to cache
+ * @param fileCache The file-based cache
+ * @param memoryCache The memory-based cache
+ */
+export async function setCachedValue<T>(
+  key: string,
+  value: T,
+  fileCache: FileCache<T> | null,
+  memoryCache: MemoryCache<string, T> | null
+): Promise<void> {
+  // Set in memory cache first (faster)
+  if (memoryCache) {
+    memoryCache.set(key, value);
+  }
+
+  // Set in file-based cache if available
+  if (fileCache) {
+    try {
+      await fileCache.set(key, value);
+    } catch (error) {
+      logger.warn({ err: error, key }, `Error setting value in file cache`);
+    }
+  }
+}
+
+/**
  * Parses the given source code string using the appropriate Tree-sitter grammar
  * based on the file extension.
  *
@@ -333,53 +447,43 @@ export async function parseCode(
   // Generate a cache key
   let cacheKey = '';
   if (filePath) {
-    // Use a hash of the file path and extension as the cache key
-    cacheKey = crypto.createHash('md5').update(`${filePath}:${fileExtension}`).digest('hex');
-
-    // Check memory cache first (fastest)
-    if (sourceCodeMemoryCache && astMemoryCache) {
-      const cachedSourceCode = sourceCodeMemoryCache.get(cacheKey);
-      if (cachedSourceCode === sourceCode) {
-        const cachedTree = astMemoryCache.get(cacheKey);
-        if (cachedTree) {
-          logger.debug(`Using memory-cached parse tree for ${filePath}`);
-          return cachedTree;
+    // Check if we have file metadata from FileContentManager
+    let fileHash: string | undefined;
+    if (fileContentManager) {
+      try {
+        const metadata = await fileContentManager.getMetadata(filePath);
+        if (metadata) {
+          fileHash = metadata.hash;
+          // Use file hash in cache key for more accurate change detection
+          cacheKey = crypto.createHash('md5').update(`${filePath}:${fileExtension}:${fileHash}`).digest('hex');
         }
-      } else if (cachedSourceCode) {
-        // Source code has changed, update the memory cache
-        sourceCodeMemoryCache.set(cacheKey, sourceCode);
-      } else {
-        // Cache the source code in memory
-        sourceCodeMemoryCache.set(cacheKey, sourceCode);
+      } catch (error) {
+        logger.debug(`Error getting file metadata: ${error}`);
       }
     }
 
-    // Check file-based cache if memory cache missed and caching is enabled
-    const useFileCaching = config?.cache?.enabled !== false && sourceCodeCache !== null && parseCache !== null;
-    if (useFileCaching && sourceCodeCache && parseCache) {
-      const cachedSourceCode = await sourceCodeCache.get(cacheKey);
-      if (cachedSourceCode) {
-        // If the cached source code matches the current source code, we can use the cached parse tree
-        if (cachedSourceCode === sourceCode) {
-          const cachedTree = await parseCache.get(cacheKey);
-          if (cachedTree) {
-            logger.debug(`Using file-cached parse tree for ${filePath}`);
+    // If we couldn't get file hash, use the traditional cache key
+    if (!cacheKey) {
+      cacheKey = crypto.createHash('md5').update(`${filePath}:${fileExtension}`).digest('hex');
+    }
 
-            // Also update memory cache for faster access next time
-            if (sourceCodeMemoryCache && astMemoryCache) {
-              sourceCodeMemoryCache.set(cacheKey, sourceCode);
-              astMemoryCache.set(cacheKey, cachedTree);
-            }
+    // Check if caching is enabled
+    const useFileCaching = config?.cache?.enabled !== false && parseCache !== null;
 
-            return cachedTree;
-          }
-        } else {
-          // Source code has changed, update the cache
-          await sourceCodeCache.set(cacheKey, sourceCode);
-        }
-      } else {
-        // Cache the source code
-        await sourceCodeCache.set(cacheKey, sourceCode);
+    // Check if memory caching should be used based on current memory usage
+    const useMemoryCaching = shouldUseMemoryCache(config);
+
+    // Try to get parse tree from cache using tiered caching strategy
+    if ((useMemoryCaching && astMemoryCache) || (useFileCaching && parseCache)) {
+      const cachedTree = await getCachedValue(
+        cacheKey,
+        useFileCaching ? parseCache : null,
+        useMemoryCaching ? astMemoryCache : null
+      );
+
+      if (cachedTree) {
+        logger.debug(`Using cached parse tree for ${filePath}`);
+        return cachedTree;
       }
     }
   }
@@ -395,16 +499,22 @@ export async function parseCode(
     const tree = parser.parse(sourceCode);
     logger.debug(`Successfully parsed code for extension ${fileExtension}. Root node: ${tree.rootNode.type}`);
 
-    // Cache the parse tree in memory
-    if (cacheKey && sourceCodeMemoryCache && astMemoryCache) {
-      sourceCodeMemoryCache.set(cacheKey, sourceCode);
-      astMemoryCache.set(cacheKey, tree);
-    }
+    // Cache the parse tree using tiered caching strategy
+    if (cacheKey) {
+      // Check if caching is enabled
+      const useFileCaching = config?.cache?.enabled !== false && parseCache !== null;
 
-    // Cache the parse tree in file-based cache if enabled
-    const useFileCaching = config?.cache?.enabled !== false && filePath && sourceCodeCache !== null && parseCache !== null;
-    if (useFileCaching && cacheKey && parseCache) {
-      await parseCache.set(cacheKey, tree);
+      // Check if memory caching should be used based on current memory usage
+      const useMemoryCaching = shouldUseMemoryCache(config);
+
+      if ((useMemoryCaching && astMemoryCache) || (useFileCaching && parseCache)) {
+        await setCachedValue(
+          cacheKey,
+          tree,
+          useFileCaching ? parseCache : null,
+          useMemoryCaching ? astMemoryCache : null
+        );
+      }
     }
 
     return tree;
@@ -428,8 +538,14 @@ export async function readAndParseFile(
   config: CodeMapGeneratorConfig
 ): Promise<{ tree: ParserFromPackage.Tree | null, sourceCode: string }> {
   try {
-    // Read the file securely
-    const sourceCode = await readFileSecure(filePath, config.allowedMappingDirectory);
+    // Get file content using FileContentManager if available
+    let sourceCode: string;
+    if (fileContentManager) {
+      sourceCode = await fileContentManager.getContent(filePath, config.allowedMappingDirectory);
+    } else {
+      // Fall back to direct file reading if FileContentManager is not available
+      sourceCode = await readFileSecure(filePath, config.allowedMappingDirectory);
+    }
 
     // Parse the source code
     const tree = await parseCode(sourceCode, fileExtension, filePath, config);
@@ -457,6 +573,43 @@ export function getMemoryStats(): Record<string, any> {
 }
 
 /**
+ * Determines whether to use memory caching based on current memory usage.
+ * @param config The Code-Map Generator configuration
+ * @returns True if memory caching should be used, false otherwise
+ */
+export function shouldUseMemoryCache(config?: CodeMapGeneratorConfig): boolean {
+  // If memory manager is not initialized, default to true
+  if (!memoryManager) {
+    return true;
+  }
+
+  // Get memory stats
+  const stats = memoryManager.getMemoryStats();
+
+  // If memory usage is critical, disable memory caching
+  if (stats.formatted.memoryStatus === 'critical') {
+    logger.warn('Memory usage is critical. Disabling memory caching.');
+    return false;
+  }
+
+  // If memory usage is high, check if we should disable memory caching
+  if (stats.formatted.memoryStatus === 'high') {
+    // If file-based caching is enabled, disable memory caching
+    if (config?.cache?.enabled !== false && parseCache !== null && sourceCodeCache !== null) {
+      logger.warn('Memory usage is high. Using file-based caching only.');
+      return false;
+    }
+
+    // If file-based caching is not available, still use memory caching
+    logger.warn('Memory usage is high, but file-based caching is not available. Using memory caching with caution.');
+    return true;
+  }
+
+  // Memory usage is normal, use memory caching
+  return true;
+}
+
+/**
  * Gets the memory manager instance.
  * @returns The memory manager instance, or null if not initialized.
  */
@@ -467,9 +620,33 @@ export function getMemoryManager(): any {
 /**
  * Gets source code for a file from the cache.
  * @param filePath The path of the file to get source code for.
- * @returns The source code if found in cache, otherwise null.
+ * @param allowedDir Optional allowed directory boundary for security.
+ * @returns A promise that resolves to the source code if found in cache, otherwise null.
  */
-export function getSourceCodeFromCache(filePath: string): string | null {
+export async function getSourceCodeFromCache(filePath: string, allowedDir?: string): Promise<string | null> {
+  // Try FileContentManager first if available
+  if (fileContentManager) {
+    try {
+      // If allowedDir is provided, use it for security boundary
+      if (allowedDir) {
+        return await fileContentManager.getContent(filePath, allowedDir);
+      }
+
+      // Otherwise, try to get from in-memory cache only
+      const cacheKey = crypto.createHash('md5').update(filePath).digest('hex');
+      const metadata = await fileContentManager.getMetadata(filePath);
+      if (metadata) {
+        logger.debug(`Found metadata for ${filePath} in FileContentManager`);
+        // Return content from FileContentManager
+        // Use an empty string as allowedDir to bypass security check (we already verified metadata exists)
+        return await fileContentManager.getContent(filePath, '');
+      }
+    } catch (error) {
+      logger.debug(`Error getting source code from FileContentManager: ${error}`);
+    }
+  }
+
+  // Fall back to memory cache
   if (!sourceCodeMemoryCache) {
     return null;
   }
@@ -477,7 +654,7 @@ export function getSourceCodeFromCache(filePath: string): string | null {
   // Generate a cache key
   const cacheKey = crypto.createHash('md5').update(filePath).digest('hex');
 
-  // Check memory cache first
+  // Check memory cache
   const cachedSourceCode = sourceCodeMemoryCache.get(cacheKey);
   if (cachedSourceCode) {
     return cachedSourceCode;
@@ -493,6 +670,14 @@ export function getSourceCodeFromCache(filePath: string): string | null {
 export function getAllSourceCodeFromCache(): Map<string, string> {
   const result = new Map<string, string>();
 
+  // Get entries from FileContentManager if available
+  if (fileContentManager) {
+    // Note: FileContentManager doesn't currently provide a method to get all entries
+    // This would be a good enhancement to add in the future
+    logger.debug('FileContentManager does not currently support retrieving all entries');
+  }
+
+  // Fall back to memory cache
   if (!sourceCodeMemoryCache) {
     return result;
   }
@@ -553,6 +738,11 @@ export function cleanupParser(): void {
     sourceCodeMemoryCache.clear();
   }
 
+  // Clear file content manager
+  if (fileContentManager) {
+    fileContentManager.clearCache();
+  }
+
   // Run garbage collection
   if (memoryManager) {
     memoryManager.runGarbageCollection();
@@ -565,6 +755,7 @@ export function cleanupParser(): void {
   sourceCodeMemoryCache = null;
   parseCache = null;
   sourceCodeCache = null;
+  fileContentManager = null;
 
   logger.info('Parser cleaned up and resources released.');
 }

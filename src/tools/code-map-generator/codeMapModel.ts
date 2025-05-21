@@ -19,29 +19,61 @@ export interface FunctionInfo {
   class?: string;
   parameters?: string[];
   returnType?: string;
+  accessModifier?: string; // public, private, protected
+  isStatic?: boolean; // Whether the function is static
 }
 
 export interface ClassInfo {
   name: string;
   methods: FunctionInfo[];
-  properties: Array<{ name: string; type?: string; comment?: string; startLine: number; endLine: number }>;
+  properties: Array<ClassPropertyInfo>;
   parentClass?: string; // Name of parent class
   implementedInterfaces?: string[];
   comment?: string;
   startLine: number;
   endLine: number;
   isExported?: boolean; // Optional metadata
+  isAbstract?: boolean; // Whether the class is abstract
+  extends?: string; // Name of the parent class (alternative to parentClass)
+  implements?: string[]; // Interfaces implemented by the class (alternative to implementedInterfaces)
   // Future: decorators, generics, etc.
+}
+
+export interface ClassPropertyInfo {
+  name: string;
+  type?: string;
+  comment?: string;
+  startLine: number;
+  endLine: number;
+  accessModifier?: string; // public, private, protected
+  isStatic?: boolean; // Whether the property is static
+}
+
+export interface ImportedItem {
+  name: string;
+  alias?: string;
+  isDefault: boolean;
+  isNamespace: boolean;
 }
 
 export interface ImportInfo {
   path: string; // The path string from the import statement
-  importedItems?: string[]; // Specific items imported, e.g., { parse } from 'url' -> ['parse']
+  importedItems?: ImportedItem[]; // Specific items imported, e.g., { parse } from 'url' -> [{name: 'parse', ...}]
   isDefault?: boolean; // If it's a default import
   alias?: string; // If the import is aliased
   comment?: string; // Optional comment for the import
   startLine: number;
   endLine: number;
+  // Additional properties for enhanced import resolution
+  type?: string; // Type of import (static, dynamic, commonjs, extracted)
+  resolvedPath?: string; // Resolved path after import resolution
+  absolutePath?: string; // Absolute file path
+  isExternalPackage?: boolean; // Whether the import is from an external package
+  // Additional properties used in outputFormatter.ts
+  nodeText?: string; // The original node text for the import
+  isProjectFile?: boolean; // Whether the import is from a project file
+  originalPath?: string; // The original import path before resolution
+  packageName?: string; // The package name for external packages
 }
 
 export interface FileInfo {

@@ -16,7 +16,7 @@ Vibe Coder MCP integrates with MCP-compatible clients to provide the following c
 *   **Git Integration**: Summarizes current Git changes (`git-summary`).
 *   **Research & Planning**: Performs deep research (`research-manager`) and generates planning documents like PRDs (`generate-prd`), user stories (`generate-user-stories`), task lists (`generate-task-list`), and development rules (`generate-rules`).
 *   **Project Scaffolding**: Generates full-stack starter kits (`generate-fullstack-starter-kit`).
-*   **Code Map Generator**: Recursively scans a codebase, extracts semantic information, and generates token-efficient, context-dense Markdown index and Mermaid diagrams, including sequence diagrams (`map-codebase`).
+*   **Code Map Generator**: Recursively scans a codebase, extracts semantic information, and generates either a token-efficient, context-dense Markdown index with Mermaid diagrams or a structured JSON representation with absolute file paths for imports and enhanced class property information (`map-codebase`).
 *   **Asynchronous Execution**: Many long-running tools (generators, research, workflows) now run asynchronously. They return a Job ID immediately, and the final result is retrieved using the `get-job-result` tool.
 *   **Session State Management**: Maintains basic state across requests within a session (in-memory).
 *   **Standardized Error Handling**: Consistent error patterns across all tools.
@@ -583,7 +583,7 @@ Refer to these individual READMEs for in-depth information:
 
 ### Analysis & Information Tools
 
-*   **Code Map Generator (`map-codebase`)**: Scans a codebase to extract semantic information (classes, functions, comments) and generates a structural map with Mermaid diagrams.
+*   **Code Map Generator (`map-codebase`)**: Scans a codebase to extract semantic information (classes, functions, comments) and generates either a human-readable Markdown map with Mermaid diagrams or a structured JSON representation with absolute file paths for imports and enhanced class property information.
 *   **Git Summary Generator (`git-summary`)**: Provides a summary of the current Git status, showing staged or unstaged changes (diff). Useful for quick checks before committing.
 *   **Research Manager (`research-manager`)**: Performs deep research on technical topics using Perplexity Sonar, providing summaries and sources.
 
@@ -650,7 +650,7 @@ Interact with the tools via your connected AI assistant:
 *   **Refactor Code:** `Refactor this code to use async/await: [paste code snippet]`
 *   **Git Summary:** `Show unstaged git changes`
 *   **Run Workflow:** `Run workflow newProjectSetup with input { "projectName": "my-new-app", "description": "A simple task manager" }`
-*   **Map Codebase:** `Generate a code map for the current project` or `map-codebase path="./src"`
+*   **Map Codebase:** `Generate a code map for the current project`, `map-codebase path="./src"`, or `Generate a JSON representation of the codebase structure with output_format="json"`
 
 ## Running Locally (Optional)
 
