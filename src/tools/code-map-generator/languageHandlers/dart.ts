@@ -378,7 +378,7 @@ export class DartHandler extends BaseLanguageHandler {
   protected extractFunctionComment(node: SyntaxNode, sourceCode: string): string | undefined {
     try {
       // Look for documentation comments
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type !== 'documentation_comment') {
@@ -402,7 +402,7 @@ export class DartHandler extends BaseLanguageHandler {
   protected extractClassComment(node: SyntaxNode, sourceCode: string): string | undefined {
     try {
       // Look for documentation comments
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type !== 'documentation_comment') {

@@ -381,7 +381,7 @@ async function generateSplitMarkdownOutput(
   classInheritanceGraph: { nodes: GraphNode[], edges: GraphEdge[] },
   functionCallGraph: { nodes: GraphNode[], edges: GraphEdge[] },
   config: CodeMapGeneratorConfig,
-  jobId: string
+  _jobId: string
 ): Promise<string> {
   // Determine output directory and file prefix
   const outputDir = config.output?.outputDir || getOutputDirectory(config);
@@ -527,8 +527,8 @@ async function generateSplitMarkdownOutput(
 
   // Generate file details file
   const fileDetailsPath = path.join(outputDirWithTimestamp, 'file-details.md');
-  let fileDetailsMarkdown = '# File Details\n\n';
-  fileDetailsMarkdown += '[Back to Index](index.md)\n\n';
+  // Initialize file with header
+  await writeFileSecure(fileDetailsPath, '# File Details\n\n[Back to Index](index.md)\n\n', config.allowedMappingDirectory, 'utf-8', outputDir);
 
   // Process files in batches to avoid memory issues
   const batchSize = 10;
@@ -708,7 +708,7 @@ async function generateSplitMarkdownOutput(
 export async function generateJsonOutput(
   allFilesInfo: FileInfo[],
   config: CodeMapGeneratorConfig,
-  jobId: string
+  _jobId: string
 ): Promise<string> {
   // Determine output directory and file name
   const outputDir = config.output?.outputDir || getOutputDirectory(config);

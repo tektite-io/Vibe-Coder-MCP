@@ -171,7 +171,7 @@ export function extractParticipants(
     const node = nodeMap.get(id);
 
     // Extract a readable label from the node
-    let label = node?.label?.split(' — ')[0] || id.split('::').pop() || id;
+    const label = node?.label?.split(' — ')[0] || id.split('::').pop() || id;
 
     // Determine the type of participant
     const type = node?.type as 'function' | 'method' | 'class' || 'function';

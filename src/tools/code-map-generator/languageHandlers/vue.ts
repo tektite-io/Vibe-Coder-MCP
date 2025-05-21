@@ -457,7 +457,7 @@ export class VueHandler extends BaseLanguageHandler {
   protected extractFunctionComment(node: SyntaxNode, sourceCode: string): string | undefined {
     try {
       // Look for JSDoc comments before the node
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type !== 'comment') {
@@ -503,7 +503,7 @@ export class VueHandler extends BaseLanguageHandler {
           for (let i = 0; i < lines.length; i++) {
             if (lines[i].includes('export default')) {
               // Check for comments above the export default
-              let commentLines = [];
+              const commentLines = [];
               let j = i - 1;
 
               // Skip empty lines

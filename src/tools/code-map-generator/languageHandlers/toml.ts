@@ -395,7 +395,7 @@ export class TomlHandler extends BaseLanguageHandler {
   protected extractFunctionComment(node: SyntaxNode, sourceCode: string): string | undefined {
     try {
       // Look for comments before the node
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type !== 'comment') {
@@ -426,7 +426,7 @@ export class TomlHandler extends BaseLanguageHandler {
     try {
       // Look for comments at the beginning of the document or before a table
       if (node.type === 'document') {
-        let firstChild = node.firstChild;
+        const firstChild = node.firstChild;
 
         // Check if the first node is a comment
         if (firstChild && firstChild.type === 'comment') {
@@ -440,7 +440,7 @@ export class TomlHandler extends BaseLanguageHandler {
         }
       } else if (node.type === 'table' || node.type === 'array_table') {
         // Look for comments before the table
-        let current = node;
+        const current = node;
         let prev = current.previousNamedSibling;
 
         while (prev && prev.type !== 'comment') {

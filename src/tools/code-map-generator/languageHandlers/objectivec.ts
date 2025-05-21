@@ -335,7 +335,7 @@ export class ObjectiveCHandler extends BaseLanguageHandler {
   protected extractFunctionComment(node: SyntaxNode, sourceCode: string): string | undefined {
     try {
       // Look for comments before the function
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type !== 'comment') {
@@ -366,7 +366,7 @@ export class ObjectiveCHandler extends BaseLanguageHandler {
   protected extractClassComment(node: SyntaxNode, sourceCode: string): string | undefined {
     try {
       // Look for comments before the class
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type !== 'comment') {
@@ -398,7 +398,7 @@ export class ObjectiveCHandler extends BaseLanguageHandler {
     try {
       if (comment.startsWith('/**') || comment.startsWith('/*!')) {
         // Block Doxygen comment
-        let text = comment.substring(3, comment.length - 2);
+        const text = comment.substring(3, comment.length - 2);
 
         // Split into lines and remove leading asterisks and whitespace
         const lines = text.split('\n')

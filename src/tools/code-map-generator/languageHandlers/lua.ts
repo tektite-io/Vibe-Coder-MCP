@@ -249,7 +249,7 @@ export class LuaHandler extends BaseLanguageHandler {
   protected extractFunctionComment(node: SyntaxNode, sourceCode: string): string | undefined {
     try {
       // Look for comments before the function
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type !== 'comment') {
@@ -279,7 +279,7 @@ export class LuaHandler extends BaseLanguageHandler {
   protected extractClassComment(node: SyntaxNode, sourceCode: string): string | undefined {
     try {
       // Look for comments before the class
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type !== 'comment') {

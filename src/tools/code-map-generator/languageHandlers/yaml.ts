@@ -351,7 +351,7 @@ export class YamlHandler extends BaseLanguageHandler {
   protected extractFunctionComment(node: SyntaxNode, sourceCode: string): string | undefined {
     try {
       // Look for comments before the node
-      let current = node;
+      const current = node;
       let prev = current.previousNamedSibling;
 
       while (prev && prev.type !== 'comment') {
@@ -401,7 +401,7 @@ export class YamlHandler extends BaseLanguageHandler {
         }
       } else {
         // Look for comments before the node
-        let current = node;
+        const current = node;
         let prev = current.previousNamedSibling;
 
         while (prev && prev.type !== 'comment') {
