@@ -48,7 +48,8 @@ export function generateMermaidClassDiagram(nodes: GraphNode[], edges: GraphEdge
       // Add methods
       classInfo.methods.forEach(method => {
         const methodComment = sanitizeMermaidLabel(method.comment || method.name);
-        mermaidString += `    +${method.name}(${method.signature.substring(method.name.length)}) : ${methodComment}\n`;
+        const signature = method.signature ? method.signature.substring(method.name.length) : '()';
+        mermaidString += `    +${method.name}(${signature}) : ${methodComment}\n`;
       });
     }
     mermaidString += `  }\n`;
