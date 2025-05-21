@@ -8,6 +8,7 @@ import { SyntaxNode } from '../parser.js';
 import { FunctionExtractionOptions } from '../types.js';
 import { getNodeText } from '../astAnalyzer.js';
 import logger from '../../../logger.js';
+import { ImportedItem } from '../codeMapModel.js';
 
 /**
  * Language handler for JavaScript.
@@ -264,10 +265,12 @@ export class JavaScriptHandler extends BaseLanguageHandler {
   /**
    * Extracts imported items from an AST node.
    */
-  protected extractImportedItems(node: SyntaxNode, sourceCode: string): string[] | undefined {
+  protected extractImportedItems(node: SyntaxNode, sourceCode: string): ImportedItem[] | undefined {
     try {
       if (node.type === 'import_statement') {
-        const items: string[] = [];
+        const items: ImportedItem[] = [];
+        const sourceNode = node.childForFieldName('source');
+        const sourcePath = sourceNode ? getNodeText(sourceNode, sourceCode).replace(/['"]/g, '') : '';
 
         // Handle default import
         const clauseNode = node.childForFieldName('import_clause');
@@ -275,7 +278,14 @@ export class JavaScriptHandler extends BaseLanguageHandler {
           // Default import: import React from 'react'
           const defaultImport = clauseNode.childForFieldName('default');
           if (defaultImport) {
-            items.push(getNodeText(defaultImport, sourceCode));
+            const name = getNodeText(defaultImport, sourceCode);
+            items.push({
+              name,
+              path: sourcePath,
+              isDefault: true,
+              isNamespace: false,
+              nodeText: node.text
+            });
           }
 
           // Named imports: import { useState, useEffect } from 'react'
@@ -284,7 +294,14 @@ export class JavaScriptHandler extends BaseLanguageHandler {
             namedImportsNode.descendantsOfType('import_specifier').forEach(specifier => {
               const nameNode = specifier.childForFieldName('name');
               if (nameNode) {
-                items.push(getNodeText(nameNode, sourceCode));
+                const name = getNodeText(nameNode, sourceCode);
+                items.push({
+                  name,
+                  path: sourcePath,
+                  isDefault: false,
+                  isNamespace: false,
+                  nodeText: specifier.text
+                });
               }
             });
           }
@@ -294,7 +311,14 @@ export class JavaScriptHandler extends BaseLanguageHandler {
           if (namespaceImportNode) {
             const nameNode = namespaceImportNode.childForFieldName('name');
             if (nameNode) {
-              items.push(`* as ${getNodeText(nameNode, sourceCode)}`);
+              const name = getNodeText(nameNode, sourceCode);
+              items.push({
+                name: `* as ${name}`,
+                path: sourcePath,
+                isDefault: false,
+                isNamespace: true,
+                nodeText: namespaceImportNode.text
+              });
             }
           }
         }

@@ -8,6 +8,7 @@ import { SyntaxNode } from '../parser.js';
 import { FunctionExtractionOptions } from '../types.js';
 import { getNodeText } from '../astAnalyzer.js';
 import logger from '../../../logger.js';
+import { ImportedItem } from '../codeMapModel.js';
 
 /**
  * Language handler for Go.
@@ -297,20 +298,35 @@ export class GoHandler extends BaseLanguageHandler {
   /**
    * Extracts imported items from an AST node.
    */
-  protected extractImportedItems(node: SyntaxNode, sourceCode: string): string[] | undefined {
+  protected extractImportedItems(node: SyntaxNode, sourceCode: string): ImportedItem[] | undefined {
     try {
       if (node.type === 'import_spec') {
         const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          // Named import: import alias "package/path"
-          return [getNodeText(nameNode, sourceCode)];
-        } else {
-          // Regular import: import "package/path"
-          const pathNode = node.childForFieldName('path');
-          if (pathNode) {
-            const path = getNodeText(pathNode, sourceCode).replace(/^["']|["']$/g, '');
-            const parts = path.split('/');
-            return [parts[parts.length - 1]];
+        const pathNode = node.childForFieldName('path');
+
+        if (pathNode) {
+          const path = getNodeText(pathNode, sourceCode).replace(/^["']|["']$/g, '');
+          const parts = path.split('/');
+          const name = parts[parts.length - 1];
+
+          if (nameNode) {
+            // Named import: import alias "package/path"
+            return [{
+              name: getNodeText(nameNode, sourceCode),
+              path: path,
+              isDefault: false,
+              isNamespace: false,
+              nodeText: node.text
+            }];
+          } else {
+            // Regular import: import "package/path"
+            return [{
+              name: name,
+              path: path,
+              isDefault: false,
+              isNamespace: false,
+              nodeText: node.text
+            }];
           }
         }
       }
