@@ -36,6 +36,10 @@ coverage/
 test-results.xml
 vitest.config.*.timestamp-*
 .vitest/
+test/
+*/__tests__/
+*/tests/
+*/__integration__/
 
 # IDE - VSCode
 .vscode/*
