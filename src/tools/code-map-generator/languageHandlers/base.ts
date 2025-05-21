@@ -4,7 +4,7 @@
  */
 
 import { LanguageHandler, FunctionExtractionOptions, ClassExtractionOptions, ImportExtractionOptions, FunctionContext } from '../types.js';
-import { FunctionInfo, ClassInfo, ImportInfo } from '../codeMapModel.js';
+import { FunctionInfo, ClassInfo, ImportInfo, ImportedItem } from '../codeMapModel.js';
 import { SyntaxNode } from '../parser.js';
 import { getNodeText } from '../astAnalyzer.js';
 import logger from '../../../logger.js';
@@ -370,7 +370,7 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
    * Extracts imported items from an AST node.
    * This can be overridden by language-specific handlers.
    */
-  protected extractImportedItems(node: SyntaxNode, sourceCode: string): string[] | undefined {
+  protected extractImportedItems(node: SyntaxNode, sourceCode: string): ImportedItem[] | undefined {
     // Default implementation returns undefined
     return undefined;
   }

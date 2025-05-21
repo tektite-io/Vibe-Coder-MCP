@@ -69,6 +69,11 @@ export interface ImportInfo {
   resolvedPath?: string; // Resolved path after import resolution
   absolutePath?: string; // Absolute file path
   isExternalPackage?: boolean; // Whether the import is from an external package
+  // Additional properties used in outputFormatter.ts
+  nodeText?: string; // The original node text for the import
+  isProjectFile?: boolean; // Whether the import is from a project file
+  originalPath?: string; // The original import path before resolution
+  packageName?: string; // The package name for external packages
 }
 
 export interface FileInfo {
