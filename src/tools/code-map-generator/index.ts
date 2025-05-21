@@ -12,11 +12,13 @@ import { formatBackgroundJobInitiationResponse } from '../../services/job-respon
 
 import {
   initializeParser,
-  languageConfigurations,
-  loadLanguageGrammar,
-  initializeCaches,
   readAndParseFile,
-  clearCaches
+  clearCaches,
+  getMemoryStats,
+  languageConfigurations,
+  initializeCaches,
+  getSourceCodeFromCache,
+  getMemoryManager
 } from './parser.js';
 
 import { collectSourceFiles } from './fileScanner.js';
@@ -201,14 +203,13 @@ try {
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Initializing parser...');
 
     console.time('CodeMapGenerator_Initialization'); // Profiling Start: Initialization
-    await initializeParser();
-    const grammarPromises = [];
-    for (const ext in languageConfigurations) {
-      const langConfig = languageConfigurations[ext];
-      grammarPromises.push(loadLanguageGrammar(ext, langConfig));
-    }
-    await Promise.all(grammarPromises);
-    logger.info('All configured grammars loaded (or attempted).');
+    await initializeParser(); // This now includes grammar manager initialization with preloading
+    logger.info('Parser and memory management initialized.');
+
+    // Log initial memory usage statistics
+    const initialMemoryStats = getMemoryStats();
+    logger.info({ initialMemoryStats }, 'Initial memory usage statistics');
+
     console.timeEnd('CodeMapGenerator_Initialization'); // Profiling End: Initialization
 
     // Update job status
@@ -258,6 +259,10 @@ try {
     const filePaths = await collectSourceFiles(projectRoot, supportedExtensions, combinedIgnoredPatterns, config);
     console.timeEnd('CodeMapGenerator_FileScanning'); // Profiling End: FileScanning
 
+    // Log memory usage after file scanning
+    const postScanningMemoryStats = getMemoryStats();
+    logger.info({ postScanningMemoryStats }, 'Memory usage after file scanning');
+
     if (filePaths.length === 0) {
       // Update job status to completed (but with no files)
       jobManager.updateJobStatus(jobId, JobStatus.COMPLETED, 'No files found');
@@ -294,7 +299,7 @@ try {
         const { tree, sourceCode } = await readAndParseFile(filePath, path.extname(filePath).toLowerCase(), config);
 
         // Store source code in cache for function call graph generation
-        sourceCodeCache.set(filePath, sourceCode);
+        // Note: sourceCodeCache is now handled internally by the parser
 
         if (!tree) {
           logger.warn(`No parser or parsing failed for ${filePath}, creating basic FileInfo.`);
@@ -356,6 +361,10 @@ try {
 
     console.timeEnd('CodeMapGenerator_ParsingAndSymbolExtraction'); // Profiling End: ParsingAndSymbolExtraction
 
+    // Log memory usage after parsing and symbol extraction
+    const postParsingMemoryStats = getMemoryStats();
+    logger.info({ postParsingMemoryStats }, 'Memory usage after parsing and symbol extraction');
+
     // Sort files by relative path
     allFileInfos.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
 
@@ -371,7 +380,30 @@ try {
     // Build graphs with intermediate storage
     const fileDepGraph = await buildFileDependencyGraph(allFileInfos, config, jobId);
     const classInheritanceGraph = await buildClassInheritanceGraph(allFileInfos, config, jobId);
-    const functionCallGraph = await buildFunctionCallGraph(allFileInfos, sourceCodeCache, config, jobId);
+
+    // Create a temporary Map for sourceCodeCache to maintain compatibility
+    const tempSourceCodeCache = new Map<string, string>();
+
+    // Populate the temporary Map with source code from files
+    for (const fileInfo of allFileInfos) {
+      try {
+        // First try to get source code from cache
+        const cachedSourceCode = getSourceCodeFromCache(fileInfo.filePath);
+        if (cachedSourceCode) {
+          tempSourceCodeCache.set(fileInfo.filePath, cachedSourceCode);
+        } else {
+          // If not in cache, read and parse the file
+          const { sourceCode } = await readAndParseFile(fileInfo.filePath, path.extname(fileInfo.filePath).toLowerCase(), config);
+          if (sourceCode) {
+            tempSourceCodeCache.set(fileInfo.filePath, sourceCode);
+          }
+        }
+      } catch (error) {
+        logger.warn(`Could not read source code for ${fileInfo.filePath}: ${error}`);
+      }
+    }
+
+    const functionCallGraph = await buildFunctionCallGraph(allFileInfos, tempSourceCodeCache, config, jobId);
 
     const fileDepNodes = fileDepGraph.nodes;
     const fileDepEdges = fileDepGraph.edges;
@@ -381,6 +413,10 @@ try {
     const funcCallEdges = functionCallGraph.edges;
 
     console.timeEnd('CodeMapGenerator_GraphBuilding'); // Profiling End: GraphBuilding
+
+    // Log memory usage after graph building
+    const postGraphBuildingMemoryStats = getMemoryStats();
+    logger.info({ postGraphBuildingMemoryStats }, 'Memory usage after graph building');
 
     // Update job status for diagram generation
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating diagrams...');
@@ -410,9 +446,15 @@ try {
     // Generate sequence diagram
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating sequence diagram...');
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating sequence diagram...', 85);
+    // Use the same function call graph nodes and edges for sequence diagram
+    // The sequence diagram generator uses the same nodes and edges as the function call graph
     const sequenceDiagramMd = generateMermaidSequenceDiagram(funcCallNodes, funcCallEdges);
 
     console.timeEnd('CodeMapGenerator_DiagramGeneration'); // Profiling End: DiagramGeneration
+
+    // Log memory usage after diagram generation
+    const postDiagramGenerationMemoryStats = getMemoryStats();
+    logger.info({ postDiagramGenerationMemoryStats }, 'Memory usage after diagram generation');
 
     // Update job status for output generation
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating output...');
@@ -431,6 +473,10 @@ try {
     );
 
     console.timeEnd('CodeMapGenerator_OutputGeneration'); // Profiling End: OutputGeneration
+
+    // Log memory usage after output generation
+    const postOutputGenerationMemoryStats = getMemoryStats();
+    logger.info({ postOutputGenerationMemoryStats }, 'Memory usage after output generation');
 
     // For backward compatibility, also generate the old-style output
     console.time('CodeMapGenerator_OutputFormatting'); // Profiling Start: OutputFormatting
@@ -461,12 +507,20 @@ try {
     finalMarkdownOutput += `## Detailed Code Structure\n\n${textualCodeMapMd}`;
     console.timeEnd('CodeMapGenerator_OutputFormatting'); // Profiling End: OutputFormatting
 
+    // Log memory usage after output formatting
+    const postOutputFormattingMemoryStats = getMemoryStats();
+    logger.info({ postOutputFormattingMemoryStats }, 'Memory usage after output formatting');
+
     // Call optimizeMarkdownOutput
     const optimizedOutput = optimizeMarkdownOutput(finalMarkdownOutput);
 
     // Update job status to completed
     jobManager.updateJobStatus(jobId, JobStatus.COMPLETED, 'Code map generation complete');
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.COMPLETED, 'Code map generation complete', 100);
+
+    // Log final memory usage statistics
+    const finalMemoryStats = getMemoryStats();
+    logger.info({ finalMemoryStats }, 'Final memory usage statistics');
 
     logger.info({ toolName: 'map-codebase', path: projectRoot, sessionId, successfullyProcessedCount, filesWithErrorsCount }, "Code map generated.");
 
@@ -482,6 +536,14 @@ try {
     // Update job status to failed
     jobManager.updateJobStatus(jobId, JobStatus.FAILED, `Error: ${error instanceof Error ? error.message : String(error)}`);
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.FAILED, `Error: ${error instanceof Error ? error.message : String(error)}`);
+
+    // Log memory usage statistics on error
+    try {
+      const errorMemoryStats = getMemoryStats();
+      logger.info({ errorMemoryStats }, 'Memory usage statistics at error');
+    } catch (memoryError) {
+      logger.warn(`Failed to get memory statistics: ${memoryError instanceof Error ? memoryError.message : String(memoryError)}`);
+    }
 
     logger.error({ err: error, toolName: 'map-codebase', params, sessionId, jobId }, 'Error in Code-Map Generator');
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -500,6 +562,17 @@ try {
 
   // Clean up resources
   try {
+    // Log memory usage statistics
+    const memoryStats = getMemoryStats();
+    logger.info({ memoryStats }, 'Memory usage statistics');
+
+    // Get memory manager for additional cleanup if needed
+    const memManager = getMemoryManager();
+    if (memManager) {
+      logger.debug('Memory manager found, performing additional cleanup');
+      // Additional cleanup can be performed here if needed
+    }
+
     // Close all caches
     await clearCaches();
     logger.debug('Closed all file-based caches');
