@@ -56,6 +56,49 @@ export interface ImportedItem {
   isNamespace?: boolean;
   path?: string;
   nodeText?: string;
+
+  // Additional properties for language-specific metadata
+  isStatic?: boolean;
+  isGlobal?: boolean;
+  isUsingNamespace?: boolean;
+  isWildcardImport?: boolean;
+  isSelectorImport?: boolean;
+  isPackageDeclaration?: boolean;
+
+  // Dart-specific properties
+  isPackageImport?: boolean;
+  isRelativeImport?: boolean;
+  isDartImport?: boolean;
+  isExport?: boolean;
+  isPart?: boolean;
+  isPartOf?: boolean;
+  isLibraryName?: boolean;
+  hideItems?: string[];
+  showClause?: boolean;
+
+  // C/C++-specific properties
+  isSystemInclude?: boolean;
+  isLocalInclude?: boolean;
+
+  // Import type information
+  importType?: string;
+  importKind?: string;
+
+  // Package information
+  packageName?: string;
+  moduleName?: string;
+
+  // Static import information
+  staticImport?: {
+    className?: string;
+    memberName?: string;
+    [key: string]: any;
+  };
+
+  // Additional metadata
+  exceptItems?: string[];
+  options?: any;
+  namespaceParts?: string[];
 }
 
 export interface ImportInfo {
@@ -64,8 +107,8 @@ export interface ImportInfo {
   isDefault?: boolean; // If it's a default import
   alias?: string; // If the import is aliased
   comment?: string; // Optional comment for the import
-  startLine: number;
-  endLine: number;
+  startLine?: number;
+  endLine?: number;
   // Additional properties for enhanced import resolution
   type?: string; // Type of import (static, dynamic, commonjs, extracted)
   resolvedPath?: string; // Resolved path after import resolution
@@ -76,6 +119,12 @@ export interface ImportInfo {
   isProjectFile?: boolean; // Whether the import is from a project file
   originalPath?: string; // The original import path before resolution
   packageName?: string; // The package name for external packages
+  // Properties added for Dependency-Cruiser integration
+  isCore?: boolean; // Whether the import is a core module
+  isDynamic?: boolean; // Whether the import is a dynamic import
+  isRelative?: boolean; // Whether the import is a relative path
+  moduleSystem?: string; // The module system used (CommonJS, ESM, etc.)
+  metadata?: Record<string, any>; // Additional metadata from third-party resolvers
 }
 
 export interface FileInfo {

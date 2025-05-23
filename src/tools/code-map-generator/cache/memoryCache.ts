@@ -148,10 +148,10 @@ export class MemoryCache<K, V> {
    * Default options for the MemoryCache.
    */
   private static readonly DEFAULT_OPTIONS: Omit<Required<MemoryCacheOptions<unknown, unknown>>, 'name' | 'dispose'> = {
-    maxEntries: 1000,
-    maxAge: 60 * 60 * 1000, // 1 hour
+    maxEntries: 500, // Reduced from 1000
+    maxAge: 60 * 60 * 1000, // 1 hour (unchanged)
     sizeCalculator: () => 1,
-    maxSize: 100000
+    maxSize: 50000 // Reduced from 100000
   };
 
   /**
@@ -247,7 +247,7 @@ export class MemoryCache<K, V> {
     }
 
     // Prune if necessary
-    this.prune();
+    this.pruneSize();
   }
 
   /**
@@ -320,8 +320,9 @@ export class MemoryCache<K, V> {
 
   /**
    * Prunes the cache to stay within size limits.
+   * @private
    */
-  private prune(): void {
+  private pruneSize(): void {
     // Prune by max entries
     while (this.size > this.options.maxEntries) {
       this.evictLRU();
@@ -450,5 +451,44 @@ export class MemoryCache<K, V> {
     }
 
     return result;
+  }
+
+  /**
+   * Gets the current size of the cache (number of entries).
+   * @returns The number of entries in the cache
+   */
+  public getSize(): number {
+    return this.size;
+  }
+
+  /**
+   * Gets the total size of all entries in the cache.
+   * @returns The total size of all entries in the cache
+   */
+  public getTotalSize(): number {
+    return this.totalSize;
+  }
+
+  /**
+   * Prunes expired entries from the cache.
+   * @returns The number of entries pruned
+   */
+  public prune(): number {
+    const now = Date.now();
+    let prunedCount = 0;
+
+    // Iterate through all entries in the map
+    for (const [key, entry] of this.map.entries()) {
+      // Skip non-expired entries
+      if (entry.expiry >= now) {
+        continue;
+      }
+
+      // Delete expired entries
+      this.delete(key);
+      prunedCount++;
+    }
+
+    return prunedCount;
   }
 }

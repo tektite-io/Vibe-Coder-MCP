@@ -195,15 +195,25 @@ export class TypeScriptHandler extends JavaScriptHandler {
   /**
    * Extracts class properties from an AST node.
    */
-  protected extractClassProperties(node: SyntaxNode, sourceCode: string): Array<{ name: string; type?: string; comment?: string; startLine: number; endLine: number }> {
-    try {
-      const properties: Array<{ name: string; type?: string; comment?: string; startLine: number; endLine: number }> = [];
+  protected extractClassProperties(node: SyntaxNode, sourceCode: string): Array<{
+    name: string;
+    type?: string;
+    comment?: string;
+    startLine: number;
+    endLine: number;
+    accessModifier?: string;
+    isStatic?: boolean;
+  }> {
+    // First get the properties from the JavaScript handler
+    const jsProperties = super.extractClassProperties(node, sourceCode);
 
-      if (node.type === 'class_declaration') {
+    try {
+      // Add TypeScript-specific property handling
+      if (node.type === 'interface_declaration' || node.type === 'type_alias_declaration') {
         const bodyNode = node.childForFieldName('body');
         if (bodyNode) {
-          // Extract property declarations
-          bodyNode.descendantsOfType(['property_definition', 'public_field_definition']).forEach(propNode => {
+          // Extract property signatures from interfaces
+          bodyNode.descendantsOfType(['property_signature']).forEach(propNode => {
             const nameNode = propNode.childForFieldName('name');
             if (nameNode) {
               const name = getNodeText(nameNode, sourceCode);
@@ -215,61 +225,62 @@ export class TypeScriptHandler extends JavaScriptHandler {
                 type = getNodeText(typeNode, sourceCode);
               }
 
-              // Extract comment
-              const comment = this.extractPropertyComment(propNode, sourceCode);
+              // Extract comment using the JavaScript handler's method
+              const comment = super.extractPropertyComment(propNode, sourceCode);
 
-              properties.push({
+              // Determine if optional
+              const isOptional = propNode.text.includes('?:');
+
+              jsProperties.push({
+                name,
+                type: type ? (isOptional ? `${type} | undefined` : type) : undefined,
+                comment: comment ? (isOptional ? `${comment} (Optional)` : comment) : (isOptional ? 'Optional property' : undefined),
+                startLine: propNode.startPosition.row + 1,
+                endLine: propNode.endPosition.row + 1,
+                accessModifier: 'public', // Interface properties are always public
+                isStatic: false
+              });
+            }
+          });
+        }
+      } else if (node.type === 'enum_declaration') {
+        const bodyNode = node.childForFieldName('body');
+        if (bodyNode) {
+          // Extract enum members
+          bodyNode.descendantsOfType(['enum_member']).forEach(memberNode => {
+            const nameNode = memberNode.childForFieldName('name');
+            if (nameNode) {
+              const name = getNodeText(nameNode, sourceCode);
+
+              // Extract value if present
+              let type: string | undefined = 'enum';
+              const valueNode = memberNode.childForFieldName('value');
+              if (valueNode) {
+                const value = getNodeText(valueNode, sourceCode);
+                type = `enum (${value})`;
+              }
+
+              // Extract comment using the JavaScript handler's method
+              const comment = super.extractPropertyComment(memberNode, sourceCode);
+
+              jsProperties.push({
                 name,
                 type,
-                comment,
-                startLine: propNode.startPosition.row + 1,
-                endLine: propNode.endPosition.row + 1
+                comment: comment || `Enum member ${name}`,
+                startLine: memberNode.startPosition.row + 1,
+                endLine: memberNode.endPosition.row + 1,
+                accessModifier: 'public', // Enum members are always public
+                isStatic: true // Enum members are static
               });
             }
           });
         }
       }
 
-      return properties;
+      return jsProperties;
     } catch (error) {
       logger.warn({ err: error, nodeType: node.type }, 'Error extracting TypeScript class properties');
-      return [];
-    }
-  }
-
-  /**
-   * Extracts a comment for a property.
-   */
-  private extractPropertyComment(node: SyntaxNode, sourceCode: string): string | undefined {
-    try {
-      // Check for comments before the node
-      const startPosition = node.startPosition;
-      const lineStart = sourceCode.lastIndexOf('\n', node.startIndex) + 1;
-      const textBeforeNode = sourceCode.substring(0, lineStart).trim();
-
-      // Look for TSDoc comment
-      const tsdocEnd = textBeforeNode.lastIndexOf('*/');
-      if (tsdocEnd !== -1) {
-        const tsdocStart = textBeforeNode.lastIndexOf('/**', tsdocEnd);
-        if (tsdocStart !== -1) {
-          const comment = textBeforeNode.substring(tsdocStart + 3, tsdocEnd).trim();
-
-          // Extract first sentence or description
-          const lines = comment.split('\n');
-          const description = lines
-            .map(line => line.trim().replace(/^\* ?/, ''))
-            .filter(line => !line.startsWith('@'))
-            .join(' ')
-            .trim();
-
-          return description;
-        }
-      }
-
-      return undefined;
-    } catch (error) {
-      logger.warn({ err: error, nodeType: node.type }, 'Error extracting TypeScript property comment');
-      return undefined;
+      return jsProperties;
     }
   }
 

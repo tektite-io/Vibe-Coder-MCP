@@ -69,6 +69,12 @@ export function validatePathSecurity(
   allowedDirectory: string
 ): PathValidationResult {
   try {
+    // Handle empty allowedDirectory - use process.cwd() as fallback
+    if (!allowedDirectory) {
+      logger.warn('Empty allowedDirectory provided, using current working directory as fallback');
+      allowedDirectory = process.cwd();
+    }
+
     // Normalize both paths
     const normalizedPath = normalizePath(inputPath);
     const normalizedAllowedDir = normalizePath(allowedDirectory);
@@ -106,15 +112,21 @@ export function createSecurePath(
   inputPath: string,
   allowedDirectory: string
 ): string {
+  // Handle empty allowedDirectory - use process.cwd() as fallback
+  if (!allowedDirectory) {
+    logger.warn('Empty allowedDirectory provided in createSecurePath, using current working directory as fallback');
+    allowedDirectory = process.cwd();
+  }
+
   const validationResult = validatePathSecurity(inputPath, allowedDirectory);
 
   if (!validationResult.isValid) {
-    logger.error({ 
-      inputPath, 
-      allowedDirectory, 
-      error: validationResult.error 
+    logger.error({
+      inputPath,
+      allowedDirectory,
+      error: validationResult.error
     }, 'Security violation: Attempted to access path outside allowed directory');
-    
+
     throw new Error(validationResult.error);
   }
 
@@ -136,6 +148,12 @@ export function resolveSecurePath(
     throw new Error('Path cannot be empty or undefined');
   }
 
+  // Handle empty allowedDirectory - use process.cwd() as fallback
+  if (!allowedDirectory) {
+    logger.warn('Empty allowedDirectory provided in resolveSecurePath, using current working directory as fallback');
+    allowedDirectory = process.cwd();
+  }
+
   // If the path is already absolute, validate it directly
   if (path.isAbsolute(relativePath)) {
     return createSecurePath(relativePath, allowedDirectory);
@@ -143,7 +161,7 @@ export function resolveSecurePath(
 
   // Resolve the relative path against the allowed directory
   const resolvedPath = path.resolve(allowedDirectory, relativePath);
-  
+
   // Validate the resolved path
   return createSecurePath(resolvedPath, allowedDirectory);
 }
@@ -158,9 +176,15 @@ export function getRelativePath(
   absolutePath: string,
   allowedDirectory: string
 ): string {
+  // Handle empty allowedDirectory - use process.cwd() as fallback
+  if (!allowedDirectory) {
+    logger.warn('Empty allowedDirectory provided in getRelativePath, using current working directory as fallback');
+    allowedDirectory = process.cwd();
+  }
+
   // Validate the path first
   const securePath = createSecurePath(absolutePath, allowedDirectory);
-  
+
   // Get the relative path
   return path.relative(allowedDirectory, securePath);
 }

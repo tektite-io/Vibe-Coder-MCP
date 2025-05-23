@@ -14,7 +14,8 @@ export default defineConfig({
       'src/__integration__/**/*.test.ts',
 
       // End-to-end tests
-      'e2e/**/*.test.ts'
+      'e2e/**/*.test.ts',
+      'test/e2e/**/*.test.ts'
     ],
     exclude: ['node_modules', 'build'],
     coverage: {

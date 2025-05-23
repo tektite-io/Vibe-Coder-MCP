@@ -7,7 +7,7 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 import logger from '../../logger.js';
-import { CodeMapGeneratorConfig, CacheConfig, ProcessingConfig, OutputConfig, FeatureFlagsConfig } from './types.js';
+import { CodeMapGeneratorConfig, CacheConfig, ProcessingConfig, OutputConfig, FeatureFlagsConfig, ImportResolverConfig, DebugConfig } from './types.js';
 import { getFeatureFlags } from './config/featureFlags.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
 
@@ -19,15 +19,28 @@ const DEFAULT_CONFIG: Partial<CodeMapGeneratorConfig> = {
     enabled: true,
     maxEntries: 10000,
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    useFileBasedAccess: true,
+    useFileHashes: true,
+    maxCachedFiles: 0, // Disable in-memory caching of file content
+    useMemoryCache: false, // Disable memory caching in tiered caches by default
+    memoryMaxEntries: 1000,
+    memoryMaxAge: 10 * 60 * 1000, // 10 minutes
+    memoryThreshold: 0.8, // 80% memory usage threshold
   },
   processing: {
     batchSize: 100,
     logMemoryUsage: false,
     maxMemoryUsage: 1024, // 1GB
+    incremental: true,
+    incrementalConfig: {
+      useFileHashes: true,
+      useFileMetadata: true,
+      saveProcessedFilesList: true
+    }
   },
   output: {
     format: 'markdown',
-    splitOutput: true,
+    splitOutput: false, // Make single file output the default
   },
   featureFlags: {
     enhancedFunctionDetection: true,
@@ -36,6 +49,33 @@ const DEFAULT_CONFIG: Partial<CodeMapGeneratorConfig> = {
     roleIdentification: true,
     heuristicNaming: true,
     memoryOptimization: true,
+  },
+  importResolver: {
+    enabled: false,
+    useCache: true,
+    cacheSize: 10000,
+    extensions: {
+      javascript: ['.js', '.json', '.node', '.mjs', '.cjs'],
+      typescript: ['.ts', '.tsx', '.js', '.jsx', '.json', '.node'],
+      python: ['.py', '.pyw', '.pyc', '.pyo', '.pyd'],
+      java: ['.java', '.class', '.jar'],
+      csharp: ['.cs', '.dll'],
+      go: ['.go'],
+      ruby: ['.rb', '.rake', '.gemspec'],
+      rust: ['.rs'],
+      php: ['.php']
+    },
+    generateImportGraph: false,
+    expandSecurityBoundary: true,
+    enhanceImports: false,
+    importMaxDepth: 3,
+    semgrepTimeout: 30,
+    semgrepMaxMemory: '1GB',
+    disableSemgrepFallback: false
+  },
+  debug: {
+    showDetailedImports: false,
+    generateASTDebugFiles: false
   }
 };
 
@@ -64,6 +104,8 @@ export async function validateCodeMapConfig(config: Partial<CodeMapGeneratorConf
     processing: validateProcessingConfig(config.processing),
     output: validateOutputConfig(config.output),
     featureFlags: validateFeatureFlagsConfig(config.featureFlags),
+    importResolver: validateImportResolverConfig(config.importResolver),
+    debug: validateDebugConfig(config.debug),
   };
 
   return validatedConfig;
@@ -124,6 +166,13 @@ export function validateCacheConfig(config?: Partial<CacheConfig>): CacheConfig 
     maxEntries: config.maxEntries || defaultCache.maxEntries,
     maxAge: config.maxAge || defaultCache.maxAge,
     cacheDir: config.cacheDir,
+    useFileBasedAccess: config.useFileBasedAccess !== undefined ? config.useFileBasedAccess : defaultCache.useFileBasedAccess,
+    useFileHashes: config.useFileHashes !== undefined ? config.useFileHashes : defaultCache.useFileHashes,
+    maxCachedFiles: config.maxCachedFiles !== undefined ? config.maxCachedFiles : defaultCache.maxCachedFiles,
+    useMemoryCache: config.useMemoryCache !== undefined ? config.useMemoryCache : defaultCache.useMemoryCache,
+    memoryMaxEntries: config.memoryMaxEntries || defaultCache.memoryMaxEntries,
+    memoryMaxAge: config.memoryMaxAge || defaultCache.memoryMaxAge,
+    memoryThreshold: config.memoryThreshold !== undefined ? config.memoryThreshold : defaultCache.memoryThreshold,
   };
 }
 
@@ -140,11 +189,34 @@ export function validateProcessingConfig(config?: Partial<ProcessingConfig>): Pr
   }
 
   // Start with defaults and override with provided values
-  return {
+  const validatedConfig: ProcessingConfig = {
     batchSize: config.batchSize || defaultProcessing.batchSize,
     logMemoryUsage: config.logMemoryUsage !== undefined ? config.logMemoryUsage : defaultProcessing.logMemoryUsage,
     maxMemoryUsage: config.maxMemoryUsage || defaultProcessing.maxMemoryUsage,
+    incremental: config.incremental !== undefined ? config.incremental : defaultProcessing.incremental,
+    periodicGC: config.periodicGC !== undefined ? config.periodicGC : defaultProcessing.periodicGC,
+    gcInterval: config.gcInterval || defaultProcessing.gcInterval,
   };
+
+  // Handle incremental config separately
+  if (config.incrementalConfig || defaultProcessing.incrementalConfig) {
+    validatedConfig.incrementalConfig = {
+      useFileHashes: config.incrementalConfig?.useFileHashes !== undefined
+        ? config.incrementalConfig.useFileHashes
+        : defaultProcessing.incrementalConfig?.useFileHashes,
+      useFileMetadata: config.incrementalConfig?.useFileMetadata !== undefined
+        ? config.incrementalConfig.useFileMetadata
+        : defaultProcessing.incrementalConfig?.useFileMetadata,
+      maxCachedHashes: config.incrementalConfig?.maxCachedHashes || defaultProcessing.incrementalConfig?.maxCachedHashes,
+      maxHashAge: config.incrementalConfig?.maxHashAge || defaultProcessing.incrementalConfig?.maxHashAge,
+      previousFilesListPath: config.incrementalConfig?.previousFilesListPath || defaultProcessing.incrementalConfig?.previousFilesListPath,
+      saveProcessedFilesList: config.incrementalConfig?.saveProcessedFilesList !== undefined
+        ? config.incrementalConfig.saveProcessedFilesList
+        : defaultProcessing.incrementalConfig?.saveProcessedFilesList,
+    };
+  }
+
+  return validatedConfig;
 }
 
 /**
@@ -194,6 +266,83 @@ export function validateFeatureFlagsConfig(config?: Partial<FeatureFlagsConfig>)
       config.heuristicNaming : defaultFeatureFlags.heuristicNaming,
     memoryOptimization: config.memoryOptimization !== undefined ?
       config.memoryOptimization : defaultFeatureFlags.memoryOptimization,
+  };
+}
+
+/**
+ * Validates the import resolver configuration.
+ * @param config The import resolver configuration to validate
+ * @returns The validated import resolver configuration with defaults applied
+ */
+export function validateImportResolverConfig(config?: Partial<ImportResolverConfig>): ImportResolverConfig {
+  const defaultImportResolver = DEFAULT_CONFIG.importResolver as ImportResolverConfig;
+
+  if (!config) {
+    return defaultImportResolver;
+  }
+
+  // Start with defaults and override with provided values
+  const validatedConfig: ImportResolverConfig = {
+    enabled: config.enabled !== undefined ? config.enabled : defaultImportResolver.enabled,
+    useCache: config.useCache !== undefined ? config.useCache : defaultImportResolver.useCache,
+    cacheSize: config.cacheSize || defaultImportResolver.cacheSize,
+    generateImportGraph: config.generateImportGraph !== undefined ?
+      config.generateImportGraph : defaultImportResolver.generateImportGraph,
+    expandSecurityBoundary: config.expandSecurityBoundary !== undefined ?
+      config.expandSecurityBoundary : defaultImportResolver.expandSecurityBoundary,
+    enhanceImports: config.enhanceImports !== undefined ?
+      config.enhanceImports : defaultImportResolver.enhanceImports,
+    importMaxDepth: config.importMaxDepth || defaultImportResolver.importMaxDepth,
+    tsConfig: config.tsConfig,
+    pythonPath: config.pythonPath,
+    pythonVersion: config.pythonVersion,
+    venvPath: config.venvPath,
+    clangdPath: config.clangdPath,
+    compileFlags: config.compileFlags,
+    includePaths: config.includePaths,
+    semgrepPatterns: config.semgrepPatterns,
+    semgrepTimeout: config.semgrepTimeout,
+    semgrepMaxMemory: config.semgrepMaxMemory,
+    disableSemgrepFallback: config.disableSemgrepFallback !== undefined ?
+      config.disableSemgrepFallback : false
+  };
+
+  // Handle extensions separately to allow merging
+  if (config.extensions) {
+    validatedConfig.extensions = {
+      ...defaultImportResolver.extensions,
+      ...config.extensions
+    };
+  } else {
+    validatedConfig.extensions = defaultImportResolver.extensions;
+  }
+
+  // Log security-related settings
+  if (validatedConfig.expandSecurityBoundary) {
+    logger.debug('Import resolver configured with expanded security boundary. This allows resolving imports outside the allowed mapping directory, but file content access is still restricted.');
+  }
+
+  return validatedConfig;
+}
+
+/**
+ * Validates the debug configuration.
+ * @param config The debug configuration to validate
+ * @returns The validated debug configuration with defaults applied
+ */
+export function validateDebugConfig(config?: Partial<DebugConfig>): DebugConfig {
+  const defaultDebug = DEFAULT_CONFIG.debug as DebugConfig;
+
+  if (!config) {
+    return defaultDebug;
+  }
+
+  // Start with defaults and override with provided values
+  return {
+    showDetailedImports: config.showDetailedImports !== undefined ?
+      config.showDetailedImports : defaultDebug.showDetailedImports,
+    generateASTDebugFiles: config.generateASTDebugFiles !== undefined ?
+      config.generateASTDebugFiles : defaultDebug.generateASTDebugFiles,
   };
 }
 

@@ -22,11 +22,35 @@
     "**/.git": true,
     "**/.DS_Store": true,
     "**/node_modules": true,
-    "**/build": false
+    "**/build": false,
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/dist": true,
+    "**/e2e": true,
+    "**/test": true,
+    "**/vibecoderoutput": true
   },
   "search.exclude": {
     "**/node_modules": true,
-    "**/build": true
+    "**/build": true,
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/dist": true,
+    "**/e2e": true,
+    "**/test": true,
+    "**/vibecoderoutput": true
+  },
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/node_modules/**": true,
+    "**/build/**": true,
+    "**/__pycache__/**": true,
+    "**/*.pyc": true,
+    "**/dist/**": true,
+    "**/e2e/**": true,
+    "**/test/**": true,
+    "**/vibecoderoutput/**": true
   },
   "testExplorer.useNativeTesting": true,
   "testExplorer.showCollapseButton": true,

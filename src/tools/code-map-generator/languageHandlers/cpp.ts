@@ -8,6 +8,10 @@ import { SyntaxNode } from '../parser.js';
 import { FunctionExtractionOptions } from '../types.js';
 import { getNodeText } from '../astAnalyzer.js';
 import logger from '../../../logger.js';
+import { ImportedItem, ImportInfo } from '../codeMapModel.js';
+import { ImportResolverFactory } from '../importResolvers/importResolverFactory.js';
+import * as path from 'path';
+import * as fs from 'fs';
 
 /**
  * Language handler for C/C++.
@@ -342,6 +346,91 @@ export class CppHandler extends BaseLanguageHandler {
   }
 
   /**
+   * Extracts imported items from an AST node.
+   */
+  protected extractImportedItems(node: SyntaxNode, sourceCode: string): ImportedItem[] | undefined {
+    try {
+      // Handle include directives (#include <iostream> or #include "myheader.h")
+      if (node.type === 'include_directive') {
+        const pathNode = node.childForFieldName('path');
+
+        if (pathNode) {
+          const path = getNodeText(pathNode, sourceCode);
+
+          // Determine if it's a system include (<>) or local include ("")
+          const isSystemInclude = path.startsWith('<') && path.endsWith('>');
+          const isLocalInclude = path.startsWith('"') && path.endsWith('"');
+
+          // Clean the path by removing the brackets or quotes
+          const cleanPath = isSystemInclude
+            ? path.substring(1, path.length - 1)
+            : isLocalInclude
+              ? path.substring(1, path.length - 1)
+              : path;
+
+          // Extract the header name (last part of the path)
+          const parts = cleanPath.split('/');
+          const headerName = parts[parts.length - 1];
+
+          return [{
+            name: headerName,
+            path: cleanPath,
+            isDefault: false,
+            isNamespace: false,
+            nodeText: node.text,
+            // Add C/C++-specific metadata
+            isSystemInclude,
+            isLocalInclude
+          }];
+        }
+      }
+      // Handle using declarations (using std::vector)
+      else if (node.type === 'using_declaration') {
+        const nameNode = node.childForFieldName('name');
+
+        if (nameNode) {
+          const fullPath = getNodeText(nameNode, sourceCode);
+          const parts = fullPath.split('::');
+          const name = parts[parts.length - 1];
+
+          return [{
+            name: name,
+            path: fullPath,
+            isDefault: false,
+            isNamespace: false,
+            nodeText: node.text,
+            // Add C++-specific metadata
+            namespaceParts: parts.slice(0, parts.length - 1)
+          }];
+        }
+      }
+      // Handle using directives (using namespace std)
+      else if (node.type === 'using_directive') {
+        const nameNode = node.childForFieldName('name');
+
+        if (nameNode) {
+          const namespaceName = getNodeText(nameNode, sourceCode);
+
+          return [{
+            name: namespaceName,
+            path: namespaceName,
+            isDefault: false,
+            isNamespace: true,
+            nodeText: node.text,
+            // Add C++-specific metadata
+            isUsingNamespace: true
+          }];
+        }
+      }
+
+      return undefined;
+    } catch (error) {
+      logger.warn({ err: error, nodeType: node.type }, 'Error extracting C/C++ imported items');
+      return undefined;
+    }
+  }
+
+  /**
    * Extracts the function comment from an AST node.
    */
   protected extractFunctionComment(node: SyntaxNode, sourceCode: string): string | undefined {
@@ -469,5 +558,161 @@ export class CppHandler extends BaseLanguageHandler {
       logger.warn({ err: error }, 'Error detecting C/C++ framework');
       return null;
     }
+  }
+
+  /**
+   * Enhances import information using Clangd.
+   * @param filePath Path to the file
+   * @param imports Original imports extracted by Tree-sitter
+   * @param options Options for import resolution
+   * @returns Enhanced import information
+   */
+  public async enhanceImportInfo(
+    filePath: string,
+    imports: ImportInfo[],
+    options: any
+  ): Promise<ImportInfo[]> {
+    try {
+      // Extract include paths from the source directory
+      const sourceDir = path.dirname(filePath);
+      const includePaths = [sourceDir];
+
+      // Add standard include paths based on detected framework
+      const sourceCode = await this.readFileContent(filePath);
+      const framework = this.detectFramework(sourceCode);
+
+      if (framework) {
+        switch (framework) {
+          case 'qt':
+            // Add Qt include paths if available
+            if (process.env.QTDIR) {
+              includePaths.push(path.join(process.env.QTDIR, 'include'));
+            }
+            break;
+          case 'boost':
+            // Add Boost include paths if available
+            if (process.env.BOOST_ROOT) {
+              includePaths.push(path.join(process.env.BOOST_ROOT, 'include'));
+            }
+            break;
+          case 'opengl':
+            // Add OpenGL include paths if available
+            if (process.env.OPENGL_INCLUDE) {
+              includePaths.push(process.env.OPENGL_INCLUDE);
+            }
+            break;
+        }
+      }
+
+      // Add system include paths
+      const systemIncludePaths = [
+        '/usr/include',
+        '/usr/local/include',
+        '/opt/homebrew/include'
+      ];
+
+      // Create import resolver factory
+      const factory = new ImportResolverFactory({
+        allowedDir: options.allowedDir,
+        outputDir: options.outputDir,
+        maxDepth: options.maxDepth || 3,
+        clangdPath: options.clangdPath,
+        compileFlags: ['-std=c++17'],
+        includePaths: [...includePaths, ...systemIncludePaths]
+      });
+
+      // Get resolver for C/C++
+      const resolver = factory.getImportResolver(filePath);
+      if (!resolver) {
+        return imports;
+      }
+
+      // Analyze imports with Clangd
+      const enhancedImports = await resolver.analyzeImports(filePath, {
+        clangdPath: options.clangdPath,
+        compileFlags: ['-std=c++17'],
+        includePaths: [...includePaths, ...systemIncludePaths],
+        maxDepth: options.maxDepth || 3
+      });
+
+      // Merge original and enhanced imports
+      return this.mergeImportInfo(imports, enhancedImports);
+    } catch (error) {
+      logger.error(
+        { err: error, filePath },
+        'Error enhancing import info for C/C++'
+      );
+      return imports;
+    }
+  }
+
+  /**
+   * Reads the content of a file.
+   */
+  private async readFileContent(filePath: string): Promise<string> {
+    try {
+      return await fs.promises.readFile(filePath, 'utf8');
+    } catch (error) {
+      logger.error({ err: error, filePath }, 'Error reading file content');
+      return '';
+    }
+  }
+
+  /**
+   * Merges original and enhanced import information.
+   * @param original Original imports extracted by Tree-sitter
+   * @param enhanced Enhanced imports from Clangd
+   * @returns Merged import information
+   */
+  protected mergeImportInfo(
+    original: ImportInfo[],
+    enhanced: ImportInfo[]
+  ): ImportInfo[] {
+    // If no enhanced imports, return original
+    if (!enhanced || enhanced.length === 0) {
+      return original;
+    }
+
+    // Create a map of original imports by path
+    const originalImportMap = new Map<string, ImportInfo>();
+    for (const imp of original) {
+      originalImportMap.set(imp.path, imp);
+    }
+
+    // Create a result array
+    const result: ImportInfo[] = [];
+
+    // Process enhanced imports
+    for (const enhancedImport of enhanced) {
+      const originalImport = originalImportMap.get(enhancedImport.path);
+
+      if (originalImport) {
+        // Merge with original import
+        result.push({
+          ...originalImport,
+          // Keep original imported items but add metadata from enhanced import
+          metadata: {
+            ...originalImport.metadata,
+            ...enhancedImport.metadata
+          },
+          // Use enhanced values for these properties
+          isCore: enhancedImport.isCore,
+          isExternalPackage: enhancedImport.isExternalPackage
+        });
+
+        // Remove from map to track processed imports
+        originalImportMap.delete(enhancedImport.path);
+      } else {
+        // Add new import discovered by Clangd
+        result.push(enhancedImport);
+      }
+    }
+
+    // Add any remaining original imports
+    for (const [_, remainingImport] of originalImportMap) {
+      result.push(remainingImport);
+    }
+
+    return result;
   }
 }

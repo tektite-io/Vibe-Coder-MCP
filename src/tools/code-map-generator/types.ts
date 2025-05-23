@@ -55,6 +55,19 @@ export interface LanguageHandler {
    * @returns The detected framework, if any.
    */
   detectFramework?(sourceCode: string): string | null;
+
+  /**
+   * Enhances import information using third-party resolvers.
+   * @param filePath Path to the file
+   * @param imports Original imports extracted by Tree-sitter
+   * @param options Options for import resolution
+   * @returns Enhanced import information
+   */
+  enhanceImportInfo?(
+    filePath: string,
+    imports: ImportInfo[],
+    options: any
+  ): Promise<ImportInfo[]>;
 }
 
 /**
@@ -263,6 +276,30 @@ export interface CacheConfig {
    * Default is 100.
    */
   maxCachedFiles?: number;
+
+  /**
+   * Whether to use memory caching in tiered caches.
+   * Default is false.
+   */
+  useMemoryCache?: boolean;
+
+  /**
+   * Maximum number of entries to keep in memory caches.
+   * Default is 1000.
+   */
+  memoryMaxEntries?: number;
+
+  /**
+   * Maximum age of memory cache entries in milliseconds.
+   * Default is 10 minutes.
+   */
+  memoryMaxAge?: number;
+
+  /**
+   * Memory usage threshold (percentage) at which to disable memory caching.
+   * Default is 0.8 (80%).
+   */
+  memoryThreshold?: number;
 
   /**
    * Whether to use file hashes for change detection.
@@ -540,4 +577,71 @@ export interface ImportResolverConfig {
    * Default is true.
    */
   expandSecurityBoundary?: boolean;
+
+  /**
+   * Whether to enhance imports with third-party resolvers.
+   * Default is false.
+   */
+  enhanceImports?: boolean;
+
+  /**
+   * Maximum depth for import resolution.
+   * Default is 3.
+   */
+  importMaxDepth?: number;
+
+  /**
+   * Path to tsconfig.json for TypeScript projects.
+   */
+  tsConfig?: string;
+
+  /**
+   * Path to Python executable for Python projects.
+   */
+  pythonPath?: string;
+
+  /**
+   * Python version for Python projects.
+   */
+  pythonVersion?: string;
+
+  /**
+   * Path to virtual environment for Python projects.
+   */
+  venvPath?: string;
+
+  /**
+   * Path to Clangd executable for C/C++ projects.
+   */
+  clangdPath?: string;
+
+  /**
+   * Compile flags for C/C++ projects.
+   */
+  compileFlags?: string[];
+
+  /**
+   * Include paths for C/C++ projects.
+   */
+  includePaths?: string[];
+
+  /**
+   * Custom Semgrep patterns for import detection.
+   */
+  semgrepPatterns?: string[];
+
+  /**
+   * Timeout for Semgrep analysis (in seconds).
+   */
+  semgrepTimeout?: number;
+
+  /**
+   * Maximum memory for Semgrep analysis.
+   */
+  semgrepMaxMemory?: string;
+
+  /**
+   * Whether to disable Semgrep fallback for unsupported file types.
+   */
+  disableSemgrepFallback?: boolean;
 }

@@ -5,6 +5,7 @@
 
 import resolve from 'resolve';
 import * as path from 'path';
+import * as fs from 'fs';
 import logger from '../../../logger.js';
 
 /**
@@ -101,40 +102,57 @@ export function resolveImport(
     const extensions = options.extensions || getDefaultExtensions(options.language);
 
     // Check if we need to use expanded boundary resolution
-    let resolvedPath: string;
+    let resolvedPath: string | null = null;
     try {
-      if (options.expandSecurityBoundary &&
-          (importPath.startsWith('./') || importPath.startsWith('../'))) {
-        // Try to resolve with expanded boundary
-        try {
-          // Use resolve.sync directly without security validation
-          resolvedPath = resolve.sync(importPath, {
-            basedir,
-            extensions,
-            preserveSymlinks: false
-          });
+      // Always try to resolve with expanded boundary first
+      try {
+        // Use resolve.sync directly without security validation
+        resolvedPath = resolve.sync(importPath, {
+          basedir,
+          extensions,
+          preserveSymlinks: false
+        });
 
-          logger.debug({
-            importPath,
-            resolvedPath,
-            securityExpanded: true
-          }, 'Resolved import path with expanded security boundary');
-        } catch (expandedError) {
-          logger.debug({ err: expandedError, importPath, basedir }, 'Error resolving import with expanded boundary');
-          // Fall back to standard resolution
+        logger.debug({
+          importPath,
+          resolvedPath,
+          securityExpanded: true
+        }, 'Resolved import path with expanded security boundary');
+      } catch (expandedError) {
+        logger.debug({ err: expandedError, importPath, basedir }, 'Error resolving import with expanded boundary');
+
+        // Try a more direct approach if the standard resolve fails
+        try {
+          // Try to resolve relative to the base directory
+          const potentialPath = path.resolve(basedir, importPath);
+
+          // Check if the file exists with any of the extensions
+          for (const ext of extensions) {
+            const fullPath = `${potentialPath}${ext}`;
+            if (fs.existsSync(fullPath)) {
+              resolvedPath = fullPath;
+              logger.debug({
+                importPath,
+                resolvedPath,
+                method: 'direct-fs'
+              }, 'Resolved import path with direct filesystem check');
+              break;
+            }
+          }
+
+          // If we still don't have a path, fall back to standard resolution
+          if (!resolvedPath) {
+            throw new Error('Could not resolve with direct filesystem check');
+          }
+        } catch (directError) {
+          // Fall back to standard resolution as a last resort
+          logger.debug({ err: directError, importPath, basedir }, 'Error resolving import with direct filesystem check');
           resolvedPath = resolve.sync(importPath, {
             basedir,
             extensions,
             preserveSymlinks: false
           });
         }
-      } else {
-        // Use standard resolution
-        resolvedPath = resolve.sync(importPath, {
-          basedir,
-          extensions,
-          preserveSymlinks: false
-        });
       }
 
       // If we have a project root, make the path relative to it
@@ -236,44 +254,64 @@ function resolveImportLegacy(
     const extensions = options.extensions || getDefaultExtensions(options.language);
 
     // Check if we need to use expanded boundary resolution
-    let resolvedPath: string;
-    if (options.expandSecurityBoundary &&
-        (importPath.startsWith('./') || importPath.startsWith('../'))) {
-      // Try to resolve with expanded boundary
-      try {
-        // Use resolve.sync directly without security validation
-        resolvedPath = resolve.sync(importPath, {
-          basedir,
-          extensions,
-          preserveSymlinks: false
-        });
+    let resolvedPath: string | null = null;
 
-        logger.debug({
-          importPath,
-          resolvedPath,
-          securityExpanded: true
-        }, 'Resolved import path with expanded security boundary');
-      } catch (expandedError) {
-        logger.debug({ err: expandedError, importPath, basedir }, 'Error resolving import with expanded boundary');
-        // Fall back to standard resolution
+    // Always try to resolve with expanded boundary first
+    try {
+      // Use resolve.sync directly without security validation
+      resolvedPath = resolve.sync(importPath, {
+        basedir,
+        extensions,
+        preserveSymlinks: false
+      });
+
+      logger.debug({
+        importPath,
+        resolvedPath,
+        securityExpanded: true
+      }, 'Resolved import path with expanded security boundary');
+    } catch (expandedError) {
+      logger.debug({ err: expandedError, importPath, basedir }, 'Error resolving import with expanded boundary');
+
+      // Try a more direct approach if the standard resolve fails
+      try {
+        // Try to resolve relative to the base directory
+        const potentialPath = path.resolve(basedir, importPath);
+
+        // Check if the file exists with any of the extensions
+        let found = false;
+        for (const ext of extensions) {
+          const fullPath = `${potentialPath}${ext}`;
+          if (fs.existsSync(fullPath)) {
+            resolvedPath = fullPath;
+            found = true;
+            logger.debug({
+              importPath,
+              resolvedPath,
+              method: 'direct-fs'
+            }, 'Resolved import path with direct filesystem check');
+            break;
+          }
+        }
+
+        // If we still don't have a path, fall back to standard resolution
+        if (!found) {
+          throw new Error('Could not resolve with direct filesystem check');
+        }
+      } catch (directError) {
+        // Fall back to standard resolution as a last resort
+        logger.debug({ err: directError, importPath, basedir }, 'Error resolving import with direct filesystem check');
         resolvedPath = resolve.sync(importPath, {
           basedir,
           extensions,
           preserveSymlinks: false
         });
       }
-    } else {
-      // Use standard resolution
-      resolvedPath = resolve.sync(importPath, {
-        basedir,
-        extensions,
-        preserveSymlinks: false
-      });
     }
 
     // If we have a project root, make the path relative to it
-    let finalPath = resolvedPath;
-    if (options.projectRoot) {
+    let finalPath: string = importPath; // Default to the original import path
+    if (resolvedPath && options.projectRoot) {
       // Check if the resolved path is within the project root
       if (resolvedPath.startsWith(options.projectRoot)) {
         // Make the path relative to the project root

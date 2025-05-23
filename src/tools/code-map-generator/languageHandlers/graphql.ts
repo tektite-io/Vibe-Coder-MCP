@@ -46,7 +46,9 @@ export class GraphQLHandler extends BaseLanguageHandler {
   protected getImportQueryPatterns(): string[] {
     return [
       'import_declaration',
-      'include_directive'
+      'include_directive',
+      'import_statement',
+      'call_expression'
     ];
   }
 
@@ -192,6 +194,24 @@ export class GraphQLHandler extends BaseLanguageHandler {
         const argumentNode = node.childForFieldName('argument');
         if (argumentNode) {
           return getNodeText(argumentNode, sourceCode);
+        }
+      }
+
+      // For actual imports in the file (not in GraphQL syntax), we need to extract them from the source code
+      // This is a special case for GraphQL files that are actually JavaScript/TypeScript files with GraphQL syntax
+      if (node.type === 'import_statement' || node.type === 'import_declaration') {
+        const source = node.childForFieldName('source');
+        if (source && source.text) {
+          return source.text.replace(/['"`]/g, '');
+        }
+      }
+
+      // For require statements
+      if (node.type === 'call_expression' && node.childForFieldName('function')?.text === 'require') {
+        const args = node.childForFieldName('arguments');
+        const firstArg = args?.firstChild;
+        if (firstArg && firstArg.text) {
+          return firstArg.text.replace(/['"`]/g, '');
         }
       }
 

@@ -43,13 +43,60 @@ export function generateMermaidClassDiagram(nodes: GraphNode[], edges: GraphEdge
       // Add properties (if any)
       (classInfo.properties || []).forEach(prop => {
         const propComment = sanitizeMermaidLabel(prop.comment || prop.name);
-        mermaidString += `    +${prop.type || 'any'} ${prop.name} : ${propComment}\n`;
+
+        // Format access modifier
+        let accessModifier = '+'; // Default to public
+        if (prop.accessModifier === 'private') {
+          accessModifier = '-';
+        } else if (prop.accessModifier === 'protected') {
+          accessModifier = '#';
+        } else if (prop.accessModifier === 'package-private') {
+          accessModifier = '~';
+        }
+
+        // Format property with type
+        let propertyStr = `${accessModifier}${prop.name}`;
+        if (prop.type) {
+          propertyStr += ` : ${prop.type}`;
+        }
+
+        // Add static indicator
+        if (prop.isStatic) {
+          propertyStr += '$';
+        }
+
+        mermaidString += `    ${propertyStr} : ${propComment}\n`;
       });
+
       // Add methods
       classInfo.methods.forEach(method => {
         const methodComment = sanitizeMermaidLabel(method.comment || method.name);
+
+        // Format access modifier
+        let accessModifier = '+'; // Default to public
+        if (method.accessModifier === 'private') {
+          accessModifier = '-';
+        } else if (method.accessModifier === 'protected') {
+          accessModifier = '#';
+        } else if (method.accessModifier === 'package-private') {
+          accessModifier = '~';
+        }
+
+        // Format method with parameters
         const signature = method.signature ? method.signature.substring(method.name.length) : '()';
-        mermaidString += `    +${method.name}(${signature}) : ${methodComment}\n`;
+        let methodStr = `${accessModifier}${method.name}${signature}`;
+
+        // Add return type if available
+        if (method.returnType) {
+          methodStr += ` : ${method.returnType}`;
+        }
+
+        // Add static indicator
+        if (method.isStatic) {
+          methodStr += '$';
+        }
+
+        mermaidString += `    ${methodStr} : ${methodComment}\n`;
       });
     }
     mermaidString += `  }\n`;

@@ -240,11 +240,11 @@ export class MemoryManager {
    * Default options for the MemoryManager.
    */
   private static readonly DEFAULT_OPTIONS: Required<MemoryManagerOptions> = {
-    maxMemoryPercentage: 0.5,
-    monitorInterval: 60000,
+    maxMemoryPercentage: 0.4, // Reduced from 0.5
+    monitorInterval: 30000, // Reduced from 60000
     autoManage: true,
-    pruneThreshold: 0.8,
-    prunePercentage: 0.2
+    pruneThreshold: 0.7, // Reduced from 0.8 to trigger pruning earlier
+    prunePercentage: 0.3 // Increased from 0.2 to prune more aggressively
   };
 
   /**
@@ -543,8 +543,8 @@ export class MemoryManager {
   public createASTCache(): MemoryCache<string, Tree> {
     const cache = new MemoryCache<string, Tree>({
       name: 'ast-cache',
-      maxEntries: 1000,
-      maxAge: 30 * 60 * 1000, // 30 minutes
+      maxEntries: 500, // Reduced from 1000
+      maxAge: 15 * 60 * 1000, // Reduced from 30 minutes to 15 minutes
       sizeCalculator: (tree) => {
         // Estimate the size of the tree based on the number of nodes
         // This is a rough estimate, but it's better than nothing
@@ -568,10 +568,10 @@ export class MemoryManager {
           }
         }
 
-        // Assume each node takes about 100 bytes
-        return nodeCount * 100;
+        // More conservative size estimate
+        return nodeCount * 200; // Increased from 100 bytes per node
       },
-      maxSize: 100 * 1024 * 1024, // 100 MB
+      maxSize: 50 * 1024 * 1024, // Reduced from 100 MB to 50 MB
       dispose: (_key, _tree) => {
         // No need to do anything special here
       }
@@ -588,13 +588,13 @@ export class MemoryManager {
   public createSourceCodeCache(): MemoryCache<string, string> {
     const cache = new MemoryCache<string, string>({
       name: 'source-code-cache',
-      maxEntries: 1000,
-      maxAge: 30 * 60 * 1000, // 30 minutes
+      maxEntries: 500, // Reduced from 1000
+      maxAge: 15 * 60 * 1000, // Reduced from 30 minutes to 15 minutes
       sizeCalculator: (sourceCode) => {
         // Use the length of the string as an estimate of its size
         return sourceCode.length;
       },
-      maxSize: 50 * 1024 * 1024, // 50 MB
+      maxSize: 30 * 1024 * 1024, // Reduced from 50 MB to 30 MB
       dispose: (_key, _sourceCode) => {
         // No need to do anything special here
       }

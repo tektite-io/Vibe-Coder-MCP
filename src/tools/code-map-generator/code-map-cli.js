@@ -1,12 +1,19 @@
 /**
  * Interactive CLI for the Code-Map Generator tool.
  * This script provides a simple command-line interface for using the map-codebase tool.
+ * 
+ * Usage:
+ * node code-map-cli.js
+ * 
+ * Then follow the interactive prompts to generate a code map.
+ * Example: "Map the src/services directory and ignore tests"
  */
 
 import fs from 'fs';
+import path from 'path';
 import readline from 'readline';
 // Import the codeMapExecutor directly from the compiled JavaScript file
-import { codeMapExecutor } from './build/tools/code-map-generator/index.js';
+import { codeMapExecutor } from '../../build/tools/code-map-generator/index.js';
 
 // Create readline interface for user input
 const rl = readline.createInterface({
@@ -87,7 +94,14 @@ async function runCodeMap(params) {
       console.log('\nSuccess! Generating code map...');
 
       // Save the result to a file
-      const outputFile = `code-map-${Date.now()}.md`;
+      const outputDir = path.join(process.cwd(), 'VibeCoderOutput', 'code-map-generator');
+      
+      // Create the output directory if it doesn't exist
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+      }
+      
+      const outputFile = path.join(outputDir, `code-map-${Date.now()}.md`);
       const fullContent = result.content.map(item => item.text || JSON.stringify(item)).join('\n');
       fs.writeFileSync(outputFile, fullContent);
       console.log(`Code map saved to: ${outputFile}`);

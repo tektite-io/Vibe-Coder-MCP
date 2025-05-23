@@ -289,6 +289,14 @@ export class LRUCache<K, V> {
   }
 
   /**
+   * Gets the maximum number of entries allowed in the cache.
+   * @returns The maximum number of entries
+   */
+  public getMaxEntries(): number {
+    return this.options.maxEntries;
+  }
+
+  /**
    * Gets cache statistics.
    * @returns The cache statistics
    */

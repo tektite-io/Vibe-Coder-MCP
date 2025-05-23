@@ -31,6 +31,15 @@ The `FileCache` class implements a file-based cache with:
 - Size-based eviction policies
 - Serialization and deserialization support
 
+### TieredCache
+
+The `TieredCache` class combines memory and file-based caching for optimal performance:
+
+- Two-level caching (memory for speed, file for persistence)
+- Automatic fallback to file cache when memory cache misses
+- Memory usage threshold-based caching decisions
+- Unified API for both caching layers
+
 ### GrammarManager
 
 The `GrammarManager` class manages Tree-sitter grammar loading with:
@@ -84,9 +93,13 @@ The memory management system can be configured through the Code-Map Generator co
 ```javascript
 const config = {
   cache: {
-    enabled: true,           // Enable caching
-    maxEntries: 1000,        // Maximum number of entries in the cache
-    maxAge: 60 * 60 * 1000,  // Maximum age of entries (1 hour)
+    enabled: true,                // Enable caching
+    maxEntries: 1000,             // Maximum number of entries in the cache
+    maxAge: 60 * 60 * 1000,       // Maximum age of entries (1 hour)
+    useMemoryCache: true,         // Enable tiered caching with memory layer
+    memoryMaxEntries: 500,        // Maximum number of entries in memory cache
+    memoryMaxAge: 10 * 60 * 1000, // Maximum age of memory entries (10 minutes)
+    memoryThreshold: 0.8,         // Memory usage threshold (80%)
   }
 };
 ```
@@ -114,6 +127,27 @@ Note that this doesn't force garbage collection, as that's not directly possible
 ### Cache Eviction
 
 Both `MemoryCache` and `FileCache` use LRU eviction policies. When a cache reaches its maximum size or entry count, the least recently used entries are evicted first.
+
+### Tiered Caching
+
+The `TieredCache` implements a two-level caching strategy:
+
+1. Memory cache for fast access to frequently used data
+2. File cache for persistence and larger storage capacity
+
+When retrieving data:
+
+- First checks the memory cache for the fastest access
+- If not found, falls back to the file cache
+- If found in the file cache, updates the memory cache for future access
+
+When storing data:
+
+- Stores in both memory and file caches
+- Memory cache provides fast access for subsequent requests
+- File cache ensures data persistence across application restarts
+
+The memory cache is automatically disabled when system memory usage exceeds the configured threshold.
 
 ### Grammar Loading
 

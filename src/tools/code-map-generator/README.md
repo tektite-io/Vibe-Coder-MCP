@@ -217,6 +217,142 @@ The Code-Map Generator includes an advanced function name detection system that 
 - **Comment Extraction**: Extraction of documentation comments (JSDoc, docstrings, etc.) for functions and classes.
 - **Heuristic Comments**: Generation of descriptive comments for functions and classes that lack documentation.
 
+## Enhanced Import Resolution
+
+The Code-Map Generator now includes enhanced import resolution capabilities using third-party libraries for more accurate and complete import information.
+
+### Key Features
+
+- **Third-Party Integration**: Integration with specialized libraries like Dependency-Cruiser for JavaScript/TypeScript import resolution.
+- **Absolute Path Resolution**: Resolution of relative imports to absolute file paths for better navigation and understanding.
+- **External Package Detection**: Identification of external package dependencies and their versions.
+- **Dynamic Import Detection**: Detection of dynamically imported modules.
+- **Module System Identification**: Identification of the module system used (CommonJS, ESM, etc.).
+
+### Configuration
+
+Enhanced import resolution can be enabled in the configuration:
+
+```javascript
+{
+  "tools": {
+    "vibe-coder-mcp": {
+      "config": {
+        "map-codebase": {
+          "importResolver": {
+            "enabled": true,
+            "enhanceImports": true,
+            "importMaxDepth": 3,
+            "tsConfig": "./tsconfig.json" // Optional, for TypeScript projects
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### Supported Languages
+
+The code-map-generator now supports enhanced import resolution across multiple programming languages using specialized adapters:
+
+- **JavaScript/TypeScript**: Uses Dependency-Cruiser to analyze imports, supporting ES modules, CommonJS, and TypeScript module systems.
+- **Python**: Uses a custom ExtendedPythonImportResolver to analyze imports, supporting standard Python imports, including relative and absolute imports, package imports, and local module imports.
+- **C/C++**: Uses Clangd to analyze includes, supporting system includes and local includes.
+- **Other Languages**: Uses Semgrep for pattern-based import detection in languages without dedicated adapters.
+
+The Semgrep adapter provides fallback support for languages without dedicated adapters, using pattern-based import detection for:
+
+- Ruby
+- Go
+- PHP
+- Java
+- And many more languages supported by Semgrep
+
+### Python-Specific Configuration
+
+For Python projects, you can configure the following options:
+
+```javascript
+{
+  "tools": {
+    "vibe-coder-mcp": {
+      "config": {
+        "map-codebase": {
+          "importResolver": {
+            "enabled": true,
+            "enhanceImports": true,
+            "pythonPath": "/usr/bin/python3", // Optional, path to Python executable
+            "pythonVersion": "3.9",           // Optional, Python version
+            "venvPath": "./venv"              // Optional, path to virtual environment
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+The ExtendedPythonImportResolver provides comprehensive Python import resolution without requiring Pyright, including:
+
+* Standard library module detection
+* Relative import resolution (e.g., from . import x)
+* Package import resolution with site-packages detection
+* Local module import resolution
+* Support for Python's import system conventions
+
+### C/C++-Specific Configuration
+
+For C/C++ projects, you can configure the following options:
+
+```javascript
+{
+  "tools": {
+    "vibe-coder-mcp": {
+      "config": {
+        "map-codebase": {
+          "importResolver": {
+            "enabled": true,
+            "enhanceImports": true,
+            "clangdPath": "/usr/bin/clangd",                // Optional, path to Clangd executable
+            "compileFlags": ["-std=c++17", "-Wall"],        // Optional, compile flags
+            "includePaths": ["/usr/include", "./include"]   // Optional, include paths
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### Semgrep-Specific Configuration
+
+For other languages using the Semgrep fallback, you can configure the following options:
+
+```javascript
+{
+  "tools": {
+    "vibe-coder-mcp": {
+      "config": {
+        "map-codebase": {
+          "importResolver": {
+            "enabled": true,
+            "enhanceImports": true,
+            "semgrepPatterns": [                            // Optional, custom Semgrep patterns
+              "ruby: require '$GEM'",
+              "go: import \"$PACKAGE\""
+            ],
+            "semgrepTimeout": 30,                           // Optional, timeout in seconds
+            "semgrepMaxMemory": "1GB",                      // Optional, maximum memory usage
+            "disableSemgrepFallback": false                 // Optional, disable Semgrep fallback
+          }
+        }
+      }
+    }
+  }
+}
+```
+
 ### Supported Languages
 
 The Enhanced Function Name Detection system supports all languages supported by the Code-Map Generator, with specialized handlers for:

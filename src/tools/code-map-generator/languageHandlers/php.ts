@@ -8,6 +8,7 @@ import { SyntaxNode } from '../parser.js';
 import { FunctionExtractionOptions } from '../types.js';
 import { getNodeText } from '../astAnalyzer.js';
 import logger from '../../../logger.js';
+import { ImportedItem } from '../codeMapModel.js';
 
 /**
  * Language handler for PHP.
@@ -260,6 +261,149 @@ export class PhpHandler extends BaseLanguageHandler {
     } catch (error) {
       logger.warn({ err: error, nodeType: node.type }, 'Error extracting PHP import path');
       return 'unknown';
+    }
+  }
+
+  /**
+   * Extracts imported items from an AST node.
+   */
+  protected extractImportedItems(node: SyntaxNode, sourceCode: string): ImportedItem[] | undefined {
+    try {
+      // Handle namespace use declarations (use statements)
+      if (node.type === 'namespace_use_declaration') {
+        const items: ImportedItem[] = [];
+        const clausesNode = node.childForFieldName('clauses');
+
+        if (clausesNode) {
+          // Get the type of import (class, function, const)
+          const importType = this.getUseDeclarationType(node, sourceCode);
+
+          // Process each clause in the use statement
+          for (let i = 0; i < clausesNode.childCount; i++) {
+            const clauseNode = clausesNode.child(i);
+            if (clauseNode && clauseNode.type === 'namespace_use_clause') {
+              const nameNode = clauseNode.childForFieldName('name');
+              const aliasNode = clauseNode.childForFieldName('alias');
+
+              if (nameNode) {
+                const fullPath = getNodeText(nameNode, sourceCode);
+                const parts = fullPath.split('\\');
+                const name = parts[parts.length - 1];
+                const alias = aliasNode ? getNodeText(aliasNode, sourceCode) : undefined;
+
+                // Check for group use declarations
+                const isGroupUse = node.childForFieldName('prefix') !== null;
+                let path = fullPath;
+
+                if (isGroupUse) {
+                  const prefixNode = node.childForFieldName('prefix');
+                  if (prefixNode) {
+                    const prefix = getNodeText(prefixNode, sourceCode);
+                    path = prefix + '\\' + fullPath;
+                  }
+                }
+
+                items.push({
+                  name: name,
+                  path: path,
+                  alias: alias,
+                  isDefault: false,
+                  isNamespace: false,
+                  nodeText: clauseNode.text,
+                  // Add PHP-specific metadata
+                  importType: importType
+                });
+              }
+            }
+          }
+        }
+
+        return items.length > 0 ? items : undefined;
+      }
+      // Handle individual namespace use clauses
+      else if (node.type === 'namespace_use_clause') {
+        const nameNode = node.childForFieldName('name');
+        const aliasNode = node.childForFieldName('alias');
+
+        if (nameNode) {
+          const fullPath = getNodeText(nameNode, sourceCode);
+          const parts = fullPath.split('\\');
+          const name = parts[parts.length - 1];
+          const alias = aliasNode ? getNodeText(aliasNode, sourceCode) : undefined;
+
+          // Check if this is part of a group use declaration
+          const isGroupUse = node.parent?.parent?.childForFieldName('prefix') !== null;
+          let path = fullPath;
+
+          if (isGroupUse) {
+            const prefixNode = node.parent?.parent?.childForFieldName('prefix');
+            if (prefixNode) {
+              const prefix = getNodeText(prefixNode, sourceCode);
+              path = prefix + '\\' + fullPath;
+            }
+          }
+
+          // Get the type of import from the parent declaration
+          const importType = this.getUseDeclarationType(node.parent?.parent, sourceCode);
+
+          return [{
+            name: name,
+            path: path,
+            alias: alias,
+            isDefault: false,
+            isNamespace: false,
+            nodeText: node.text,
+            // Add PHP-specific metadata
+            importType: importType
+          }];
+        }
+      }
+      // Handle require/include expressions
+      else if (node.type === 'require_expression' || node.type === 'include_expression') {
+        const argumentNode = node.childForFieldName('argument');
+
+        if (argumentNode) {
+          const path = getNodeText(argumentNode, sourceCode).replace(/^['"]|['"]$/g, '');
+          const parts = path.split('/');
+          const name = parts[parts.length - 1].replace('.php', '');
+
+          return [{
+            name: name,
+            path: path,
+            isDefault: false,
+            isNamespace: false,
+            nodeText: node.text,
+            // Add PHP-specific metadata
+            importType: node.type === 'require_expression' ? 'require' : 'include'
+          }];
+        }
+      }
+
+      return undefined;
+    } catch (error) {
+      logger.warn({ err: error, nodeType: node.type }, 'Error extracting PHP imported items');
+      return undefined;
+    }
+  }
+
+  /**
+   * Gets the type of a use declaration (class, function, const).
+   */
+  private getUseDeclarationType(node: SyntaxNode | null | undefined, sourceCode: string): string {
+    try {
+      if (!node) return 'class'; // Default to class import
+
+      const keywordNode = node.childForFieldName('kind');
+      if (keywordNode) {
+        const keyword = getNodeText(keywordNode, sourceCode);
+        if (keyword === 'function') return 'function';
+        if (keyword === 'const') return 'const';
+      }
+
+      return 'class'; // Default to class import
+    } catch (error) {
+      logger.warn({ err: error }, 'Error getting PHP use declaration type');
+      return 'class';
     }
   }
 

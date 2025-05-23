@@ -189,7 +189,7 @@ export function extractImports(rootNode: SyntaxNode, sourceCode: string, languag
 
     // Create options object
     const options: ImportExtractionOptions = {
-      resolveImportPaths: false,
+      resolveImportPaths: true,
       extractComments: true
     };
 

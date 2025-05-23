@@ -5,6 +5,7 @@ import { validatePathSecurity, createSecurePath, isPathWithin } from './pathUtil
 import { readDirSecure, statSecure } from './fsUtils.js';
 import { CodeMapGeneratorConfig } from './types.js';
 import { splitIntoBatches } from './batchProcessor.js';
+import { createIncrementalProcessor, IncrementalProcessor } from './incrementalProcessor.js';
 
 const MAX_SCAN_DEPTH = 25; // Define a maximum recursion depth
 
@@ -49,6 +50,13 @@ export async function collectSourceFiles(
 
   logger.debug(`Normalized root directory: ${securePath}`);
   logger.debug(`Looking for files with extensions: ${supportedExtensions.join(', ')}`);
+
+  // Initialize incremental processor if enabled
+  let incrementalProcessor: IncrementalProcessor | null = null;
+  if (config.processing?.incremental) {
+    incrementalProcessor = await createIncrementalProcessor(config);
+    logger.info(`Incremental processing ${incrementalProcessor ? 'enabled' : 'disabled'}`);
+  }
 
   const visitedSymlinks = new Set<string>(); // To prevent symlink loops
 
@@ -142,13 +150,27 @@ export async function collectSourceFiles(
 
   logger.info(`Collected ${collectedFiles.length} files from ${securePath}. Cleared ${symlinksCount} symlink entries.`);
 
+  // Filter files using incremental processor if enabled
+  let filesToProcess = collectedFiles;
+  if (incrementalProcessor && collectedFiles.length > 0) {
+    logger.info('Filtering files using incremental processor...');
+    filesToProcess = await incrementalProcessor.filterChangedFiles(collectedFiles);
+
+    // Update metadata for files that will be processed
+    for (const filePath of filesToProcess) {
+      await incrementalProcessor.updateFileMetadata(filePath);
+    }
+
+    logger.info(`Incremental processing: ${filesToProcess.length} of ${collectedFiles.length} files need processing`);
+  }
+
   // Return files in batches if requested
-  if (returnBatches && collectedFiles.length > 0) {
+  if (returnBatches && filesToProcess.length > 0) {
     const batchSize = config.processing?.batchSize || 100;
-    const batches = splitIntoBatches(collectedFiles, batchSize);
-    logger.info(`Split ${collectedFiles.length} files into ${batches.length} batches (batch size: ${batchSize})`);
+    const batches = splitIntoBatches(filesToProcess, batchSize);
+    logger.info(`Split ${filesToProcess.length} files into ${batches.length} batches (batch size: ${batchSize})`);
     return batches;
   }
 
-  return collectedFiles;
+  return filesToProcess;
 }

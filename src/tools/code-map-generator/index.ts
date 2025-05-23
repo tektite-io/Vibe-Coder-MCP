@@ -20,6 +20,8 @@ import {
   getSourceCodeFromCache,
   getMemoryManager
 } from './parser.js';
+import { takeMemorySample, generateMemoryUsageReport, clearMemoryUsageSamples } from './memoryMonitor.js';
+import { initializeImportResolver, disposeImportResolver } from './utils/importResolverInitializer.js';
 
 import { collectSourceFiles } from './fileScanner.js';
 import { FileInfo, CodeMap } from './codeMapModel.js';
@@ -29,9 +31,15 @@ import { generateMermaidFileDependencyDiagram, generateMermaidClassDiagram, gene
 import { formatCodeMapToMarkdown, optimizeMarkdownOutput } from './outputFormatter.js';
 import { CodeMapGeneratorConfig } from './types.js';
 import { extractCodeMapConfig } from './configValidator.js';
+import { getLanguageHandler } from './languageHandlers/registry.js';
 import { createDirectoryStructure } from './directoryUtils.js';
-import { processBatches } from './batchProcessor.js';
+import {
+  processBatches,
+  processBatchesWithMemoryCheck,
+  processLanguageBasedBatches
+} from './batchProcessor.js';
 import { generateMarkdownOutput } from './outputGenerator.js';
+import { createIncrementalProcessor, IncrementalProcessor } from './incrementalProcessor.js';
 
 // Cache for source code content, primarily for function call graph generation
 const sourceCodeCache = new Map<string, string>();
@@ -69,7 +77,7 @@ const codeMapInputSchemaShape = {
 };
 
 // Epic1-Task007: Define the asynchronous executor function stub for the tool.
-export const codeMapExecutor: ToolExecutor = async (params, _config, context) => {
+export const codeMapExecutor: ToolExecutor = async (params: Record<string, unknown>, _config: OpenRouterConfig, context?: ToolExecutionContext) => {
   console.time('CodeMapGenerator_Total'); // Profiling Start: Total
 
   // Get session ID from context
@@ -119,11 +127,24 @@ jobId: string
 const sessionId = context?.sessionId || 'unknown-session';
 console.time('CodeMapGenerator_Total'); // Profiling Start: Total
 
+// NEW: Clear memory samples at the start of execution
+clearMemoryUsageSamples();
+
+// NEW: Take initial memory sample
+takeMemorySample('Initial');
+
 try {
   try {
     // Send initial progress update
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Starting code map generation...');
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Starting code map generation...');
+
+    // Register job with process lifecycle manager
+    const { processLifecycleManager } = await import('./parser.js');
+    if (processLifecycleManager) {
+      processLifecycleManager.registerJob(jobId);
+      logger.debug(`Registered job ${jobId} with process lifecycle manager`);
+    }
 
     // Extract and validate configuration
     let config: CodeMapGeneratorConfig;
@@ -151,6 +172,15 @@ try {
 
     // Parse and validate the input parameters
     const validatedParams = z.object(codeMapInputSchemaShape).parse(params);
+
+    // Set output format in config
+    if (validatedParams.output_format) {
+      config.output = {
+        ...config.output,
+        format: validatedParams.output_format
+      };
+      logger.info(`Using output format: ${validatedParams.output_format}`);
+    }
 
     // Update job status
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Initializing directory structure...');
@@ -205,6 +235,21 @@ try {
     console.time('CodeMapGenerator_Initialization'); // Profiling Start: Initialization
     await initializeParser(); // This now includes grammar manager initialization with preloading
     logger.info('Parser and memory management initialized.');
+
+    // NEW: Take memory sample after initialization
+    takeMemorySample('After initialization');
+
+    // Initialize import resolver with expandSecurityBoundary set to true
+    initializeImportResolver({
+      ...config,
+      importResolver: {
+        ...config.importResolver,
+        enabled: true,
+        expandSecurityBoundary: true,
+        enhanceImports: true
+      }
+    });
+    logger.info('Import resolver initialized with expandSecurityBoundary enabled');
 
     // Log initial memory usage statistics
     const initialMemoryStats = getMemoryStats();
@@ -287,6 +332,9 @@ try {
 
     logger.info(`Found ${filePaths.length} source files to process.`);
 
+    // NEW: Take memory sample after file scanning
+    takeMemorySample('After file scanning');
+
     // Process files in batches using the new batch processor
     console.time('CodeMapGenerator_ParsingAndSymbolExtraction'); // Profiling Start: ParsingAndSymbolExtraction
 
@@ -316,7 +364,44 @@ try {
         const languageId = path.extname(filePath).toLowerCase();
         const functions = extractFunctions(tree.rootNode, sourceCode, languageId);
         const classes = extractClasses(tree.rootNode, sourceCode, languageId);
-        const imports = extractImports(tree.rootNode, sourceCode, languageId);
+        let imports = extractImports(tree.rootNode, sourceCode, languageId);
+
+        // Enhance imports with third-party resolvers if enabled
+        if (config.importResolver?.enhanceImports) {
+          try {
+            // Get the language handler
+            const handler = getLanguageHandler(languageId);
+
+            // Check if the handler supports enhancing imports
+            if (handler.enhanceImportInfo) {
+              // Enhance imports
+              imports = await handler.enhanceImportInfo(
+                filePath,
+                imports,
+                {
+                  allowedDir: config.allowedMappingDirectory,
+                  outputDir: config.output?.outputDir || path.join(process.env.VIBE_CODER_OUTPUT_DIR || '.', 'code-map-generator'),
+                  maxDepth: config.importResolver.importMaxDepth || 3,
+                  tsConfig: config.importResolver.tsConfig,
+                  pythonPath: config.importResolver.pythonPath,
+                  pythonVersion: config.importResolver.pythonVersion,
+                  venvPath: config.importResolver.venvPath,
+                  clangdPath: config.importResolver.clangdPath,
+                  compileFlags: config.importResolver.compileFlags,
+                  includePaths: config.importResolver.includePaths,
+                  semgrepPatterns: config.importResolver.semgrepPatterns,
+                  semgrepTimeout: config.importResolver.semgrepTimeout,
+                  semgrepMaxMemory: config.importResolver.semgrepMaxMemory,
+                  disableSemgrepFallback: config.importResolver.disableSemgrepFallback
+                }
+              );
+
+              logger.debug({ filePath, importsCount: imports.length }, 'Enhanced imports with third-party resolver');
+            }
+          } catch (error) {
+            logger.error({ err: error, filePath }, 'Error enhancing imports with third-party resolver');
+          }
+        }
 
         let fileLevelComment: string | undefined;
         const firstChildNode = tree.rootNode.firstChild;
@@ -347,16 +432,120 @@ try {
       }
     };
 
-    // Process files in batches
-    const allFileInfos = await processBatches(
-      filePaths as string[],
-      processFile,
+    // Create file objects with path and extension
+  interface FileObject {
+    path: string;
+    extension: string;
+  }
+
+  const fileObjects: FileObject[] = filePaths.map(filePath => {
+    // Ensure filePath is a string
+    const pathStr = Array.isArray(filePath) ? filePath[0] : filePath;
+    return {
+      path: pathStr,
+      extension: path.extname(pathStr).toLowerCase()
+    };
+  });
+
+    // Process files in language-based batches
+    const allFileInfos = await processLanguageBasedBatches(
+      fileObjects,
+      async (fileObj) => processFile(fileObj.path),
       config,
       jobId,
       sessionId,
       'Parsing files',
       30,
-      60
+      50
+    );
+
+    // Define cleanup function for import resolution
+    const cleanupImportResolution = async () => {
+      // Clear source code cache
+      sourceCodeCache.clear();
+
+      // Run garbage collection
+      if (global.gc) {
+        global.gc();
+      }
+
+      // Log memory usage
+      const memStats = getMemoryStats();
+      logger.info({ memoryUsage: memStats.formatted }, 'Memory usage after import resolution cleanup');
+    };
+
+    // Process imports in batches with memory checks
+    jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Enhancing imports...');
+    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Enhancing imports...', 50);
+
+    // Define the import enhancement function
+    const enhanceImports = async (fileInfo: FileInfo): Promise<FileInfo> => {
+      try {
+        if (config.importResolver?.enhanceImports) {
+          const languageId = path.extname(fileInfo.filePath).toLowerCase();
+          const handler = getLanguageHandler(languageId);
+
+          if (handler.enhanceImportInfo) {
+            const enhancedImports = await handler.enhanceImportInfo(
+              fileInfo.filePath,
+              fileInfo.imports,
+              {
+                allowedDir: config.allowedMappingDirectory,
+                outputDir: config.output?.outputDir || path.join(process.env.VIBE_CODER_OUTPUT_DIR || '.', 'code-map-generator'),
+                maxDepth: config.importResolver.importMaxDepth || 3,
+                tsConfig: config.importResolver.tsConfig,
+                pythonPath: config.importResolver.pythonPath,
+                pythonVersion: config.importResolver.pythonVersion,
+                venvPath: config.importResolver.venvPath,
+                clangdPath: config.importResolver.clangdPath,
+                compileFlags: config.importResolver.compileFlags,
+                includePaths: config.importResolver.includePaths,
+                semgrepPatterns: config.importResolver.semgrepPatterns,
+                semgrepTimeout: config.importResolver.semgrepTimeout,
+                semgrepMaxMemory: config.importResolver.semgrepMaxMemory,
+                disableSemgrepFallback: config.importResolver.disableSemgrepFallback
+              }
+            );
+
+            // Create a new FileInfo object with the enhanced imports
+            logger.debug({ filePath: fileInfo.filePath, importsCount: enhancedImports.length }, 'Enhanced imports with third-party resolver');
+
+            return {
+              ...fileInfo,
+              imports: enhancedImports
+            };
+          }
+        }
+        return fileInfo;
+      } catch (error) {
+        logger.error({ err: error, filePath: fileInfo.filePath }, 'Error enhancing imports');
+        return fileInfo;
+      }
+    };
+
+    // Create file objects with path and extension for import resolution
+    interface FileInfoObject {
+      path: string;
+      extension: string;
+      fileInfo: FileInfo;
+    }
+
+    const fileInfoObjects: FileInfoObject[] = allFileInfos.map(fileInfo => ({
+      path: fileInfo.filePath,
+      extension: path.extname(fileInfo.filePath).toLowerCase(),
+      fileInfo
+    }));
+
+    // Process files in language-based batches for import resolution
+    const fileInfosWithEnhancedImports = await processLanguageBasedBatches(
+      fileInfoObjects,
+      async (fileObj) => enhanceImports(fileObj.fileInfo),
+      config,
+      jobId,
+      sessionId,
+      'Enhancing imports',
+      50,
+      70
     );
 
     console.timeEnd('CodeMapGenerator_ParsingAndSymbolExtraction'); // Profiling End: ParsingAndSymbolExtraction
@@ -365,27 +554,30 @@ try {
     const postParsingMemoryStats = getMemoryStats();
     logger.info({ postParsingMemoryStats }, 'Memory usage after parsing and symbol extraction');
 
+    // NEW: Take memory sample after processing
+    takeMemorySample('After processing');
+
     // Sort files by relative path
-    allFileInfos.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
+    fileInfosWithEnhancedImports.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
 
     // Update job status for graph building
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Building dependency graphs...');
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Building dependency graphs...', 60);
 
     // Construct CodeMap object for the formatter
-    const codeMapData: CodeMap = { projectPath: projectRoot, files: allFileInfos };
+    const codeMapData: CodeMap = { projectPath: projectRoot, files: fileInfosWithEnhancedImports };
 
     console.time('CodeMapGenerator_GraphBuilding'); // Profiling Start: GraphBuilding
 
     // Build graphs with intermediate storage
-    const fileDepGraph = await buildFileDependencyGraph(allFileInfos, config, jobId);
-    const classInheritanceGraph = await buildClassInheritanceGraph(allFileInfos, config, jobId);
+    const fileDepGraph = await buildFileDependencyGraph(fileInfosWithEnhancedImports, config, jobId);
+    const classInheritanceGraph = await buildClassInheritanceGraph(fileInfosWithEnhancedImports, config, jobId);
 
     // Create a temporary Map for sourceCodeCache to maintain compatibility
     const tempSourceCodeCache = new Map<string, string>();
 
     // Populate the temporary Map with source code from files
-    for (const fileInfo of allFileInfos) {
+    for (const fileInfo of fileInfosWithEnhancedImports) {
       try {
         // First try to get source code from cache
         const cachedSourceCode = await getSourceCodeFromCache(fileInfo.filePath);
@@ -403,7 +595,7 @@ try {
       }
     }
 
-    const functionCallGraph = await buildFunctionCallGraph(allFileInfos, tempSourceCodeCache, config, jobId);
+    const functionCallGraph = await buildFunctionCallGraph(fileInfosWithEnhancedImports, tempSourceCodeCache, config, jobId);
 
     const fileDepNodes = fileDepGraph.nodes;
     const fileDepEdges = fileDepGraph.edges;
@@ -417,6 +609,9 @@ try {
     // Log memory usage after graph building
     const postGraphBuildingMemoryStats = getMemoryStats();
     logger.info({ postGraphBuildingMemoryStats }, 'Memory usage after graph building');
+
+    // NEW: Take memory sample after graph building
+    takeMemorySample('After graph building');
 
     // Update job status for diagram generation
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating diagrams...');
@@ -435,7 +630,7 @@ try {
     const classDiagramMd = generateMermaidClassDiagram(
         classInheritanceNodes,
         classInheritanceEdges,
-        allFileInfos.flatMap(fi => fi.classes) // Pass all ClassInfo objects
+        fileInfosWithEnhancedImports.flatMap(fi => fi.classes) // Pass all ClassInfo objects
     );
 
     // Generate function call diagram
@@ -464,7 +659,7 @@ try {
 
     // Generate output using the new output generator
     const outputPath = await generateMarkdownOutput(
-      allFileInfos,
+      fileInfosWithEnhancedImports,
       fileDepGraph,
       classInheritanceGraph,
       functionCallGraph,
@@ -478,6 +673,13 @@ try {
     const postOutputGenerationMemoryStats = getMemoryStats();
     logger.info({ postOutputGenerationMemoryStats }, 'Memory usage after output generation');
 
+    // NEW: Take memory sample after output generation
+    takeMemorySample('After output generation');
+
+    // NEW: Generate and log memory usage report
+    const memoryReport = generateMemoryUsageReport();
+    logger.info(memoryReport);
+
     // For backward compatibility, also generate the old-style output
     console.time('CodeMapGenerator_OutputFormatting'); // Profiling Start: OutputFormatting
 
@@ -485,11 +687,11 @@ try {
     const textualCodeMapMd = formatCodeMapToMarkdown(codeMapData, projectRoot);
 
     // Assemble final Markdown output
-    const successfullyProcessedCount = allFileInfos.filter(fi => !(fi.comment && fi.comment.startsWith("Error processing file"))).length;
-    const filesWithErrorsCount = allFileInfos.length - successfullyProcessedCount;
+    const successfullyProcessedCount = fileInfosWithEnhancedImports.filter(fi => !(fi.comment && fi.comment.startsWith("Error processing file"))).length;
+    const filesWithErrorsCount = fileInfosWithEnhancedImports.length - successfullyProcessedCount;
 
     let finalMarkdownOutput = `## Codebase Overview for ${path.basename(projectRoot)}\n\n`;
-    finalMarkdownOutput += `**Summary:** Processed ${allFileInfos.length} files. Successfully analyzed: ${successfullyProcessedCount}. Files with errors/skipped: ${filesWithErrorsCount}.\n\n`;
+    finalMarkdownOutput += `**Summary:** Processed ${fileInfosWithEnhancedImports.length} files. Successfully analyzed: ${successfullyProcessedCount}. Files with errors/skipped: ${filesWithErrorsCount}.\n\n`;
     finalMarkdownOutput += `**Output saved to:** ${outputPath}\n\n`;
 
     if (fileDepEdges.length > 0 || fileDepNodes.length > 0) {
@@ -562,9 +764,19 @@ try {
 
   // Clean up resources
   try {
+    // Unregister job from process lifecycle manager
+    const { processLifecycleManager } = await import('./parser.js');
+    if (processLifecycleManager) {
+      await processLifecycleManager.unregisterJob(jobId);
+      logger.debug(`Unregistered job ${jobId} from process lifecycle manager`);
+    }
+
     // Log memory usage statistics
     const memoryStats = getMemoryStats();
     logger.info({ memoryStats }, 'Memory usage statistics');
+
+    // NEW: Take final memory sample
+    takeMemorySample('Final');
 
     // Get memory manager for additional cleanup if needed
     const memManager = getMemoryManager();
@@ -573,9 +785,38 @@ try {
       // Additional cleanup can be performed here if needed
     }
 
+    // Dispose import resolvers
+    try {
+      disposeImportResolver();
+      logger.debug('Disposed import resolvers');
+    } catch (importResolverError) {
+      logger.warn(`Error disposing import resolvers: ${importResolverError instanceof Error ? importResolverError.message : String(importResolverError)}`);
+    }
+
     // Close all caches
     await clearCaches();
     logger.debug('Closed all file-based caches');
+
+    // Close incremental processor if it was created
+    try {
+      // Extract the validated config
+      const validatedConfig = await extractCodeMapConfig(_config);
+      if (validatedConfig?.processing?.incremental) {
+        const incrementalProcessor = await createIncrementalProcessor(validatedConfig);
+        if (incrementalProcessor) {
+          await incrementalProcessor.close();
+          logger.debug('Closed incremental processor');
+        }
+      }
+    } catch (incrementalError) {
+      logger.warn(`Error closing incremental processor: ${incrementalError instanceof Error ? incrementalError.message : String(incrementalError)}`);
+    }
+
+    // Force garbage collection if available
+    if (global.gc) {
+      global.gc();
+      logger.debug('Forced garbage collection');
+    }
   } catch (error) {
     logger.warn(`Error closing caches: ${error instanceof Error ? error.message : String(error)}`);
   }

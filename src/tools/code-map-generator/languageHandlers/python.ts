@@ -8,7 +8,9 @@ import { SyntaxNode } from '../parser.js';
 import { FunctionExtractionOptions } from '../types.js';
 import { getNodeText } from '../astAnalyzer.js';
 import logger from '../../../logger.js';
-import { ImportedItem } from '../codeMapModel.js';
+import { ImportedItem, ImportInfo } from '../codeMapModel.js';
+import { ImportResolverFactory } from '../importResolvers/importResolverFactory.js';
+import * as path from 'path';
 
 /**
  * Language handler for Python.
@@ -359,6 +361,307 @@ export class PythonHandler extends BaseLanguageHandler {
   }
 
   /**
+   * Extracts properties from a Python class.
+   *
+   * @param node The class node to extract properties from
+   * @param sourceCode The source code containing the class
+   * @returns An array of class property information
+   */
+  protected extractClassProperties(node: SyntaxNode, sourceCode: string): Array<{
+    name: string;
+    type?: string;
+    comment?: string;
+    startLine: number;
+    endLine: number;
+    accessModifier?: string;
+    isStatic?: boolean;
+  }> {
+    const properties: Array<{
+      name: string;
+      type?: string;
+      comment?: string;
+      startLine: number;
+      endLine: number;
+      accessModifier?: string;
+      isStatic?: boolean;
+    }> = [];
+
+    try {
+      // Find the class body
+      const classBody = node.childForFieldName('body');
+      if (!classBody) return properties;
+
+      // In Python, properties are often defined in two ways:
+      // 1. As class variables directly in the class body
+      // 2. As instance variables in the __init__ method
+
+      // First, find class variables (static properties)
+      classBody.children.forEach(childNode => {
+        if (childNode.type === 'expression_statement' &&
+            childNode.firstChild?.type === 'assignment') {
+
+          const assignment = childNode.firstChild;
+          const leftNode = assignment.childForFieldName('left');
+
+          if (leftNode && leftNode.type === 'identifier') {
+            const name = getNodeText(leftNode, sourceCode);
+
+            // Skip if it's a dunder name (like __doc__, __module__, etc.)
+            if (name.startsWith('__') && name.endsWith('__')) {
+              return;
+            }
+
+            // Extract comment
+            const comment = this.extractPropertyComment(childNode, sourceCode);
+
+            // Extract type annotation if available
+            let type: string | undefined;
+            const annotationNode = leftNode.nextSibling;
+            if (annotationNode && annotationNode.type === 'type') {
+              type = getNodeText(annotationNode, sourceCode);
+            }
+
+            // Determine access modifier based on naming convention
+            let accessModifier: string | undefined;
+            if (name.startsWith('__')) {
+              accessModifier = 'private';
+            } else if (name.startsWith('_')) {
+              accessModifier = 'protected';
+            } else {
+              accessModifier = 'public';
+            }
+
+            properties.push({
+              name,
+              type,
+              accessModifier,
+              isStatic: true, // Class variables are static
+              comment,
+              startLine: childNode.startPosition.row + 1,
+              endLine: childNode.endPosition.row + 1
+            });
+          }
+        }
+      });
+
+      // Second, find instance variables in __init__ method
+      const initMethod = this.findInitMethod(classBody);
+      if (initMethod) {
+        const methodBody = initMethod.childForFieldName('body');
+        if (methodBody) {
+          // Look for self.property = value assignments
+          methodBody.descendantsOfType('assignment').forEach(assignment => {
+            const leftNode = assignment.childForFieldName('left');
+            if (leftNode && leftNode.type === 'attribute' && leftNode.text.startsWith('self.')) {
+              const propertyName = leftNode.text.substring(5); // Remove 'self.'
+
+              // Skip if we already found this property
+              if (properties.some(p => p.name === propertyName)) {
+                return;
+              }
+
+              // Extract comment
+              const comment = this.extractPropertyComment(assignment.parent || assignment, sourceCode);
+
+              // Determine access modifier based on naming convention
+              let accessModifier: string | undefined;
+              if (propertyName.startsWith('__')) {
+                accessModifier = 'private';
+              } else if (propertyName.startsWith('_')) {
+                accessModifier = 'protected';
+              } else {
+                accessModifier = 'public';
+              }
+
+              properties.push({
+                name: propertyName,
+                accessModifier,
+                isStatic: false, // Instance variables are not static
+                comment,
+                startLine: assignment.startPosition.row + 1,
+                endLine: assignment.endPosition.row + 1
+              });
+            }
+          });
+
+          // Also look for type annotations in parameters
+          const parameters = initMethod.childForFieldName('parameters');
+          if (parameters) {
+            parameters.descendantsOfType('typed_parameter').forEach(param => {
+              const nameNode = param.childForFieldName('name');
+              const typeNode = param.childForFieldName('type');
+
+              if (nameNode && typeNode && nameNode.text !== 'self') {
+                const name = getNodeText(nameNode, sourceCode);
+                const type = getNodeText(typeNode, sourceCode);
+
+                // Check if this parameter is assigned to self in the method body
+                const selfAssignment = methodBody.descendantsOfType('assignment').find(assignment => {
+                  const leftNode = assignment.childForFieldName('left');
+                  const rightNode = assignment.childForFieldName('right');
+                  return leftNode?.text === `self.${name}` && rightNode?.text === name;
+                });
+
+                if (selfAssignment) {
+                  // Skip if we already found this property
+                  if (properties.some(p => p.name === name)) {
+                    return;
+                  }
+
+                  // Determine access modifier based on naming convention
+                  let accessModifier: string | undefined;
+                  if (name.startsWith('__')) {
+                    accessModifier = 'private';
+                  } else if (name.startsWith('_')) {
+                    accessModifier = 'protected';
+                  } else {
+                    accessModifier = 'public';
+                  }
+
+                  properties.push({
+                    name,
+                    type,
+                    accessModifier,
+                    isStatic: false,
+                    startLine: selfAssignment.startPosition.row + 1,
+                    endLine: selfAssignment.endPosition.row + 1
+                  });
+                }
+              }
+            });
+          }
+        }
+      }
+
+      // Third, look for properties defined using property decorators
+      classBody.descendantsOfType('decorated_definition').forEach(decorated => {
+        const decoratorList = decorated.childForFieldName('decorator_list');
+        const functionDef = decorated.childForFieldName('definition');
+
+        if (decoratorList && functionDef && functionDef.type === 'function_definition') {
+          const hasPropertyDecorator = decoratorList.children.some(decorator =>
+            decorator.type === 'decorator' && decorator.text.includes('@property'));
+
+          if (hasPropertyDecorator) {
+            const nameNode = functionDef.childForFieldName('name');
+            if (nameNode) {
+              const name = getNodeText(nameNode, sourceCode);
+
+              // Skip if we already found this property
+              if (properties.some(p => p.name === name)) {
+                return;
+              }
+
+              // Extract comment
+              const comment = this.extractFunctionComment(functionDef, sourceCode);
+
+              // Determine access modifier based on naming convention
+              let accessModifier: string | undefined;
+              if (name.startsWith('__')) {
+                accessModifier = 'private';
+              } else if (name.startsWith('_')) {
+                accessModifier = 'protected';
+              } else {
+                accessModifier = 'public';
+              }
+
+              // Extract return type annotation if available
+              let type: string | undefined;
+              const returnTypeNode = functionDef.childForFieldName('return_type');
+              if (returnTypeNode) {
+                type = getNodeText(returnTypeNode, sourceCode);
+              }
+
+              properties.push({
+                name,
+                type,
+                accessModifier,
+                isStatic: false,
+                comment,
+                startLine: decorated.startPosition.row + 1,
+                endLine: decorated.endPosition.row + 1
+              });
+            }
+          }
+        }
+      });
+
+      return properties;
+    } catch (error) {
+      logger.warn({ err: error, nodeType: node.type }, 'Error extracting Python class properties');
+      return properties;
+    }
+  }
+
+  /**
+   * Extracts a comment for a property.
+   *
+   * @param node The property node
+   * @param sourceCode The source code
+   * @returns The extracted comment or undefined
+   */
+  private extractPropertyComment(node: SyntaxNode, sourceCode: string): string | undefined {
+    try {
+      // Check for comments before the node
+      const startPosition = node.startPosition;
+      const lineStart = sourceCode.lastIndexOf('\n', node.startIndex) + 1;
+      const textBeforeNode = sourceCode.substring(0, lineStart).trim();
+
+      // Look for single-line comments
+      const lines = textBeforeNode.split('\n');
+      const commentLines = [];
+
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        if (line.startsWith('#')) {
+          commentLines.unshift(line.substring(1).trim());
+        } else if (line === '') {
+          // Skip empty lines
+          continue;
+        } else {
+          // Stop at non-comment, non-empty line
+          break;
+        }
+      }
+
+      if (commentLines.length > 0) {
+        return commentLines.join(' ');
+      }
+
+      return undefined;
+    } catch (error) {
+      logger.warn({ err: error, nodeType: node.type }, 'Error extracting Python property comment');
+      return undefined;
+    }
+  }
+
+  /**
+   * Finds the __init__ method in a class body.
+   *
+   * @param classBody The class body node
+   * @returns The __init__ method node or undefined
+   */
+  private findInitMethod(classBody: SyntaxNode): SyntaxNode | undefined {
+    for (const child of classBody.children) {
+      if (child.type === 'function_definition') {
+        const nameNode = child.childForFieldName('name');
+        if (nameNode && getNodeText(nameNode, '') === '__init__') {
+          return child;
+        }
+      } else if (child.type === 'decorated_definition') {
+        const functionDef = child.childForFieldName('definition');
+        if (functionDef && functionDef.type === 'function_definition') {
+          const nameNode = functionDef.childForFieldName('name');
+          if (nameNode && getNodeText(nameNode, '') === '__init__') {
+            return functionDef;
+          }
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * Parses a docstring into a clean comment.
    */
   private parseDocstring(docstring: string): string {
@@ -461,5 +764,111 @@ export class PythonHandler extends BaseLanguageHandler {
       logger.warn({ err: error }, 'Error detecting Python framework');
       return null;
     }
+  }
+
+  /**
+   * Enhances import information using Pyright.
+   * @param filePath Path to the file
+   * @param imports Original imports extracted by Tree-sitter
+   * @param options Options for import resolution
+   * @returns Enhanced import information
+   */
+  public async enhanceImportInfo(
+    filePath: string,
+    imports: ImportInfo[],
+    options: any
+  ): Promise<ImportInfo[]> {
+    try {
+      // Create import resolver factory
+      const factory = new ImportResolverFactory({
+        allowedDir: options.allowedDir,
+        outputDir: options.outputDir,
+        maxDepth: options.maxDepth || 3,
+        pythonPath: options.pythonPath,
+        pythonVersion: options.pythonVersion,
+        venvPath: options.venvPath
+      });
+
+      // Get resolver for Python
+      const resolver = factory.getImportResolver(filePath);
+      if (!resolver) {
+        return imports;
+      }
+
+      // Analyze imports with Pyright
+      const enhancedImports = await resolver.analyzeImports(filePath, {
+        pythonPath: options.pythonPath,
+        pythonVersion: options.pythonVersion,
+        venvPath: options.venvPath,
+        maxDepth: options.maxDepth || 3
+      });
+
+      // Merge original and enhanced imports
+      return this.mergeImportInfo(imports, enhancedImports);
+    } catch (error) {
+      logger.error(
+        { err: error, filePath },
+        'Error enhancing import info for Python'
+      );
+      return imports;
+    }
+  }
+
+  /**
+   * Merges original and enhanced import information.
+   * @param original Original imports extracted by Tree-sitter
+   * @param enhanced Enhanced imports from Pyright
+   * @returns Merged import information
+   */
+  protected mergeImportInfo(
+    original: ImportInfo[],
+    enhanced: ImportInfo[]
+  ): ImportInfo[] {
+    // If no enhanced imports, return original
+    if (!enhanced || enhanced.length === 0) {
+      return original;
+    }
+
+    // Create a map of original imports by path
+    const originalImportMap = new Map<string, ImportInfo>();
+    for (const imp of original) {
+      originalImportMap.set(imp.path, imp);
+    }
+
+    // Create a result array
+    const result: ImportInfo[] = [];
+
+    // Process enhanced imports
+    for (const enhancedImport of enhanced) {
+      const originalImport = originalImportMap.get(enhancedImport.path);
+
+      if (originalImport) {
+        // Merge with original import
+        result.push({
+          ...originalImport,
+          // Keep original imported items but add metadata from enhanced import
+          metadata: {
+            ...originalImport.metadata,
+            ...enhancedImport.metadata
+          },
+          // Use enhanced values for these properties
+          isCore: enhancedImport.isCore,
+          isExternalPackage: enhancedImport.isExternalPackage
+        });
+
+        // Remove from map to track processed imports
+        originalImportMap.delete(enhancedImport.path);
+      } else {
+        // Add new import discovered by Pyright
+        result.push(enhancedImport);
+      }
+    }
+
+    // Add any remaining original imports
+    for (const [_, remainingImport] of originalImportMap) {
+      result.push(remainingImport);
+    }
+
+    return result;
   }
 }

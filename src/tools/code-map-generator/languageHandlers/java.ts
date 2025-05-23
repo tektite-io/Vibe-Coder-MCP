@@ -303,8 +303,12 @@ export class JavaHandler extends BaseLanguageHandler {
           const fullPath = getNodeText(nameNode, sourceCode);
           const parts = fullPath.split('.');
           const name = parts[parts.length - 1];
+          const isStatic = node.type === 'static_import_declaration';
 
-          // Check for wildcard imports
+          // Get the package path (everything except the last part)
+          const packagePath = parts.slice(0, parts.length - 1).join('.');
+
+          // Check for wildcard imports (e.g., import java.util.* or import static java.lang.Math.*)
           if (name === '*') {
             return [{
               name: '*',
@@ -315,12 +319,38 @@ export class JavaHandler extends BaseLanguageHandler {
             }];
           }
 
+          // For static imports, we need to handle differently
+          if (isStatic) {
+            // For static imports, the last part is the method/field name
+            // and the second-to-last part is the class name
+            const className = parts[parts.length - 2] || '';
+
+            return [{
+              name: name,
+              path: fullPath,
+              isDefault: false,
+              isNamespace: false,
+              nodeText: node.text,
+              // Add additional information for static imports
+              alias: undefined,
+              // Include metadata about the static import
+              staticImport: {
+                className: className,
+                memberName: name,
+                packageName: parts.slice(0, parts.length - 2).join('.')
+              }
+            }];
+          }
+
+          // Regular import (e.g., import java.util.List)
           return [{
             name: name,
             path: fullPath,
             isDefault: false,
             isNamespace: false,
-            nodeText: node.text
+            nodeText: node.text,
+            // Add package information
+            packageName: packagePath
           }];
         }
       }
@@ -335,34 +365,150 @@ export class JavaHandler extends BaseLanguageHandler {
   /**
    * Extracts class properties from an AST node.
    */
-  protected extractClassProperties(node: SyntaxNode, sourceCode: string): Array<{ name: string; type?: string; comment?: string; startLine: number; endLine: number }> {
+  protected extractClassProperties(node: SyntaxNode, sourceCode: string): Array<{
+    name: string;
+    type?: string;
+    comment?: string;
+    startLine: number;
+    endLine: number;
+    accessModifier?: string;
+    isStatic?: boolean;
+  }> {
     try {
-      const properties: Array<{ name: string; type?: string; comment?: string; startLine: number; endLine: number }> = [];
+      const properties: Array<{
+        name: string;
+        type?: string;
+        comment?: string;
+        startLine: number;
+        endLine: number;
+        accessModifier?: string;
+        isStatic?: boolean;
+      }> = [];
 
-      if (node.type === 'class_declaration') {
+      if (node.type === 'class_declaration' || node.type === 'interface_declaration' || node.type === 'enum_declaration') {
         const bodyNode = node.childForFieldName('body');
         if (bodyNode) {
           // Extract field declarations
           bodyNode.descendantsOfType('field_declaration').forEach(fieldNode => {
             const typeNode = fieldNode.childForFieldName('type');
-            const declaratorNode = fieldNode.childForFieldName('declarator');
+            const declaratorListNode = fieldNode.childForFieldName('declarator_list');
 
-            if (typeNode && declaratorNode) {
+            if (typeNode && declaratorListNode) {
               const type = getNodeText(typeNode, sourceCode);
-              const name = getNodeText(declaratorNode.childForFieldName('name'), sourceCode);
+              const nodeText = fieldNode.text;
+
+              // Determine access modifier
+              let accessModifier: string | undefined;
+              if (nodeText.includes('private ')) {
+                accessModifier = 'private';
+              } else if (nodeText.includes('protected ')) {
+                accessModifier = 'protected';
+              } else if (nodeText.includes('public ')) {
+                accessModifier = 'public';
+              } else {
+                // Default access (package-private) in Java
+                accessModifier = 'package-private';
+              }
+
+              // Determine if static
+              const isStatic = nodeText.includes('static ');
+
+              // Determine if final
+              const isFinal = nodeText.includes('final ');
 
               // Extract comment
               const comment = this.extractPropertyComment(fieldNode, sourceCode);
 
-              properties.push({
-                name,
-                type,
-                comment,
-                startLine: fieldNode.startPosition.row + 1,
-                endLine: fieldNode.endPosition.row + 1
+              // Process each declarator in the list (Java can declare multiple fields in one statement)
+              declaratorListNode.children.forEach(declarator => {
+                if (declarator.type === 'variable_declarator') {
+                  const nameNode = declarator.childForFieldName('name');
+                  if (nameNode) {
+                    const name = getNodeText(nameNode, sourceCode);
+
+                    // Add additional information to the comment if it's final
+                    let finalComment = comment;
+                    if (isFinal && !finalComment) {
+                      finalComment = 'Constant value';
+                    } else if (isFinal && finalComment) {
+                      finalComment = `${finalComment} (Constant)`;
+                    }
+
+                    properties.push({
+                      name,
+                      type,
+                      accessModifier,
+                      isStatic,
+                      comment: finalComment,
+                      startLine: declarator.startPosition.row + 1,
+                      endLine: declarator.endPosition.row + 1
+                    });
+                  }
+                }
               });
             }
           });
+
+          // Also extract enum constants for enum declarations
+          if (node.type === 'enum_declaration') {
+            const enumBodyNode = bodyNode.childForFieldName('enum_body');
+            if (enumBodyNode) {
+              enumBodyNode.descendantsOfType('enum_constant').forEach(constantNode => {
+                const nameNode = constantNode.childForFieldName('name');
+                if (nameNode) {
+                  const name = getNodeText(nameNode, sourceCode);
+
+                  // Extract comment
+                  const comment = this.extractPropertyComment(constantNode, sourceCode);
+
+                  properties.push({
+                    name,
+                    type: this.extractClassName(node, sourceCode), // The enum type is the enum class name
+                    accessModifier: 'public', // Enum constants are always public
+                    isStatic: true, // Enum constants are implicitly static
+                    comment,
+                    startLine: constantNode.startPosition.row + 1,
+                    endLine: constantNode.endPosition.row + 1
+                  });
+                }
+              });
+            }
+          }
+
+          // For interfaces, all fields are implicitly public, static, and final
+          if (node.type === 'interface_declaration') {
+            bodyNode.descendantsOfType('field_declaration').forEach(fieldNode => {
+              const typeNode = fieldNode.childForFieldName('type');
+              const declaratorListNode = fieldNode.childForFieldName('declarator_list');
+
+              if (typeNode && declaratorListNode) {
+                const type = getNodeText(typeNode, sourceCode);
+
+                // Extract comment
+                const comment = this.extractPropertyComment(fieldNode, sourceCode);
+
+                // Process each declarator
+                declaratorListNode.children.forEach(declarator => {
+                  if (declarator.type === 'variable_declarator') {
+                    const nameNode = declarator.childForFieldName('name');
+                    if (nameNode) {
+                      const name = getNodeText(nameNode, sourceCode);
+
+                      properties.push({
+                        name,
+                        type,
+                        accessModifier: 'public', // Interface fields are always public
+                        isStatic: true, // Interface fields are always static
+                        comment: comment ? `${comment} (Constant)` : 'Constant value',
+                        startLine: declarator.startPosition.row + 1,
+                        endLine: declarator.endPosition.row + 1
+                      });
+                    }
+                  }
+                });
+              }
+            });
+          }
         }
       }
 
