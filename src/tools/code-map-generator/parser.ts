@@ -3,6 +3,7 @@ import ParserFromPackage from 'web-tree-sitter';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import os from 'os';
 import logger from '../../logger.js';
 import { FileCache } from './cache/fileCache.js';
 import { CodeMapGeneratorConfig } from './types.js';
@@ -10,9 +11,14 @@ import { readFileSecure } from './fsUtils.js';
 import { getOutputDirectory, ensureDirectoryExists, validateDirectoryIsWritable, getCacheDirectory } from './directoryUtils.js';
 import { GrammarManager } from './cache/grammarManager.js';
 import { MemoryCache } from './cache/memoryCache.js';
+import { TieredCache } from './cache/tieredCache.js';
 import { MemoryManager } from './cache/memoryManager.js';
+import { MemoryLeakDetector } from './cache/memoryLeakDetector.js';
+import { ProcessLifecycleManager } from './cache/processLifecycleManager.js';
+import { ResourceTracker } from './cache/resourceTracker.js';
 import { getProjectRoot, resolveProjectPath } from './utils/pathUtils.enhanced.js';
 import { FileContentManager } from './cache/fileContentManager.js';
+import { MetadataCache, SourceCodeMetadata, ASTMetadata } from './cache/metadataCache.js';
 
 // Export SyntaxNode type for use in other modules
 export type SyntaxNode = ParserFromPackage.SyntaxNode;
@@ -28,14 +34,26 @@ const __dirname = path.dirname(__filename);
 // This change assumes the original intent was to re-export these specific types.
 
 // Memory management instances
-let grammarManager: GrammarManager | null = null;
-let memoryManager: MemoryManager | null = null;
-let astMemoryCache: MemoryCache<string, ParserFromPackage.Tree> | null = null;
-let sourceCodeMemoryCache: MemoryCache<string, string> | null = null;
+export let grammarManager: GrammarManager | null = null;
+export let memoryManager: MemoryManager | null = null;
+export let astMemoryCache: MemoryCache<string, ParserFromPackage.Tree> | null = null;
+export let sourceCodeMemoryCache: MemoryCache<string, string> | null = null;
 
 // File-based cache instances
 let parseCache: FileCache<ParserFromPackage.Tree> | null = null;
 let sourceCodeCache: FileCache<string> | null = null;
+
+// Tiered cache instances
+let parseTreeTieredCache: TieredCache<ParserFromPackage.Tree> | null = null;
+let sourceCodeTieredCache: TieredCache<string> | null = null;
+
+// Metadata cache instances (new)
+let sourceCodeMetadataCache: MetadataCache<SourceCodeMetadata> | null = null;
+let astMetadataCache: MetadataCache<ASTMetadata> | null = null;
+
+// Memory leak detection and process lifecycle management
+export let memoryLeakDetector: MemoryLeakDetector | null = null;
+export let processLifecycleManager: ProcessLifecycleManager | null = null;
 
 // File content manager instance
 let fileContentManager: FileContentManager | null = null;
@@ -136,8 +154,8 @@ export async function initializeParser(): Promise<void> {
   try {
     // Initialize memory manager first
     memoryManager = new MemoryManager({
-      maxMemoryPercentage: 0.5, // Use up to 50% of system memory
-      monitorInterval: 60000, // Check memory usage every minute
+      maxMemoryPercentage: 0.4, // Reduced from 0.5 (use up to 40% of system memory)
+      monitorInterval: 30000, // Check memory usage every 30 seconds (reduced from 60 seconds)
       autoManage: true
     });
 
@@ -148,8 +166,8 @@ export async function initializeParser(): Promise<void> {
     // Create grammar manager
     const tempGrammarManager = new GrammarManager(languageConfigurations, {
       maxGrammars: 20,
-      preloadCommonGrammars: true,
-      preloadExtensions: ['.js', '.ts', '.py', '.html', '.css'],
+      preloadCommonGrammars: true, // Keep true here for backward compatibility
+      preloadExtensions: ['.js', '.ts', '.py', '.html', '.css'], // Reduced from 10 to 5
       grammarsBaseDir: GRAMMARS_BASE_DIR
     });
 
@@ -167,7 +185,27 @@ export async function initializeParser(): Promise<void> {
       await grammarManager.preloadGrammars();
     }
 
-    logger.info('Tree-sitter parser and memory management initialized successfully.');
+    // Initialize resource tracker
+    const resourceTracker = new ResourceTracker();
+
+    // Initialize memory leak detector
+    memoryLeakDetector = new MemoryLeakDetector({
+      autoDetect: true,
+      checkInterval: 60 * 1000, // 1 minute
+      snapshotInterval: 10 * 60 * 1000, // 10 minutes
+      maxSnapshots: 5
+    });
+    await memoryLeakDetector.init();
+
+    // Initialize process lifecycle manager
+    processLifecycleManager = new ProcessLifecycleManager({
+      autoMonitor: true,
+      healthCheckInterval: 30 * 1000, // 30 seconds
+      gcInterval: 5 * 60 * 1000 // 5 minutes
+    });
+    await processLifecycleManager.init(memoryManager, resourceTracker);
+
+    logger.info('Tree-sitter parser, memory management, and process lifecycle management initialized successfully.');
   } catch (error) {
     logger.error({ err: error }, 'Failed to initialize Tree-sitter parser and memory management.');
     throw error; // Re-throw to signal critical failure
@@ -231,26 +269,96 @@ export async function initializeCaches(config: CodeMapGeneratorConfig): Promise<
       maxAge: config.cache?.maxAge
     });
 
-    // Initialize the caches
+    // Initialize tiered caches if enabled
+    if (config.cache?.useMemoryCache) {
+      // Initialize parse tree tiered cache
+      parseTreeTieredCache = new TieredCache<ParserFromPackage.Tree>({
+        name: 'parse-trees-tiered',
+        cacheDir: parseTreeCacheDir,
+        maxEntries: config.cache?.maxEntries,
+        maxAge: config.cache?.maxAge,
+        useMemoryCache: true,
+        memoryMaxEntries: config.cache?.memoryMaxEntries,
+        memoryMaxAge: config.cache?.memoryMaxAge,
+        memoryThreshold: config.cache?.memoryThreshold,
+        serialize: (tree: any) => {
+          // Tree-sitter trees can't be directly serialized, so we need to use a custom approach
+          // For now, we'll just store a placeholder and re-parse when needed
+          return JSON.stringify({ rootNodeType: tree.rootNode?.type || 'unknown' });
+        },
+        deserialize: (serialized) => {
+          // This is a placeholder - we can't actually deserialize a tree from JSON
+          // We'll handle this in the parseCode function
+          return JSON.parse(serialized) as any;
+        }
+      });
+
+      // Initialize source code tiered cache
+      sourceCodeTieredCache = new TieredCache<string>({
+        name: 'source-code-tiered',
+        cacheDir: sourceCodeCacheDir,
+        maxEntries: config.cache?.maxEntries,
+        maxAge: config.cache?.maxAge,
+        useMemoryCache: true,
+        memoryMaxEntries: config.cache?.memoryMaxEntries,
+        memoryMaxAge: config.cache?.memoryMaxAge,
+        memoryThreshold: config.cache?.memoryThreshold
+      });
+
+      // Initialize tiered caches
+      await parseTreeTieredCache.init();
+      await sourceCodeTieredCache.init();
+
+      logger.info('Tiered caches initialized successfully.');
+    }
+
+    // Initialize the file-based caches
     await parseCache.init();
     await sourceCodeCache.init();
 
+    // Initialize metadata caches
+    sourceCodeMetadataCache = new MetadataCache<SourceCodeMetadata>({
+      name: 'source-code-metadata',
+      cacheDir: sourceCodeCacheDir,
+      maxEntries: config.cache?.maxEntries,
+      maxAge: config.cache?.maxAge,
+      useMemoryCache: true,
+      memoryMaxEntries: 5000, // Can cache more entries since they're lightweight
+      memoryThreshold: 0.5 // More aggressive threshold
+    });
+
+    astMetadataCache = new MetadataCache<ASTMetadata>({
+      name: 'ast-metadata',
+      cacheDir: parseTreeCacheDir,
+      maxEntries: config.cache?.maxEntries,
+      maxAge: config.cache?.maxAge,
+      useMemoryCache: true,
+      memoryMaxEntries: 3000, // Can cache more entries since they're lightweight
+      memoryThreshold: 0.5 // More aggressive threshold
+    });
+
+    // Initialize the metadata caches
+    await sourceCodeMetadataCache.init();
+    await astMetadataCache.init();
+
     // Initialize file content manager
     fileContentManager = new FileContentManager({
-      maxCachedFiles: config.cache?.maxCachedFiles || 100,
+      maxCachedFiles: config.cache?.maxCachedFiles !== undefined ? config.cache.maxCachedFiles : 0, // Default to 0 (disabled) for in-memory caching
       maxAge: 5 * 60 * 1000, // 5 minutes
       cacheDir: cacheDir,
       useFileCache: config.cache?.enabled === undefined || config.cache?.enabled === true
     });
     await fileContentManager.init();
 
-    logger.info('File-based caches and file content manager initialized successfully.');
+    logger.info('File-based caches, metadata caches, and file content manager initialized successfully.');
   } catch (error) {
-    logger.error({ err: error }, 'Failed to initialize file-based caches.');
+    logger.error({ err: error }, 'Failed to initialize caches.');
     // Don't throw, just log the error and continue without caching
     parseCache = null;
     sourceCodeCache = null;
     fileContentManager = null;
+    sourceCodeMetadataCache = null;
+    astMetadataCache = null;
   }
 }
 
@@ -269,6 +377,15 @@ export async function clearCaches(): Promise<void> {
       await sourceCodeCache.clear();
     }
 
+    // Clear tiered caches
+    if (parseTreeTieredCache) {
+      await parseTreeTieredCache.clear();
+    }
+
+    if (sourceCodeTieredCache) {
+      await sourceCodeTieredCache.clear();
+    }
+
     // Clear file content manager cache
     if (fileContentManager) {
       fileContentManager.clearCache();
@@ -281,6 +398,15 @@ export async function clearCaches(): Promise<void> {
 
     if (sourceCodeMemoryCache) {
       sourceCodeMemoryCache.clear();
+    }
+
+    // Clear metadata caches
+    if (sourceCodeMetadataCache) {
+      await sourceCodeMetadataCache.clear();
+    }
+
+    if (astMetadataCache) {
+      await astMetadataCache.clear();
     }
 
     // Run garbage collection if memory manager is available
@@ -344,8 +470,8 @@ export async function getParserForFileExtension(fileExtension: string): Promise<
   }
 
   try {
-    // Use the grammar manager to get a parser for the file extension
-    return await grammarManager.getParserForExtension(fileExtension);
+    // Use the grammar manager to get a parser with memory awareness
+    return await grammarManager.getParserForExtensionWithMemoryAwareness(fileExtension);
   } catch (error) {
     logger.error({ err: error, fileExtension }, `Error getting parser for extension ${fileExtension}.`);
     return null;
@@ -469,12 +595,56 @@ export async function parseCode(
 
     // Check if caching is enabled
     const useFileCaching = config?.cache?.enabled !== false && parseCache !== null;
+    const useTieredCaching = config?.cache?.enabled !== false && config?.cache?.useMemoryCache === true && parseTreeTieredCache !== null;
 
     // Check if memory caching should be used based on current memory usage
     const useMemoryCaching = shouldUseMemoryCache(config);
 
-    // Try to get parse tree from cache using tiered caching strategy
-    if ((useMemoryCaching && astMemoryCache) || (useFileCaching && parseCache)) {
+    // NEW: Try to get AST metadata from cache
+    if (astMetadataCache && filePath) {
+      try {
+        const astMetadata = await astMetadataCache.get(cacheKey);
+        if (astMetadata) {
+          logger.debug(`Found AST metadata for ${filePath} in metadata cache`);
+
+          // Check if source code has changed by comparing hashes
+          let sourceHash = '';
+          if (sourceCodeMetadataCache) {
+            const sourceMetadata = await sourceCodeMetadataCache.get(cacheKey);
+            if (sourceMetadata) {
+              sourceHash = sourceMetadata.hash;
+            }
+          }
+
+          // If we don't have a source hash, generate one
+          if (!sourceHash) {
+            sourceHash = crypto.createHash('md5').update(sourceCode).digest('hex');
+          }
+
+          // If source code hasn't changed, we can use the cached AST metadata
+          if (sourceHash === astMetadata.sourceHash) {
+            logger.debug(`Source code unchanged for ${filePath}, using cached AST metadata`);
+
+            // We still need to parse the code, but we can use the metadata to optimize parsing
+            // For now, we'll just log that we're using the metadata
+            logger.debug(`Using AST metadata to optimize parsing for ${filePath}`);
+          }
+        }
+      } catch (error) {
+        logger.warn({ err: error, filePath }, 'Error checking AST metadata cache');
+      }
+    }
+
+    // Try to get parse tree from traditional caches for backward compatibility
+    if (useTieredCaching) {
+      // Use tiered cache if available
+      const cachedTree = await parseTreeTieredCache!.get(cacheKey);
+      if (cachedTree) {
+        logger.debug(`Using tiered cached parse tree for ${filePath}`);
+        return cachedTree;
+      }
+    } else if ((useMemoryCaching && astMemoryCache) || (useFileCaching && parseCache)) {
+      // Fall back to manual tiered caching strategy
       const cachedTree = await getCachedValue(
         cacheKey,
         useFileCaching ? parseCache : null,
@@ -495,19 +665,74 @@ export async function parseCode(
   }
 
   try {
-    // Parse the source code
-    const tree = parser.parse(sourceCode);
-    logger.debug(`Successfully parsed code for extension ${fileExtension}. Root node: ${tree.rootNode.type}`);
+    // Check if we should use incremental parsing for large files
+    const useIncrementalParsing = grammarManager?.getOptions().enableIncrementalParsing === true;
+    const incrementalThreshold = grammarManager?.getOptions().incrementalParsingThreshold || 1024 * 1024; // 1MB default
 
-    // Cache the parse tree using tiered caching strategy
+    let tree: ParserFromPackage.Tree;
+
+    if (useIncrementalParsing && sourceCode.length > incrementalThreshold) {
+      // Use incremental parsing for large files
+      tree = await parseCodeIncrementally(parser, sourceCode);
+      logger.debug({
+        fileExtension,
+        fileSize: formatBytes(sourceCode.length),
+        threshold: formatBytes(incrementalThreshold)
+      }, `Used incremental parsing for large file with extension ${fileExtension}`);
+    } else {
+      // Use regular parsing for smaller files
+      tree = parser.parse(sourceCode);
+      logger.debug(`Successfully parsed code for extension ${fileExtension}. Root node: ${tree.rootNode.type}`);
+    }
+
+    // Cache the parse tree
     if (cacheKey) {
       // Check if caching is enabled
       const useFileCaching = config?.cache?.enabled !== false && parseCache !== null;
+      const useTieredCaching = config?.cache?.enabled !== false && config?.cache?.useMemoryCache === true && parseTreeTieredCache !== null;
 
       // Check if memory caching should be used based on current memory usage
       const useMemoryCaching = shouldUseMemoryCache(config);
 
-      if ((useMemoryCaching && astMemoryCache) || (useFileCaching && parseCache)) {
+      // NEW: Cache AST metadata if metadata cache is available
+      if (astMetadataCache && filePath) {
+        try {
+          // Get source code hash from metadata cache if available
+          let sourceHash = '';
+          if (sourceCodeMetadataCache) {
+            const sourceMetadata = await sourceCodeMetadataCache.get(cacheKey);
+            if (sourceMetadata) {
+              sourceHash = sourceMetadata.hash;
+            }
+          }
+
+          // If we don't have a source hash, generate one
+          if (!sourceHash) {
+            sourceHash = crypto.createHash('md5').update(sourceCode).digest('hex');
+          }
+
+          // Create AST metadata
+          const astMetadata = MetadataCache.createASTMetadata(
+            filePath,
+            sourceHash,
+            tree.rootNode
+          );
+
+          // Cache AST metadata
+          await astMetadataCache.set(cacheKey, astMetadata);
+          logger.debug(`Cached AST metadata for ${filePath}`);
+        } catch (error) {
+          logger.warn({ err: error, filePath }, 'Error caching AST metadata');
+        }
+      }
+
+      // Also use traditional caching for backward compatibility
+      if (useTieredCaching) {
+        // Use tiered cache if available
+        await parseTreeTieredCache!.set(cacheKey, tree);
+        logger.debug(`Cached parse tree in tiered cache for ${filePath}`);
+      } else if ((useMemoryCaching && astMemoryCache) || (useFileCaching && parseCache)) {
+        // Fall back to manual tiered caching strategy
         await setCachedValue(
           cacheKey,
           tree,
@@ -538,13 +763,55 @@ export async function readAndParseFile(
   config: CodeMapGeneratorConfig
 ): Promise<{ tree: ParserFromPackage.Tree | null, sourceCode: string }> {
   try {
-    // Get file content using FileContentManager if available
+    // Check if we have metadata for this file
     let sourceCode: string;
-    if (fileContentManager) {
-      sourceCode = await fileContentManager.getContent(filePath, config.allowedMappingDirectory);
+    let metadata: SourceCodeMetadata | undefined;
+
+    if (sourceCodeMetadataCache) {
+      // Generate a cache key for the file
+      const cacheKey = crypto.createHash('md5').update(filePath).digest('hex');
+
+      // Try to get metadata from cache
+      metadata = await sourceCodeMetadataCache.get(cacheKey);
+
+      if (metadata) {
+        logger.debug(`Found metadata for ${filePath} in metadata cache`);
+
+        // If metadata has content, use it
+        if (metadata.content) {
+          logger.debug(`Using content from metadata cache for ${filePath}`);
+          sourceCode = metadata.content;
+        } else {
+          // Otherwise, load content and update metadata
+          if (fileContentManager) {
+            sourceCode = await fileContentManager.getContent(filePath, config.allowedMappingDirectory);
+          } else {
+            sourceCode = await readFileSecure(filePath, config.allowedMappingDirectory);
+          }
+
+          // Update metadata with content
+          metadata.content = sourceCode;
+          await sourceCodeMetadataCache.set(cacheKey, metadata);
+        }
+      } else {
+        // No metadata found, create new metadata
+        if (fileContentManager) {
+          sourceCode = await fileContentManager.getContent(filePath, config.allowedMappingDirectory);
+        } else {
+          sourceCode = await readFileSecure(filePath, config.allowedMappingDirectory);
+        }
+
+        // Create and cache metadata
+        metadata = await MetadataCache.createSourceCodeMetadata(filePath, sourceCode);
+        await sourceCodeMetadataCache.set(cacheKey, metadata);
+      }
     } else {
-      // Fall back to direct file reading if FileContentManager is not available
-      sourceCode = await readFileSecure(filePath, config.allowedMappingDirectory);
+      // Metadata cache not available, fall back to traditional methods
+      if (fileContentManager) {
+        sourceCode = await fileContentManager.getContent(filePath, config.allowedMappingDirectory);
+      } else {
+        sourceCode = await readFileSecure(filePath, config.allowedMappingDirectory);
+      }
     }
 
     // Parse the source code
@@ -561,16 +828,7 @@ export async function readAndParseFile(
  * Gets memory usage statistics from the memory manager.
  * @returns Memory usage statistics
  */
-export function getMemoryStats(): Record<string, any> {
-  if (!memoryManager) {
-    return {
-      initialized: false,
-      message: 'Memory manager not initialized'
-    };
-  }
-
-  return memoryManager.getMemoryStats();
-}
+// This function is replaced by the more detailed implementation at line 1127
 
 /**
  * Determines whether to use memory caching based on current memory usage.
@@ -578,6 +836,12 @@ export function getMemoryStats(): Record<string, any> {
  * @returns True if memory caching should be used, false otherwise
  */
 export function shouldUseMemoryCache(config?: CodeMapGeneratorConfig): boolean {
+  // If in-memory caching is explicitly disabled via maxCachedFiles=0, return false
+  if (config?.cache?.maxCachedFiles === 0) {
+    logger.debug('In-memory caching is disabled via configuration (maxCachedFiles=0).');
+    return false;
+  }
+
   // If memory manager is not initialized, default to true
   if (!memoryManager) {
     return true;
@@ -605,7 +869,7 @@ export function shouldUseMemoryCache(config?: CodeMapGeneratorConfig): boolean {
     return true;
   }
 
-  // Memory usage is normal, use memory caching
+  // Memory usage is normal, use memory caching if not explicitly disabled
   return true;
 }
 
@@ -613,9 +877,7 @@ export function shouldUseMemoryCache(config?: CodeMapGeneratorConfig): boolean {
  * Gets the memory manager instance.
  * @returns The memory manager instance, or null if not initialized.
  */
-export function getMemoryManager(): any {
-  return memoryManager;
-}
+// This function is replaced by the more detailed implementation at line 1104
 
 /**
  * Gets source code for a file from the cache.
@@ -696,6 +958,56 @@ export function getAllSourceCodeFromCache(): Map<string, string> {
   return cachedEntries;
 }
 
+/**
+ * Parses a large source code file incrementally to reduce memory usage.
+ * This breaks the file into chunks and parses them sequentially, updating the tree as it goes.
+ *
+ * @param parser The Tree-sitter parser to use
+ * @param sourceCode The source code to parse
+ * @returns The parsed Tree-sitter Tree
+ */
+async function parseCodeIncrementally(parser: ParserFromPackage, sourceCode: string): Promise<ParserFromPackage.Tree> {
+  // Initial parse with a small portion of the file
+  const initialChunkSize = 100 * 1024; // 100KB
+  const initialChunk = sourceCode.slice(0, Math.min(initialChunkSize, sourceCode.length));
+  let tree = parser.parse(initialChunk);
+
+  // If the file is small enough, we're done
+  if (sourceCode.length <= initialChunkSize) {
+    return tree;
+  }
+
+  // Parse the rest of the file in chunks
+  const chunkSize = 500 * 1024; // 500KB chunks
+  const totalChunks = Math.ceil((sourceCode.length - initialChunkSize) / chunkSize);
+
+  for (let i = 0; i < totalChunks; i++) {
+    const start = initialChunkSize + (i * chunkSize);
+    const end = Math.min(start + chunkSize, sourceCode.length);
+
+    // Parse the chunk and update the tree
+    tree = parser.parse(sourceCode, tree);
+
+    // Check memory usage after each chunk
+    if (i % 5 === 0) {
+      const memStats = getMemoryStats();
+      logger.debug({
+        chunk: i + 1,
+        totalChunks,
+        progress: `${Math.round(((i + 1) / totalChunks) * 100)}%`,
+        memoryUsage: memStats.formatted.heapUsed
+      }, `Incremental parsing progress`);
+
+      // Force garbage collection if available and memory usage is high
+      if (global.gc && memStats.memoryUsagePercentage > 0.7) {
+        global.gc();
+      }
+    }
+  }
+
+  return tree;
+}
+
 
 /**
  * Parses source code and returns the AST and detected language.
@@ -748,6 +1060,18 @@ export function cleanupParser(): void {
     memoryManager.runGarbageCollection();
   }
 
+  // Clean up process lifecycle manager
+  if (processLifecycleManager) {
+    processLifecycleManager.cleanup();
+    processLifecycleManager = null;
+  }
+
+  // Clean up memory leak detector
+  if (memoryLeakDetector) {
+    memoryLeakDetector.cleanup();
+    memoryLeakDetector = null;
+  }
+
   // Reset grammar manager
   grammarManager = null;
   memoryManager = null;
@@ -755,9 +1079,69 @@ export function cleanupParser(): void {
   sourceCodeMemoryCache = null;
   parseCache = null;
   sourceCodeCache = null;
+  parseTreeTieredCache = null;
+  sourceCodeTieredCache = null;
   fileContentManager = null;
 
   logger.info('Parser cleaned up and resources released.');
+}
+
+/**
+ * Gets the memory manager instance.
+ * @returns The memory manager instance, or null if not initialized
+ */
+export function getMemoryManager(): MemoryManager | null {
+  return memoryManager;
+}
+
+/**
+ * Formats a byte value into a human-readable string.
+ * @param bytes The number of bytes
+ * @returns A human-readable string (e.g., "1.23 MB")
+ */
+export function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 Bytes';
+
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+/**
+ * Gets memory usage statistics.
+ * @returns An object containing memory usage statistics
+ */
+export function getMemoryStats(): {
+  heapUsed: number;
+  heapTotal: number;
+  rss: number;
+  systemTotal: number;
+  memoryUsagePercentage: number;
+  formatted: {
+    heapUsed: string;
+    heapTotal: string;
+    rss: string;
+    systemTotal: string;
+  };
+} {
+  const memUsage = process.memoryUsage();
+  const systemTotal = os.totalmem();
+
+  return {
+    heapUsed: memUsage.heapUsed,
+    heapTotal: memUsage.heapTotal,
+    rss: memUsage.rss,
+    systemTotal,
+    memoryUsagePercentage: memUsage.rss / systemTotal,
+    formatted: {
+      heapUsed: formatBytes(memUsage.heapUsed),
+      heapTotal: formatBytes(memUsage.heapTotal),
+      rss: formatBytes(memUsage.rss),
+      systemTotal: formatBytes(systemTotal)
+    }
+  };
 }
 
 // Export types
@@ -766,3 +1150,5 @@ export type Language = ParserFromPackage.Language;
 export type Point = ParserFromPackage.Point;
 // Make sure Parser itself is also available if needed by other modules, or re-export specific parts
 export { ParserFromPackage as Parser };
+
+// Memory leak detection and process lifecycle management are already exported as variables

@@ -60,11 +60,12 @@ export async function generateMarkdownOutput(
   const fileName = generateTimestampFileName(filePrefix, 'md');
   const outputPath = path.join(outputDir, fileName);
 
-  // Check if we should split the output
-  const splitOutput = config.output?.splitOutput !== false;
+  // Check if we should split the output (default is now false)
+  const splitOutput = config.output?.splitOutput === true;
 
   if (splitOutput) {
     // Generate split output files
+    logger.info('Generating split markdown output files');
     return await generateSplitMarkdownOutput(
       allFilesInfo,
       fileDependencyGraph,
@@ -74,7 +75,8 @@ export async function generateMarkdownOutput(
       jobId
     );
   } else {
-    // Generate a single output file
+    // Generate a single output file (default)
+    logger.info('Generating single markdown output file');
     return await generateSingleMarkdownOutput(
       allFilesInfo,
       fileDependencyGraph,

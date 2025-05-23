@@ -8,6 +8,7 @@ import { SyntaxNode } from '../parser.js';
 import { FunctionExtractionOptions } from '../types.js';
 import { getNodeText } from '../astAnalyzer.js';
 import logger from '../../../logger.js';
+import { ImportedItem } from '../codeMapModel.js';
 
 /**
  * Language handler for Kotlin.
@@ -294,6 +295,82 @@ export class KotlinHandler extends BaseLanguageHandler {
     } catch (error) {
       logger.warn({ err: error, nodeType: node.type }, 'Error extracting Kotlin import path');
       return 'unknown';
+    }
+  }
+
+  /**
+   * Extracts imported items from an AST node.
+   */
+  protected extractImportedItems(node: SyntaxNode, sourceCode: string): ImportedItem[] | undefined {
+    try {
+      if (node.type === 'import_header') {
+        const identifierNode = node.childForFieldName('identifier');
+
+        if (identifierNode) {
+          const fullPath = getNodeText(identifierNode, sourceCode);
+          const parts = fullPath.split('.');
+
+          // Check for wildcard imports (e.g., import kotlin.collections.*)
+          const isWildcard = fullPath.endsWith('.*');
+
+          // Check for aliased imports (e.g., import kotlin.collections.List as KtList)
+          const aliasNode = node.childForFieldName('alias');
+          const alias = aliasNode ? getNodeText(aliasNode, sourceCode) : undefined;
+
+          if (isWildcard) {
+            // Wildcard import (e.g., import kotlin.collections.*)
+            const basePath = fullPath.substring(0, fullPath.length - 2); // Remove .*
+
+            return [{
+              name: '*',
+              path: basePath,
+              alias: alias,
+              isDefault: false,
+              isNamespace: true,
+              nodeText: node.text,
+              // Add Kotlin-specific metadata
+              packageName: basePath
+            }];
+          } else {
+            // Specific import (e.g., import kotlin.collections.List)
+            const name = parts[parts.length - 1];
+            const packageName = parts.slice(0, parts.length - 1).join('.');
+
+            return [{
+              name: alias || name,
+              path: fullPath,
+              alias: alias,
+              isDefault: false,
+              isNamespace: false,
+              nodeText: node.text,
+              // Add Kotlin-specific metadata
+              packageName: packageName
+            }];
+          }
+        }
+      } else if (node.type === 'package_header') {
+        // Package declaration (e.g., package com.example.app)
+        const identifierNode = node.childForFieldName('identifier');
+
+        if (identifierNode) {
+          const packagePath = getNodeText(identifierNode, sourceCode);
+
+          return [{
+            name: packagePath,
+            path: packagePath,
+            isDefault: false,
+            isNamespace: true,
+            nodeText: node.text,
+            // Add Kotlin-specific metadata
+            isPackageDeclaration: true
+          }];
+        }
+      }
+
+      return undefined;
+    } catch (error) {
+      logger.warn({ err: error, nodeType: node.type }, 'Error extracting Kotlin imported items');
+      return undefined;
     }
   }
 

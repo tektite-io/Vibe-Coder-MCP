@@ -86,12 +86,14 @@ export class FileContentManager {
    */
   constructor(options: FileContentManagerOptions = {}) {
     // Initialize LRU cache for frequently accessed files
+    // If maxCachedFiles is 0, disable in-memory caching
+    const maxEntries = options.maxCachedFiles !== undefined ? options.maxCachedFiles : 100;
     this.contentCache = new LRUCache<string, string>({
       name: 'file-content-cache',
-      maxEntries: options.maxCachedFiles || 100,
+      maxEntries: maxEntries,
       maxAge: options.maxAge || 5 * 60 * 1000, // 5 minutes
       sizeCalculator: (content) => content.length, // Use string length as size
-      maxSize: 50 * 1024 * 1024, // 50 MB
+      maxSize: maxEntries > 0 ? 50 * 1024 * 1024 : 0, // 50 MB if enabled, 0 if disabled
     });
 
     // Initialize file-based metadata cache if cacheDir is provided
@@ -104,7 +106,7 @@ export class FileContentManager {
       });
     }
 
-    logger.info('FileContentManager created');
+    logger.info(`FileContentManager created (in-memory caching ${maxEntries > 0 ? 'enabled' : 'disabled'})`);
   }
 
   /**
@@ -141,13 +143,17 @@ export class FileContentManager {
       await this.init();
     }
 
-    // Check LRU cache first
     const cacheKey = this.getCacheKey(filePath);
-    if (this.contentCache.has(cacheKey)) {
-      const content = this.contentCache.get(cacheKey);
-      if (content !== undefined) {
-        logger.debug(`Using cached content for ${filePath}`);
-        return content;
+
+    // Only check in-memory cache if it's enabled (maxEntries > 0)
+    if (this.contentCache.getMaxEntries() > 0) {
+      // Check LRU cache first
+      if (this.contentCache.has(cacheKey)) {
+        const content = this.contentCache.get(cacheKey);
+        if (content !== undefined) {
+          logger.debug(`Using in-memory cached content for ${filePath}`);
+          return content;
+        }
       }
     }
 
@@ -158,8 +164,10 @@ export class FileContentManager {
       // Update metadata
       await this.updateMetadata(filePath, content, allowedDir);
 
-      // Cache content for frequently accessed files
-      this.contentCache.set(cacheKey, content);
+      // Cache content for frequently accessed files only if in-memory caching is enabled
+      if (this.contentCache.getMaxEntries() > 0) {
+        this.contentCache.set(cacheKey, content);
+      }
 
       return content;
     } catch (error) {

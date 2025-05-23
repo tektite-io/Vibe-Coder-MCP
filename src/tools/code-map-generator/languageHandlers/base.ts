@@ -339,14 +339,7 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
     return undefined;
   }
 
-  /**
-   * Extracts class properties from an AST node.
-   * This can be overridden by language-specific handlers.
-   */
-  protected extractClassProperties(_node: SyntaxNode, _sourceCode: string): Array<{ name: string; type?: string; comment?: string; startLine: number; endLine: number }> {
-    // Default implementation returns an empty array
-    return [];
-  }
+
 
   /**
    * Extracts the parent class from an AST node.
@@ -540,5 +533,137 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
         parent: context.parent.parent
       } : undefined
     };
+  }
+
+  /**
+   * Extracts class properties from an AST node.
+   * This should be overridden by language-specific handlers.
+   *
+   * @param node The class node to extract properties from
+   * @param sourceCode The source code containing the class
+   * @returns An array of class property information
+   */
+  protected extractClassProperties(node: SyntaxNode, sourceCode: string): Array<{
+    name: string;
+    type?: string;
+    comment?: string;
+    startLine: number;
+    endLine: number;
+    accessModifier?: string;
+    isStatic?: boolean;
+  }> {
+    return [];
+  }
+
+  /**
+   * Enhances import information using third-party resolvers.
+   * This method can be overridden by language-specific handlers.
+   *
+   * @param filePath Path to the file containing the imports
+   * @param imports Array of imports to enhance
+   * @param options Options for import resolution
+   * @returns Enhanced import information
+   */
+  public async enhanceImportInfo(
+    filePath: string,
+    imports: ImportInfo[],
+    options: any
+  ): Promise<ImportInfo[]> {
+    try {
+      // Import the factory dynamically to avoid circular dependencies
+      const { ImportResolverFactory } = await import('../importResolvers/importResolverFactory.js');
+
+      // Create import resolver factory
+      const factory = new ImportResolverFactory({
+        allowedDir: options.allowedDir,
+        outputDir: options.outputDir,
+        maxDepth: options.maxDepth || 3,
+        tsConfig: options.tsConfig,
+        pythonPath: options.pythonPath,
+        pythonVersion: options.pythonVersion,
+        venvPath: options.venvPath,
+        clangdPath: options.clangdPath,
+        compileFlags: options.compileFlags,
+        includePaths: options.includePaths,
+        semgrepPatterns: options.semgrepPatterns,
+        semgrepTimeout: options.semgrepTimeout,
+        semgrepMaxMemory: options.semgrepMaxMemory,
+        disableSemgrepFallback: options.disableSemgrepFallback
+      });
+
+      // Get resolver for the file
+      const resolver = factory.getImportResolver(filePath);
+      if (!resolver) {
+        return imports;
+      }
+
+      // Analyze imports with the resolver
+      const enhancedImports = await resolver.analyzeImports(filePath, options);
+
+      // Merge original and enhanced imports
+      return this.mergeImportInfo(imports, enhancedImports);
+    } catch (error) {
+      logger.error(
+        { err: error, filePath },
+        'Error enhancing import info in base handler'
+      );
+      return imports;
+    }
+  }
+
+  /**
+   * Merges original and enhanced import information.
+   * This method can be overridden by language-specific handlers.
+   *
+   * @param original Original import information
+   * @param enhanced Enhanced import information
+   * @returns Merged import information
+   */
+  protected mergeImportInfo(
+    original: ImportInfo[],
+    enhanced: ImportInfo[]
+  ): ImportInfo[] {
+    const result: ImportInfo[] = [];
+
+    // Create a map of original imports by path
+    const originalImportMap = new Map<string, ImportInfo>();
+    for (const importInfo of original) {
+      originalImportMap.set(importInfo.path, importInfo);
+    }
+
+    // Process enhanced imports
+    for (const enhancedImport of enhanced) {
+      const originalImport = originalImportMap.get(enhancedImport.path);
+
+      if (originalImport) {
+        // Merge with original import
+        result.push({
+          ...originalImport,
+          // Keep original imported items but add metadata from enhanced import
+          metadata: {
+            ...originalImport.metadata,
+            ...enhancedImport.metadata
+          },
+          // Use enhanced values for these properties
+          isCore: enhancedImport.isCore,
+          isDynamic: enhancedImport.isDynamic,
+          isExternalPackage: enhancedImport.isExternalPackage,
+          moduleSystem: enhancedImport.moduleSystem || originalImport.moduleSystem
+        });
+
+        // Remove from map to track processed imports
+        originalImportMap.delete(enhancedImport.path);
+      } else {
+        // Add new import discovered by the resolver
+        result.push(enhancedImport);
+      }
+    }
+
+    // Add remaining original imports
+    for (const importInfo of originalImportMap.values()) {
+      result.push(importInfo);
+    }
+
+    return result;
   }
 }

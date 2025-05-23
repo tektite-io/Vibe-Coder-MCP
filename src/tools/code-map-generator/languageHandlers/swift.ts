@@ -8,6 +8,7 @@ import { SyntaxNode } from '../parser.js';
 import { FunctionExtractionOptions } from '../types.js';
 import { getNodeText } from '../astAnalyzer.js';
 import logger from '../../../logger.js';
+import { ImportedItem } from '../codeMapModel.js';
 
 /**
  * Language handler for Swift.
@@ -275,6 +276,63 @@ export class SwiftHandler extends BaseLanguageHandler {
     } catch (error) {
       logger.warn({ err: error, nodeType: node.type }, 'Error extracting Swift import path');
       return 'unknown';
+    }
+  }
+
+  /**
+   * Extracts imported items from an AST node.
+   */
+  protected extractImportedItems(node: SyntaxNode, sourceCode: string): ImportedItem[] | undefined {
+    try {
+      if (node.type === 'import_declaration') {
+        const pathNode = node.childForFieldName('path');
+
+        if (pathNode) {
+          const fullPath = getNodeText(pathNode, sourceCode);
+
+          // Handle different types of Swift imports
+
+          // Get the import kind (e.g., 'class', 'struct', 'enum', etc.)
+          const kindNode = node.childForFieldName('kind');
+          const importKind = kindNode ? getNodeText(kindNode, sourceCode) : undefined;
+
+          // Check for submodule imports (e.g., import UIKit.UIView)
+          const parts = fullPath.split('.');
+          const moduleName = parts[0];
+
+          if (parts.length === 1) {
+            // Simple module import (e.g., import Foundation)
+            return [{
+              name: moduleName,
+              path: moduleName,
+              isDefault: false,
+              isNamespace: true,
+              nodeText: node.text,
+              // Add Swift-specific metadata
+              importKind: importKind || 'module'
+            }];
+          } else {
+            // Submodule or specific type import (e.g., import UIKit.UIView)
+            const submoduleName = parts[parts.length - 1];
+
+            return [{
+              name: submoduleName,
+              path: fullPath,
+              isDefault: false,
+              isNamespace: false,
+              nodeText: node.text,
+              // Add Swift-specific metadata
+              importKind: importKind || 'type',
+              moduleName: moduleName
+            }];
+          }
+        }
+      }
+
+      return undefined;
+    } catch (error) {
+      logger.warn({ err: error, nodeType: node.type }, 'Error extracting Swift imported items');
+      return undefined;
     }
   }
 

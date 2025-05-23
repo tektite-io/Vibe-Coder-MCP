@@ -6,12 +6,14 @@
 import path from 'path';
 import logger from '../../../logger.js';
 import { FileCache } from './fileCache.js';
+import { TieredCache, TieredCacheOptions } from './tieredCache.js';
 import { CacheOptions, CacheStats } from './types.js';
 import { CodeMapGeneratorConfig } from '../types.js';
 import { getCacheDirectory } from '../directoryUtils.js';
 
 // Map of cache instances by name
-const cacheInstances = new Map<string, FileCache<unknown>>();
+// Using any type to avoid type compatibility issues with generic cache implementations
+const cacheInstances = new Map<string, any>();
 
 /**
  * Creates a cache manager instance.
@@ -22,15 +24,20 @@ export function createCacheManager(config: CodeMapGeneratorConfig) {
   const cacheDir = getCacheDirectory(config);
 
   /**
-   * Gets or creates a cache instance.
+   * Gets or creates a file cache instance.
    * @param name The name of the cache
    * @param options Additional cache options
    * @returns A promise that resolves to the cache instance
    */
-  async function getCache<T>(name: string, options?: Partial<CacheOptions>): Promise<FileCache<T>> {
+  async function getFileCache<T>(name: string, options?: Partial<CacheOptions>): Promise<FileCache<T>> {
     // Check if the cache is already created
     if (cacheInstances.has(name)) {
-      return cacheInstances.get(name) as FileCache<T>;
+      const cache = cacheInstances.get(name);
+      if (cache instanceof FileCache) {
+        return cache as FileCache<T>;
+      } else {
+        throw new Error(`Cache ${name} exists but is not a FileCache`);
+      }
     }
 
     // Create a new cache instance
@@ -52,8 +59,64 @@ export function createCacheManager(config: CodeMapGeneratorConfig) {
     // Store the cache instance
     cacheInstances.set(name, cache);
 
-    logger.debug(`Created cache instance: ${name}`);
+    logger.debug(`Created file cache instance: ${name}`);
     return cache;
+  }
+
+  /**
+   * Gets or creates a tiered cache instance.
+   * @param name The name of the cache
+   * @param options Additional cache options
+   * @returns A promise that resolves to the cache instance
+   */
+  async function getTieredCache<T>(name: string, options?: Partial<TieredCacheOptions>): Promise<TieredCache<T>> {
+    // Check if the cache is already created
+    if (cacheInstances.has(name)) {
+      const cache = cacheInstances.get(name);
+      if (cache instanceof TieredCache) {
+        return cache as TieredCache<T>;
+      } else {
+        throw new Error(`Cache ${name} exists but is not a TieredCache`);
+      }
+    }
+
+    // Create a new cache instance
+    const cacheOptions: TieredCacheOptions = {
+      name,
+      cacheDir: path.join(cacheDir, name),
+      maxEntries: options?.maxEntries || config.cache?.maxEntries,
+      maxAge: options?.maxAge || config.cache?.maxAge,
+      validateOnGet: options?.validateOnGet,
+      pruneOnStartup: options?.pruneOnStartup,
+      pruneInterval: options?.pruneInterval,
+      serialize: options?.serialize,
+      deserialize: options?.deserialize,
+      useMemoryCache: options?.useMemoryCache ?? config.cache?.useMemoryCache ?? true,
+      memoryMaxEntries: options?.memoryMaxEntries,
+      memoryMaxAge: options?.memoryMaxAge,
+      memoryThreshold: options?.memoryThreshold,
+      memorySizeCalculator: options?.memorySizeCalculator
+    };
+
+    const cache = new TieredCache<T>(cacheOptions);
+    await cache.init();
+
+    // Store the cache instance
+    cacheInstances.set(name, cache);
+
+    logger.debug(`Created tiered cache instance: ${name}`);
+    return cache;
+  }
+
+  /**
+   * Gets or creates a cache instance.
+   * For backward compatibility, defaults to FileCache.
+   * @param name The name of the cache
+   * @param options Additional cache options
+   * @returns A promise that resolves to the cache instance
+   */
+  async function getCache<T>(name: string, options?: Partial<CacheOptions>): Promise<FileCache<T>> {
+    return getFileCache<T>(name, options);
   }
 
   /**
@@ -125,7 +188,10 @@ export function createCacheManager(config: CodeMapGeneratorConfig) {
    */
   function getCacheStats(name: string): CacheStats | undefined {
     const cache = cacheInstances.get(name);
-    return cache?.getStats();
+    if (cache) {
+      return cache.getStats();
+    }
+    return undefined;
   }
 
   /**
@@ -136,7 +202,8 @@ export function createCacheManager(config: CodeMapGeneratorConfig) {
     const stats: Record<string, CacheStats> = {};
 
     for (const [name, cache] of cacheInstances.entries()) {
-      stats[name] = cache.getStats();
+      const cacheStats = cache.getStats();
+      stats[name] = cacheStats;
     }
 
     return stats;
@@ -157,6 +224,8 @@ export function createCacheManager(config: CodeMapGeneratorConfig) {
 
   return {
     getCache,
+    getFileCache,
+    getTieredCache,
     clearCache,
     clearAllCaches,
     pruneCache,

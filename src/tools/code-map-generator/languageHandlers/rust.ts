@@ -8,6 +8,7 @@ import { SyntaxNode } from '../parser.js';
 import { FunctionExtractionOptions } from '../types.js';
 import { getNodeText } from '../astAnalyzer.js';
 import logger from '../../../logger.js';
+import { ImportedItem } from '../codeMapModel.js';
 
 /**
  * Language handler for Rust.
@@ -273,6 +274,199 @@ export class RustHandler extends BaseLanguageHandler {
       logger.warn({ err: error, nodeType: node.type }, 'Error extracting Rust import path');
       return 'unknown';
     }
+  }
+
+  /**
+   * Extracts imported items from an AST node.
+   */
+  protected extractImportedItems(node: SyntaxNode, sourceCode: string): ImportedItem[] | undefined {
+    try {
+      if (node.type === 'use_declaration') {
+        const items: ImportedItem[] = [];
+        const treeNode = node.childForFieldName('tree');
+
+        if (treeNode) {
+          const fullPath = getNodeText(treeNode, sourceCode);
+
+          // Handle different types of Rust imports
+
+          // Case 1: Simple path import - use std::io;
+          if (!fullPath.includes('{') && !fullPath.includes('::*')) {
+            const parts = fullPath.split('::');
+            const name = parts[parts.length - 1];
+
+            items.push({
+              name,
+              path: fullPath,
+              isDefault: false,
+              isNamespace: false,
+              nodeText: node.text
+            });
+          }
+
+          // Case 2: Wildcard import - use std::io::*;
+          else if (fullPath.endsWith('::*')) {
+            const basePath = fullPath.substring(0, fullPath.length - 3); // Remove ::*
+
+            items.push({
+              name: '*',
+              path: basePath,
+              isDefault: false,
+              isNamespace: true,
+              nodeText: node.text
+            });
+          }
+
+          // Case 3: Grouped imports - use std::{io, fs, path};
+          else if (fullPath.includes('{')) {
+            const basePath = fullPath.substring(0, fullPath.indexOf('{'));
+            const groupContent = fullPath.substring(
+              fullPath.indexOf('{') + 1,
+              fullPath.lastIndexOf('}')
+            );
+
+            // Split by commas, but handle nested braces
+            const importItems = this.splitGroupedImports(groupContent);
+
+            for (const item of importItems) {
+              const trimmedItem = item.trim();
+
+              // Handle aliased imports - use std::io::Error as IoError;
+              if (trimmedItem.includes(' as ')) {
+                const [originalName, alias] = trimmedItem.split(' as ').map(s => s.trim());
+                items.push({
+                  name: originalName,
+                  alias,
+                  path: basePath + originalName,
+                  isDefault: false,
+                  isNamespace: false,
+                  nodeText: trimmedItem
+                });
+              }
+              // Handle nested groups - use std::io::{self, Read, Write};
+              else if (trimmedItem.includes('{')) {
+                const nestedBase = trimmedItem.substring(0, trimmedItem.indexOf('{'));
+                const nestedContent = trimmedItem.substring(
+                  trimmedItem.indexOf('{') + 1,
+                  trimmedItem.lastIndexOf('}')
+                );
+
+                const nestedItems = this.splitGroupedImports(nestedContent);
+
+                for (const nestedItem of nestedItems) {
+                  const trimmedNestedItem = nestedItem.trim();
+
+                  if (trimmedNestedItem === 'self') {
+                    items.push({
+                      name: nestedBase,
+                      path: basePath + nestedBase,
+                      isDefault: false,
+                      isNamespace: false,
+                      nodeText: trimmedNestedItem
+                    });
+                  } else {
+                    items.push({
+                      name: trimmedNestedItem,
+                      path: basePath + nestedBase + '::' + trimmedNestedItem,
+                      isDefault: false,
+                      isNamespace: false,
+                      nodeText: trimmedNestedItem
+                    });
+                  }
+                }
+              }
+              // Handle self import - use std::io::{self};
+              else if (trimmedItem === 'self') {
+                const lastPart = basePath.split('::').filter(Boolean).pop() || '';
+                items.push({
+                  name: lastPart,
+                  path: basePath.substring(0, basePath.length - 2), // Remove trailing ::
+                  isDefault: false,
+                  isNamespace: false,
+                  nodeText: 'self'
+                });
+              }
+              // Regular item in a group
+              else {
+                items.push({
+                  name: trimmedItem,
+                  path: basePath + trimmedItem,
+                  isDefault: false,
+                  isNamespace: false,
+                  nodeText: trimmedItem
+                });
+              }
+            }
+          }
+        }
+
+        return items.length > 0 ? items : undefined;
+      } else if (node.type === 'extern_crate_declaration') {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          const name = getNodeText(nameNode, sourceCode);
+
+          // Handle aliased extern crate - extern crate foo as bar;
+          const aliasNode = node.childForFieldName('alias');
+          if (aliasNode) {
+            const alias = getNodeText(aliasNode, sourceCode);
+            return [{
+              name,
+              alias,
+              path: name,
+              isDefault: false,
+              isNamespace: false,
+              nodeText: node.text
+            }];
+          }
+
+          return [{
+            name,
+            path: name,
+            isDefault: false,
+            isNamespace: false,
+            nodeText: node.text
+          }];
+        }
+      }
+
+      return undefined;
+    } catch (error) {
+      logger.warn({ err: error, nodeType: node.type }, 'Error extracting Rust imported items');
+      return undefined;
+    }
+  }
+
+  /**
+   * Helper method to split grouped imports while respecting nested braces.
+   */
+  private splitGroupedImports(groupContent: string): string[] {
+    const result: string[] = [];
+    let currentItem = '';
+    let braceDepth = 0;
+
+    for (let i = 0; i < groupContent.length; i++) {
+      const char = groupContent[i];
+
+      if (char === '{') {
+        braceDepth++;
+        currentItem += char;
+      } else if (char === '}') {
+        braceDepth--;
+        currentItem += char;
+      } else if (char === ',' && braceDepth === 0) {
+        result.push(currentItem);
+        currentItem = '';
+      } else {
+        currentItem += char;
+      }
+    }
+
+    if (currentItem.trim()) {
+      result.push(currentItem);
+    }
+
+    return result;
   }
 
   /**

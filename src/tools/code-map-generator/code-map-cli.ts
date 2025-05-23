@@ -45,6 +45,9 @@ program
   .option('-i, --ignore <patterns>', 'Comma-separated glob patterns to ignore')
   .option('-f, --output-format <format>', 'Output format (markdown or json)', 'markdown')
   .option('-o, --output-dir <directory>', 'Directory to save output files')
+  .option('-s, --split-output', 'Split output into multiple files (default: false)')
+  .option('--incremental', 'Use incremental processing (default: true)')
+  .option('--no-incremental', 'Disable incremental processing')
   .option('--interactive', 'Run in interactive mode')
   .option('--help', 'Show help');
 
@@ -218,11 +221,28 @@ async function main(): Promise<void> {
     output: {
       outputDir: process.env.VIBE_CODER_OUTPUT_DIR ?
         path.join(process.env.VIBE_CODER_OUTPUT_DIR, 'code-map-generator') :
-        path.join(process.cwd(), 'vibecoderoutput', 'code-map-generator')
+        path.join(process.cwd(), 'vibecoderoutput', 'code-map-generator'),
+      format: 'markdown',
+      splitOutput: false // Default to single file output
+    },
+    cache: {
+      enabled: true,
+      useFileBasedAccess: true,
+      useFileHashes: true,
+      maxCachedFiles: 0 // Disable in-memory caching of file content
+    },
+    processing: {
+      incremental: true, // Enable incremental processing by default
+      incrementalConfig: {
+        useFileHashes: true,
+        useFileMetadata: true,
+        saveProcessedFilesList: true
+      }
     },
     importResolver: {
       enabled: true,
-      expandSecurityBoundary: true
+      expandSecurityBoundary: true,
+      enhanceImports: true
     },
     featureFlags: {
       enhancedFunctionDetection: true,
@@ -282,6 +302,22 @@ async function main(): Promise<void> {
     config.output = {
       ...config.output,
       outputDir: options.outputDir
+    };
+  }
+
+  // Set split output if specified
+  if (options.splitOutput) {
+    config.output = {
+      ...config.output,
+      splitOutput: true
+    };
+  }
+
+  // Set incremental processing option if specified
+  if (options.incremental !== undefined) {
+    config.processing = {
+      ...config.processing,
+      incremental: options.incremental
     };
   }
 

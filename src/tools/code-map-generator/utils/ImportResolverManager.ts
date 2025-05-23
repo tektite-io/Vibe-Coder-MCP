@@ -59,13 +59,21 @@ export class ImportResolverManager {
    */
   private config: ImportResolverConfig = {
     enabled: false,
-    useCache: false // Disable caching to reduce memory usage
+    useCache: false, // Disable caching to reduce memory usage
+    expandSecurityBoundary: true // Enable expanded security boundary by default
   };
 
   /**
    * Private constructor to enforce singleton pattern.
    */
-  private constructor() {}
+  private constructor() {
+    // Set default configuration with expanded security boundary enabled
+    this.config = {
+      enabled: false,
+      useCache: false,
+      expandSecurityBoundary: true // Always enable expanded security boundary by default
+    };
+  }
 
   /**
    * Gets the singleton instance of the manager.
@@ -87,10 +95,17 @@ export class ImportResolverManager {
   public initialize(config: ImportResolverConfig): void {
     this.config = {
       ...this.config,
-      ...config
+      ...config,
+      // Always force expandSecurityBoundary to true for better import resolution
+      expandSecurityBoundary: true
     };
 
     logger.debug({ config: this.config }, 'Initialized import resolver');
+
+    // Log a warning if expandSecurityBoundary was explicitly set to false
+    if (config.expandSecurityBoundary === false) {
+      logger.warn('expandSecurityBoundary was set to false but is being forced to true for better import resolution');
+    }
   }
 
   /**
@@ -158,7 +173,8 @@ export class ImportResolverManager {
         language,
         useCache: this.config.useCache,
         extensions,
-        expandSecurityBoundary: this.config.expandSecurityBoundary,
+        // Always force expandSecurityBoundary to true for better import resolution
+        expandSecurityBoundary: true,
         includeAbsolutePath: includeAbsolutePath === true
       };
 

@@ -3,8 +3,8 @@
  * This file contains the registry for mapping file extensions to language handlers.
  */
 
-import { LanguageHandler } from '../types.js';
 import { DefaultLanguageHandler } from './default.js';
+import { LanguageHandler } from '../types.js';
 import logger from '../../../logger.js';
 
 // Import language-specific handlers

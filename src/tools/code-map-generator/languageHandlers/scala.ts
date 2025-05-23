@@ -8,6 +8,7 @@ import { SyntaxNode } from '../parser.js';
 import { FunctionExtractionOptions } from '../types.js';
 import { getNodeText } from '../astAnalyzer.js';
 import logger from '../../../logger.js';
+import { ImportedItem } from '../codeMapModel.js';
 
 /**
  * Language handler for Scala.
@@ -255,6 +256,120 @@ export class ScalaHandler extends BaseLanguageHandler {
     } catch (error) {
       logger.warn({ err: error, nodeType: node.type }, 'Error extracting Scala import path');
       return 'unknown';
+    }
+  }
+
+  /**
+   * Extracts imported items from an AST node.
+   */
+  protected extractImportedItems(node: SyntaxNode, sourceCode: string): ImportedItem[] | undefined {
+    try {
+      // Handle import declarations (import scala.collection.mutable.{Map, Set})
+      if (node.type === 'import_declaration') {
+        const importeeNode = node.childForFieldName('importee');
+
+        if (importeeNode) {
+          const fullPath = getNodeText(importeeNode, sourceCode);
+
+          // Check for different types of Scala imports
+
+          // Case 1: Wildcard import - import scala.collection._
+          if (fullPath.endsWith('._')) {
+            const basePath = fullPath.substring(0, fullPath.length - 2);
+
+            return [{
+              name: '*',
+              path: basePath,
+              isDefault: false,
+              isNamespace: true,
+              nodeText: node.text,
+              // Add Scala-specific metadata
+              isWildcardImport: true
+            }];
+          }
+
+          // Case 2: Selector import - import scala.collection.mutable.{Map, Set}
+          else if (fullPath.includes('{') && fullPath.includes('}')) {
+            const basePath = fullPath.substring(0, fullPath.indexOf('{'));
+            const selectorsText = fullPath.substring(
+              fullPath.indexOf('{') + 1,
+              fullPath.lastIndexOf('}')
+            );
+
+            // Split selectors by comma, handling potential whitespace
+            const selectors = selectorsText.split(',').map(s => s.trim());
+            const items: ImportedItem[] = [];
+
+            for (const selector of selectors) {
+              // Handle renamed imports - Map => MutableMap
+              if (selector.includes('=>')) {
+                const [originalName, alias] = selector.split('=>').map(s => s.trim());
+                items.push({
+                  name: originalName,
+                  path: basePath + originalName,
+                  alias: alias,
+                  isDefault: false,
+                  isNamespace: false,
+                  nodeText: selector,
+                  // Add Scala-specific metadata
+                  isSelectorImport: true
+                });
+              }
+              // Handle regular selector imports
+              else {
+                items.push({
+                  name: selector,
+                  path: basePath + selector,
+                  isDefault: false,
+                  isNamespace: false,
+                  nodeText: selector,
+                  // Add Scala-specific metadata
+                  isSelectorImport: true
+                });
+              }
+            }
+
+            return items.length > 0 ? items : undefined;
+          }
+
+          // Case 3: Simple import - import scala.collection.mutable.Map
+          else {
+            const parts = fullPath.split('.');
+            const name = parts[parts.length - 1];
+
+            return [{
+              name: name,
+              path: fullPath,
+              isDefault: false,
+              isNamespace: false,
+              nodeText: node.text
+            }];
+          }
+        }
+      }
+      // Handle package declarations (package com.example.app)
+      else if (node.type === 'package_declaration') {
+        const refNode = node.childForFieldName('ref');
+
+        if (refNode) {
+          const packagePath = getNodeText(refNode, sourceCode);
+
+          return [{
+            name: packagePath,
+            path: packagePath,
+            isDefault: false,
+            isNamespace: true,
+            nodeText: node.text,
+            // Add Scala-specific metadata
+            isPackageDeclaration: true
+          }];
+        }
+      }
+
+      return undefined;
+    } catch (error) {
+      logger.warn({ err: error, nodeType: node.type }, 'Error extracting Scala imported items');
+      return undefined;
     }
   }
 

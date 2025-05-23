@@ -129,6 +129,26 @@ export interface CacheOptions {
 }
 
 /**
+ * Interface for memory cache statistics.
+ */
+export interface MemoryCacheStats {
+  /**
+   * The number of hits (successful gets).
+   */
+  hits: number;
+
+  /**
+   * The number of entries in the cache.
+   */
+  size: number;
+
+  /**
+   * The total size of all entries in the cache.
+   */
+  totalSize: number;
+}
+
+/**
  * Interface for cache statistics.
  */
 export interface CacheStats {
@@ -176,6 +196,11 @@ export interface CacheStats {
    * The total size of all entries in the cache.
    */
   totalSize?: number;
+
+  /**
+   * Memory cache statistics (if memory caching is enabled).
+   */
+  memoryStats?: MemoryCacheStats;
 }
 
 /**

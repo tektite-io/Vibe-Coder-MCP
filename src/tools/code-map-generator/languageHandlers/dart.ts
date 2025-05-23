@@ -8,6 +8,7 @@ import { SyntaxNode } from '../parser.js';
 import { FunctionExtractionOptions } from '../types.js';
 import { getNodeText } from '../astAnalyzer.js';
 import logger from '../../../logger.js';
+import { ImportedItem } from '../codeMapModel.js';
 
 /**
  * Language handler for Dart/Flutter.
@@ -369,6 +370,235 @@ export class DartHandler extends BaseLanguageHandler {
     } catch (error) {
       logger.warn({ err: error, nodeType: node.type }, 'Error extracting Dart/Flutter import path');
       return 'unknown';
+    }
+  }
+
+  /**
+   * Extracts imported items from an AST node.
+   */
+  protected extractImportedItems(node: SyntaxNode, sourceCode: string): ImportedItem[] | undefined {
+    try {
+      // Handle import directives (import 'package:flutter/material.dart')
+      if (node.type === 'import_directive') {
+        const uriNode = node.childForFieldName('uri');
+
+        if (uriNode) {
+          const path = getNodeText(uriNode, sourceCode).replace(/^['"]|['"]$/g, '');
+
+          // Check for package imports (package:flutter/material.dart)
+          const isPackageImport = path.startsWith('package:');
+
+          // Check for relative imports (../models/user.dart)
+          const isRelativeImport = path.startsWith('./') || path.startsWith('../') || !path.includes(':');
+
+          // Check for dart: imports (dart:io)
+          const isDartImport = path.startsWith('dart:');
+
+          // Extract the library name (last part of the path)
+          const parts = path.split('/');
+          const fileName = parts[parts.length - 1];
+          const libraryName = fileName.replace('.dart', '');
+
+          // Check for show/hide clauses
+          const showClauseNode = node.childForFieldName('show_clause');
+          const hideClauseNode = node.childForFieldName('hide_clause');
+
+          // Check for as clause (import 'package:flutter/material.dart' as material)
+          const asClauseNode = node.childForFieldName('as_clause');
+          const alias = asClauseNode ? this.extractAsClause(asClauseNode, sourceCode) : undefined;
+
+          // Create the base import item
+          const importItem: ImportedItem = {
+            name: libraryName,
+            path,
+            alias,
+            isDefault: false,
+            isNamespace: true,
+            nodeText: node.text,
+            // Add Dart-specific metadata
+            isPackageImport,
+            isRelativeImport,
+            isDartImport
+          };
+
+          // If there's a show clause, extract the specific items being imported
+          if (showClauseNode) {
+            const showItems = this.extractShowHideItems(showClauseNode, sourceCode);
+            if (showItems && showItems.length > 0) {
+              return showItems.map(item => ({
+                ...importItem,
+                name: item,
+                isNamespace: false,
+                showClause: true
+              }));
+            }
+          }
+
+          // If there's a hide clause, note what's being hidden
+          if (hideClauseNode) {
+            const hideItems = this.extractShowHideItems(hideClauseNode, sourceCode);
+            if (hideItems) {
+              importItem.hideItems = hideItems;
+            }
+          }
+
+          return [importItem];
+        }
+      }
+      // Handle export directives (export 'package:flutter/material.dart')
+      else if (node.type === 'export_directive') {
+        const uriNode = node.childForFieldName('uri');
+
+        if (uriNode) {
+          const path = getNodeText(uriNode, sourceCode).replace(/^['"]|['"]$/g, '');
+
+          // Extract the library name (last part of the path)
+          const parts = path.split('/');
+          const fileName = parts[parts.length - 1];
+          const libraryName = fileName.replace('.dart', '');
+
+          // Check for show/hide clauses
+          const showClauseNode = node.childForFieldName('show_clause');
+          const hideClauseNode = node.childForFieldName('hide_clause');
+
+          // Create the base export item
+          const exportItem: ImportedItem = {
+            name: libraryName,
+            path,
+            isDefault: false,
+            isNamespace: true,
+            nodeText: node.text,
+            // Add Dart-specific metadata
+            isExport: true
+          };
+
+          // If there's a show clause, extract the specific items being exported
+          if (showClauseNode) {
+            const showItems = this.extractShowHideItems(showClauseNode, sourceCode);
+            if (showItems && showItems.length > 0) {
+              return showItems.map(item => ({
+                ...exportItem,
+                name: item,
+                isNamespace: false,
+                showClause: true
+              }));
+            }
+          }
+
+          // If there's a hide clause, note what's being hidden
+          if (hideClauseNode) {
+            const hideItems = this.extractShowHideItems(hideClauseNode, sourceCode);
+            if (hideItems) {
+              exportItem.hideItems = hideItems;
+            }
+          }
+
+          return [exportItem];
+        }
+      }
+      // Handle part directives (part 'user.dart')
+      else if (node.type === 'part_directive') {
+        const uriNode = node.childForFieldName('uri');
+
+        if (uriNode) {
+          const path = getNodeText(uriNode, sourceCode).replace(/^['"]|['"]$/g, '');
+
+          // Extract the file name (last part of the path)
+          const parts = path.split('/');
+          const fileName = parts[parts.length - 1];
+
+          return [{
+            name: fileName,
+            path,
+            isDefault: false,
+            isNamespace: false,
+            nodeText: node.text,
+            // Add Dart-specific metadata
+            isPart: true
+          }];
+        }
+      }
+      // Handle part of directives (part of 'package:myapp/models.dart')
+      else if (node.type === 'part_of_directive') {
+        const uriNode = node.childForFieldName('uri');
+
+        if (uriNode) {
+          const path = getNodeText(uriNode, sourceCode).replace(/^['"]|['"]$/g, '');
+
+          // Extract the library name (last part of the path)
+          const parts = path.split('/');
+          const fileName = parts[parts.length - 1];
+          const libraryName = fileName.replace('.dart', '');
+
+          return [{
+            name: libraryName,
+            path,
+            isDefault: false,
+            isNamespace: true,
+            nodeText: node.text,
+            // Add Dart-specific metadata
+            isPartOf: true
+          }];
+        }
+
+        // Handle part of with library name (part of models)
+        const libraryNameNode = node.childForFieldName('library_name');
+        if (libraryNameNode) {
+          const libraryName = getNodeText(libraryNameNode, sourceCode);
+
+          return [{
+            name: libraryName,
+            path: libraryName,
+            isDefault: false,
+            isNamespace: true,
+            nodeText: node.text,
+            // Add Dart-specific metadata
+            isPartOf: true,
+            isLibraryName: true
+          }];
+        }
+      }
+
+      return undefined;
+    } catch (error) {
+      logger.warn({ err: error, nodeType: node.type }, 'Error extracting Dart/Flutter imported items');
+      return undefined;
+    }
+  }
+
+  /**
+   * Extracts items from a show or hide clause.
+   */
+  private extractShowHideItems(node: SyntaxNode, sourceCode: string): string[] | undefined {
+    try {
+      const items: string[] = [];
+
+      // Extract identifiers from the clause
+      node.descendantsOfType('identifier').forEach(identifierNode => {
+        items.push(getNodeText(identifierNode, sourceCode));
+      });
+
+      return items.length > 0 ? items : undefined;
+    } catch (error) {
+      logger.warn({ err: error, nodeType: node.type }, 'Error extracting Dart/Flutter show/hide items');
+      return undefined;
+    }
+  }
+
+  /**
+   * Extracts the alias from an as clause.
+   */
+  private extractAsClause(node: SyntaxNode, sourceCode: string): string | undefined {
+    try {
+      const identifierNode = node.childForFieldName('identifier');
+      if (identifierNode) {
+        return getNodeText(identifierNode, sourceCode);
+      }
+
+      return undefined;
+    } catch (error) {
+      logger.warn({ err: error, nodeType: node.type }, 'Error extracting Dart/Flutter as clause');
+      return undefined;
     }
   }
 

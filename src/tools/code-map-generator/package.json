@@ -1,0 +1,36 @@
+{
+  "name": "code-map-generator",
+  "version": "1.0.0",
+  "description": "Code Map Generator tool for Vibe Coder MCP",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "tree-sitter": "^0.20.6",
+    "tree-sitter-bash": "^0.20.0",
+    "tree-sitter-c": "^0.20.6",
+    "tree-sitter-cpp": "^0.20.0",
+    "tree-sitter-c-sharp": "^0.20.0",
+    "tree-sitter-css": "^0.20.0",
+    "tree-sitter-go": "^0.20.0",
+    "tree-sitter-html": "^0.20.1",
+    "tree-sitter-java": "^0.20.1",
+    "tree-sitter-javascript": "^0.20.1",
+    "tree-sitter-json": "^0.20.0",
+    "tree-sitter-php": "^0.20.0",
+    "tree-sitter-python": "^0.20.4",
+    "tree-sitter-ruby": "^0.20.0",
+    "tree-sitter-rust": "^0.20.4",
+    "tree-sitter-typescript": "^0.20.3",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.5",
+    "typescript": "^5.3.3",
+    "vitest": "^1.0.4"
+  }
+}

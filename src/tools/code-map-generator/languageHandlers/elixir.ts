@@ -8,6 +8,7 @@ import { SyntaxNode } from '../parser.js';
 import { FunctionExtractionOptions } from '../types.js';
 import { getNodeText } from '../astAnalyzer.js';
 import logger from '../../../logger.js';
+import { ImportedItem } from '../codeMapModel.js';
 
 /**
  * Language handler for Elixir.
@@ -330,6 +331,231 @@ export class ElixirHandler extends BaseLanguageHandler {
     } catch (error) {
       logger.warn({ err: error, nodeType: node.type }, 'Error extracting Elixir import path');
       return 'unknown';
+    }
+  }
+
+  /**
+   * Extracts imported items from an AST node.
+   */
+  protected extractImportedItems(node: SyntaxNode, sourceCode: string): ImportedItem[] | undefined {
+    try {
+      // Handle import statements (import Module)
+      if (node.type === 'import') {
+        const argsNode = node.childForFieldName('arguments');
+
+        if (argsNode?.firstChild) {
+          const moduleName = getNodeText(argsNode.firstChild, sourceCode);
+
+          // Check for options in the import statement
+          const options = this.extractImportOptions(argsNode, sourceCode);
+
+          // Check for 'only' option - import Module, only: [:function1, :function2]
+          if (options && options.only) {
+            return options.only.map((item: string) => ({
+              name: item.replace(/^:/, ''), // Remove leading colon from atom
+              path: moduleName,
+              isDefault: false,
+              isNamespace: false,
+              nodeText: node.text,
+              // Add Elixir-specific metadata
+              importType: 'import',
+              onlyImport: true
+            }));
+          }
+
+          // Check for 'except' option - import Module, except: [:function1, :function2]
+          if (options && options.except) {
+            return [{
+              name: moduleName,
+              path: moduleName,
+              isDefault: false,
+              isNamespace: true,
+              nodeText: node.text,
+              // Add Elixir-specific metadata
+              importType: 'import',
+              exceptItems: options.except.map((item: string) => item.replace(/^:/, ''))
+            }];
+          }
+
+          // Simple import - import Module
+          return [{
+            name: moduleName,
+            path: moduleName,
+            isDefault: false,
+            isNamespace: true,
+            nodeText: node.text,
+            // Add Elixir-specific metadata
+            importType: 'import'
+          }];
+        }
+      }
+      // Handle alias statements (alias Module.SubModule)
+      else if (node.type === 'alias') {
+        const argsNode = node.childForFieldName('arguments');
+
+        if (argsNode?.firstChild) {
+          const modulePath = getNodeText(argsNode.firstChild, sourceCode);
+
+          // Check for options in the alias statement
+          const options = this.extractImportOptions(argsNode, sourceCode);
+
+          // Check for 'as' option - alias Module.SubModule, as: NewName
+          if (options && options.as) {
+            return [{
+              name: options.as,
+              path: modulePath,
+              alias: options.as,
+              isDefault: false,
+              isNamespace: true,
+              nodeText: node.text,
+              // Add Elixir-specific metadata
+              importType: 'alias'
+            }];
+          }
+
+          // Check for multi-alias - alias Module.{SubModule1, SubModule2}
+          if (modulePath.includes('{') && modulePath.includes('}')) {
+            const basePath = modulePath.substring(0, modulePath.indexOf('{'));
+            const subModulesText = modulePath.substring(
+              modulePath.indexOf('{') + 1,
+              modulePath.lastIndexOf('}')
+            );
+
+            // Split by comma, handling potential whitespace
+            const subModules = subModulesText.split(',').map(s => s.trim());
+
+            return subModules.map(subModule => ({
+              name: subModule,
+              path: basePath + subModule,
+              isDefault: false,
+              isNamespace: true,
+              nodeText: subModule,
+              // Add Elixir-specific metadata
+              importType: 'alias',
+              isMultiAlias: true
+            }));
+          }
+
+          // Simple alias - alias Module.SubModule
+          const parts = modulePath.split('.');
+          const name = parts[parts.length - 1];
+
+          return [{
+            name: name,
+            path: modulePath,
+            isDefault: false,
+            isNamespace: true,
+            nodeText: node.text,
+            // Add Elixir-specific metadata
+            importType: 'alias'
+          }];
+        }
+      }
+      // Handle require statements (require Logger)
+      else if (node.type === 'require') {
+        const argsNode = node.childForFieldName('arguments');
+
+        if (argsNode?.firstChild) {
+          const moduleName = getNodeText(argsNode.firstChild, sourceCode);
+
+          // Check for options in the require statement
+          const options = this.extractImportOptions(argsNode, sourceCode);
+
+          // Check for 'as' option - require Logger, as: Log
+          if (options && options.as) {
+            return [{
+              name: options.as,
+              path: moduleName,
+              alias: options.as,
+              isDefault: false,
+              isNamespace: true,
+              nodeText: node.text,
+              // Add Elixir-specific metadata
+              importType: 'require'
+            }];
+          }
+
+          // Simple require - require Logger
+          return [{
+            name: moduleName,
+            path: moduleName,
+            isDefault: false,
+            isNamespace: true,
+            nodeText: node.text,
+            // Add Elixir-specific metadata
+            importType: 'require'
+          }];
+        }
+      }
+      // Handle use statements (use GenServer)
+      else if (node.type === 'use') {
+        const argsNode = node.childForFieldName('arguments');
+
+        if (argsNode?.firstChild) {
+          const moduleName = getNodeText(argsNode.firstChild, sourceCode);
+
+          // Check for options in the use statement
+          const options = this.extractImportOptions(argsNode, sourceCode);
+
+          return [{
+            name: moduleName,
+            path: moduleName,
+            isDefault: false,
+            isNamespace: true,
+            nodeText: node.text,
+            // Add Elixir-specific metadata
+            importType: 'use',
+            options: options
+          }];
+        }
+      }
+
+      return undefined;
+    } catch (error) {
+      logger.warn({ err: error, nodeType: node.type }, 'Error extracting Elixir imported items');
+      return undefined;
+    }
+  }
+
+  /**
+   * Extracts options from an import/alias/require/use statement.
+   */
+  private extractImportOptions(argsNode: SyntaxNode, sourceCode: string): Record<string, any> | undefined {
+    try {
+      // Skip the first child (module name)
+      let optionsNode = argsNode.firstChild?.nextNamedSibling;
+
+      if (!optionsNode) {
+        return undefined;
+      }
+
+      const options: Record<string, any> = {};
+
+      // Extract options from the node
+      const optionsText = getNodeText(optionsNode, sourceCode);
+
+      // Parse 'only' option - only: [:function1, :function2]
+      const onlyMatch = optionsText.match(/only:\s*\[(.*?)\]/);
+      if (onlyMatch && onlyMatch[1]) {
+        options.only = onlyMatch[1].split(',').map(s => s.trim());
+      }
+
+      // Parse 'except' option - except: [:function1, :function2]
+      const exceptMatch = optionsText.match(/except:\s*\[(.*?)\]/);
+      if (exceptMatch && exceptMatch[1]) {
+        options.except = exceptMatch[1].split(',').map(s => s.trim());
+      }
+
+      // Parse 'as' option - as: NewName
+      const asMatch = optionsText.match(/as:\s*([A-Za-z0-9._]+)/);
+      if (asMatch && asMatch[1]) {
+        options.as = asMatch[1];
+      }
+
+      return Object.keys(options).length > 0 ? options : undefined;
+    } catch (error) {
+      logger.warn({ err: error }, 'Error extracting Elixir import options');
+      return undefined;
     }
   }
 

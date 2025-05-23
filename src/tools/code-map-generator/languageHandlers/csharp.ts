@@ -8,6 +8,7 @@ import { SyntaxNode } from '../parser.js';
 import { FunctionExtractionOptions } from '../types.js';
 import { getNodeText } from '../astAnalyzer.js';
 import logger from '../../../logger.js';
+import { ImportedItem } from '../codeMapModel.js';
 
 /**
  * Language handler for C#.
@@ -317,6 +318,79 @@ export class CSharpHandler extends BaseLanguageHandler {
     } catch (error) {
       logger.warn({ err: error, nodeType: node.type }, 'Error extracting C# import path');
       return 'unknown';
+    }
+  }
+
+  /**
+   * Extracts imported items from an AST node.
+   */
+  protected extractImportedItems(node: SyntaxNode, sourceCode: string): ImportedItem[] | undefined {
+    try {
+      if (node.type === 'using_directive') {
+        // Get the name node which contains the namespace
+        const nameNode = node.childForFieldName('name');
+
+        if (nameNode) {
+          const fullPath = getNodeText(nameNode, sourceCode);
+          const parts = fullPath.split('.');
+          const name = parts[parts.length - 1];
+
+          // Check for static imports - using static System.Console;
+          const isStatic = this.isStaticUsing(node, sourceCode);
+
+          // Check for aliased imports - using Project = MyCompany.Project;
+          const aliasNode = node.childForFieldName('alias');
+          const alias = aliasNode ? getNodeText(aliasNode, sourceCode) : undefined;
+
+          // Check for global using (C# 10+)
+          const isGlobal = this.isGlobalUsing(node, sourceCode);
+
+          return [{
+            name: alias || name,
+            path: fullPath,
+            alias: alias,
+            isDefault: false,
+            isNamespace: true,
+            nodeText: node.text,
+            // Add C#-specific metadata
+            isStatic,
+            isGlobal
+          }];
+        }
+      }
+
+      return undefined;
+    } catch (error) {
+      logger.warn({ err: error, nodeType: node.type }, 'Error extracting C# imported items');
+      return undefined;
+    }
+  }
+
+  /**
+   * Checks if a using directive is a static using.
+   */
+  private isStaticUsing(node: SyntaxNode, sourceCode: string): boolean {
+    try {
+      // Look for the 'static' keyword in the using directive
+      const staticNode = node.childForFieldName('static');
+      return staticNode !== null;
+    } catch (error) {
+      logger.warn({ err: error, nodeType: node.type }, 'Error checking if C# using is static');
+      return false;
+    }
+  }
+
+  /**
+   * Checks if a using directive is a global using (C# 10+).
+   */
+  private isGlobalUsing(node: SyntaxNode, sourceCode: string): boolean {
+    try {
+      // Look for the 'global' keyword in the using directive
+      const globalNode = node.childForFieldName('global');
+      return globalNode !== null;
+    } catch (error) {
+      logger.warn({ err: error, nodeType: node.type }, 'Error checking if C# using is global');
+      return false;
     }
   }
 
