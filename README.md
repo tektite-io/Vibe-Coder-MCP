@@ -12,8 +12,6 @@ Vibe Coder MCP integrates with MCP-compatible clients to provide the following c
 *   **Tool Registry Architecture**: Centralized tool management with self-registering tools.
 *   **Direct LLM Calls**: Generator tools now use direct LLM calls for improved reliability and structured output control.
 *   **Workflow Execution**: Runs predefined sequences of tool calls defined in `workflows.json`.
-*   **Code Refactoring**: Improves and modifies existing code snippets (`refactor-code`).
-*   **Git Integration**: Summarizes current Git changes (`git-summary`).
 *   **Research & Planning**: Performs deep research (`research-manager`) and generates planning documents like PRDs (`generate-prd`), user stories (`generate-user-stories`), task lists (`generate-task-list`), and development rules (`generate-rules`).
 *   **Project Scaffolding**: Generates full-stack starter kits (`generate-fullstack-starter-kit`).
 *   **Code Map Generator**: Recursively scans a codebase, extracts semantic information, and generates either a token-efficient, context-dense Markdown index with Mermaid diagrams or a structured JSON representation with absolute file paths for imports and enhanced class property information (`map-codebase`).
@@ -325,9 +323,7 @@ vibe-coder-mcp/
     ├── tools/            # MCP Tools
     │   ├── index.ts      # Tool registration
     │   ├── sequential-thinking.ts  # Fallback routing
-    │   ├── code-refactor-generator/  # Code refactoring
     │   ├── fullstack-starter-kit-generator/  # Project gen
-    │   ├── git-summary-generator/    # Git integration
     │   ├── prd-generator/            # PRD creation
     │   ├── research-manager/         # Research tool
     │   ├── rules-generator/          # Rule generation
@@ -564,9 +560,7 @@ Each tool in the `src/tools/` directory includes comprehensive documentation in 
 
 Refer to these individual READMEs for in-depth information:
 
-*   `src/tools/code-refactor-generator/README.md`
 *   `src/tools/fullstack-starter-kit-generator/README.md`
-*   `src/tools/git-summary-generator/README.md`
 *   `src/tools/prd-generator/README.md`
 *   `src/tools/research-manager/README.md`
 *   `src/tools/rules-generator/README.md`
@@ -577,14 +571,9 @@ Refer to these individual READMEs for in-depth information:
 
 ## Tool Categories
 
-### Code Generation & Refactoring Tools
-
-*   **Code Refactor Generator (`refactor-code`)**: Takes an existing code snippet and refactoring instructions (e.g., "convert to async/await", "improve readability", "add error handling") and returns the modified code.
-
 ### Analysis & Information Tools
 
 *   **Code Map Generator (`map-codebase`)**: Scans a codebase to extract semantic information (classes, functions, comments) and generates either a human-readable Markdown map with Mermaid diagrams or a structured JSON representation with absolute file paths for imports and enhanced class property information.
-*   **Git Summary Generator (`git-summary`)**: Provides a summary of the current Git status, showing staged or unstaged changes (diff). Useful for quick checks before committing.
 *   **Research Manager (`research-manager`)**: Performs deep research on technical topics using Perplexity Sonar, providing summaries and sources.
 
 ### Planning & Documentation Tools
@@ -647,8 +636,6 @@ Interact with the tools via your connected AI assistant:
 *   **Generate Task List:** `Create a task list for a weather app based on [user stories]`
 *   **Sequential Thinking:** `Think through the architecture for a microservices-based e-commerce platform`
 *   **Fullstack Starter Kit:** `Create a starter kit for a React/Node.js blog application with user authentication`
-*   **Refactor Code:** `Refactor this code to use async/await: [paste code snippet]`
-*   **Git Summary:** `Show unstaged git changes`
 *   **Run Workflow:** `Run workflow newProjectSetup with input { "projectName": "my-new-app", "description": "A simple task manager" }`
 *   **Map Codebase:** `Generate a code map for the current project`, `map-codebase path="./src"`, or `Generate a JSON representation of the codebase structure with output_format="json"`
 
@@ -752,8 +739,3 @@ While the primary use is integration with an AI assistant (using stdio), you can
 1. **Semantic Routing Not Working:**
    * First run may download embedding model - check for download messages
    * Try a more explicit request that mentions the tool name
-
-2. **Git Summary Tool Issues:**
-   * Check if git is installed and accessible in the PATH
-   * Verify the current directory is a git repository
-   * Try running with explicit repository path

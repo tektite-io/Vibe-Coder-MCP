@@ -30,16 +30,6 @@
       "use_cases": ["coding standards", "project guidelines", "linting rules", "style guide", "development rules"],
       "input_patterns": ["setup rules for {project}", "define standards for {language}", "create style guide for {framework}"]
     },
-    "refactor-code": {
-      "description": "Refactors a given code snippet based on specific instructions, optionally using surrounding file context.",
-      "use_cases": ["refactor code", "improve code", "rewrite snippet", "clean up code", "optimize code", "change code"],
-      "input_patterns": ["refactor this code: {codeContent} to {refactoringInstructions}", "improve snippet {codeContent}", "rewrite {functionName} to be more efficient"]
-    },
-    "git-summary": {
-      "description": "Retrieves a summary of current Git changes (diff). Can show staged or unstaged changes.",
-      "use_cases": ["git diff", "show changes", "view unstaged", "check staged files", "git status summary", "what changed"],
-      "input_patterns": ["show git changes", "git summary", "show staged diff", "view unstaged changes"]
-    },
     "run-workflow": {
       "description": "Runs a predefined sequence of tool calls (a workflow) based on a workflow name and input parameters.",
       "use_cases": ["run workflow", "execute plan", "start process", "automate sequence", "execute workflow", "run automation"],

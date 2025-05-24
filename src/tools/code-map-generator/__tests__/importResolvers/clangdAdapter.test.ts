@@ -57,27 +57,26 @@ describe('ClangdAdapter', () => {
     const filePath = path.join(allowedDir, 'test.cpp');
 
     // Mock the exec function to return a valid path for clangd
-    vi.mocked(exec).mockImplementation(() => {
-      const mockExec: any = (cmd: string, options: any, callback: any) => {
-        if (typeof options === 'function') {
-          callback = options;
-          options = {};
-        }
+    vi.mocked(exec).mockImplementation((cmd: string, options: any, callback: any) => {
+      if (typeof options === 'function') {
+        callback = options;
+        options = {};
+      }
 
+      // Simulate async execution
+      setTimeout(() => {
         if (cmd.includes('which clangd')) {
           callback(null, { stdout: '/usr/bin/clangd', stderr: '' });
         } else {
           callback(null, { stdout: '', stderr: '' });
         }
+      }, 10);
 
-        return {
-          on: vi.fn(),
-          stdout: { on: vi.fn() },
-          stderr: { on: vi.fn() }
-        };
-      };
-
-      return mockExec;
+      return {
+        on: vi.fn(),
+        stdout: { on: vi.fn() },
+        stderr: { on: vi.fn() }
+      } as any;
     });
 
     // Mock the readFileSync function to return a valid C++ file
