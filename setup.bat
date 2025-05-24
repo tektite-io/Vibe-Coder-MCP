@@ -23,7 +23,7 @@ if %ERRORLEVEL% neq 0 (
 )
 
 REM Install dependencies
-echo Installing dependencies (including simple-git, @xenova/transformers)...
+echo Installing dependencies...
 call npm install
 if %ERRORLEVEL% neq 0 (
     echo ERROR: npm install failed. Check npm logs above.
@@ -43,15 +43,17 @@ if not exist "VibeCoderOutput\task-list-generator" mkdir "VibeCoderOutput\task-l
 if not exist "VibeCoderOutput\fullstack-starter-kit-generator" mkdir "VibeCoderOutput\fullstack-starter-kit-generator"
 REM Additional tool output dirs:
 if not exist "VibeCoderOutput\workflow-runner" mkdir "VibeCoderOutput\workflow-runner"
-REM New tools (code-gen, git, etc.) generally don't save files here by default.
+if not exist "VibeCoderOutput\code-map-generator" mkdir "VibeCoderOutput\code-map-generator"
+REM New tools generally don't save files here by default.
 
-REM Build TypeScript using PowerShell
+REM Build TypeScript project
 echo Building TypeScript project...
-powershell -Command "& { $ErrorActionPreference = 'Stop'; npx tsc; if ($LASTEXITCODE -eq 0) { Write-Host 'TypeScript project built successfully.' } else { Write-Host 'ERROR: TypeScript build failed. Check output above.' -ForegroundColor Red; exit 1 } }"
+call npm run build
 if %ERRORLEVEL% neq 0 (
-    echo Batch script exiting due to build failure.
+    echo ERROR: TypeScript build failed (npm run build). Check compiler output above.
     exit /b 1
 )
+echo TypeScript project built successfully.
 
 REM Check if .env file exists, copy from .env.example if not
 echo Checking for .env file...
@@ -73,10 +75,10 @@ echo ==================================================
 echo Vibe Coder MCP Server is now set up with core features:
 echo   - Planning & Documentation Tools (PRD, User Stories, Tasks, Rules)
 echo   - Project Scaffolding (Fullstack Starter Kit)
-echo   - Code Generation & Refactoring Tools
-echo   - Analysis Tools (Dependencies, Git Summary)
+echo   - Code Map Generator (semantic codebase analysis with Mermaid diagrams)
 echo   - Research Manager (using configured models)
 echo   - Workflow Runner (using workflows.json)
+echo   - Job Result Retriever (for asynchronous task management)
 echo   - Semantic Routing & Sequential Thinking (for specific tools)
 echo   - Asynchronous Job Handling (JobManager, SSE Notifications) for long-running tools
 echo.
