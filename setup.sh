@@ -23,7 +23,7 @@ fi
 echo "Node.js version check passed (found v$(node -v))."
 
 # Install dependencies
-echo "Installing dependencies (including simple-git, @xenova/transformers)..."
+echo "Installing dependencies..."
 npm install
 if [ $? -ne 0 ]; then
     echo "ERROR: npm install failed. Check npm logs above."
@@ -43,7 +43,8 @@ mkdir -p VibeCoderOutput/task-list-generator
 mkdir -p VibeCoderOutput/fullstack-starter-kit-generator
 # Additional tool output dirs:
 mkdir -p VibeCoderOutput/workflow-runner
-# New tools (code-gen, git, etc.) generally don't save files here by default.
+mkdir -p VibeCoderOutput/code-map-generator
+# New tools generally don't save files here by default.
 
 # Build TypeScript
 echo "Building TypeScript project..."
@@ -79,10 +80,10 @@ echo "=================================================="
 echo "Vibe Coder MCP Server is now set up with core features:"
 echo "  - Planning & Documentation Tools (PRD, User Stories, Tasks, Rules)"
 echo "  - Project Scaffolding (Fullstack Starter Kit)"
-echo "  - Code Generation & Refactoring Tools"
-echo "  - Analysis Tools (Dependencies, Git Summary)"
+echo "  - Code Map Generator (semantic codebase analysis with Mermaid diagrams)"
 echo "  - Research Manager (using configured models)"
 echo "  - Workflow Runner (using workflows.json)"
+echo "  - Job Result Retriever (for asynchronous task management)"
 echo "  - Semantic Routing & Sequential Thinking (for specific tools)"
 echo "  - Asynchronous Job Handling (JobManager, SSE Notifications) for long-running tools"
 echo ""
