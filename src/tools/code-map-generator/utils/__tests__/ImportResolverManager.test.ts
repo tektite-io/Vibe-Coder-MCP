@@ -51,7 +51,12 @@ describe('ImportResolverManager', () => {
     manager.initialize(config);
 
     expect(manager.isEnabled()).toBe(true);
-    expect(manager.getConfig()).toEqual(config);
+    // The manager always forces expandSecurityBoundary to true, so we need to expect that
+    const expectedConfig = {
+      ...config,
+      expandSecurityBoundary: true
+    };
+    expect(manager.getConfig()).toEqual(expectedConfig);
     expect(logger.debug).toHaveBeenCalled();
   });
 

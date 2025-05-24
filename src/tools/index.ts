@@ -7,11 +7,9 @@ import './prd-generator/index.js';
 import './user-stories-generator/index.js';
 import './task-list-generator/index.js';
 import './fullstack-starter-kit-generator/index.js';
-import './code-refactor-generator/index.js';
-import './git-summary-generator/index.js';
-import './workflow-runner/index.js'; // Add this line
-import './job-result-retriever/index.js'; // Added import for the job result retriever tool
-import './code-map-generator/index.js'; // ADD THIS LINE FOR THE NEW TOOL
+import './workflow-runner/index.js';
+import './job-result-retriever/index.js';
+import './code-map-generator/index.js';
 
 // Note: process-request is currently registered in src/services/request-processor/index.ts
 // If it were moved to src/tools/, its import would go here too.

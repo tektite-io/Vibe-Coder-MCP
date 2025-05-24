@@ -116,8 +116,16 @@ describe('BaseLanguageHandler', () => {
 
       const rootNode = createMockNode('program', 'function myFunction() {}', [funcNode], [funcNode]);
 
-      // Mock descendantsOfType to return our function node
-      rootNode.descendantsOfType = vi.fn().mockReturnValue([funcNode]);
+      // Mock descendantsOfType to return our function node only for function_declaration
+      rootNode.descendantsOfType = vi.fn().mockImplementation((types: string[]) => {
+        if (types === 'function_declaration') {
+          return [funcNode];
+        }
+        if (types === 'method_definition') {
+          return [];
+        }
+        return [];
+      });
 
       // Extract functions
       const functions = handler.extractFunctions(rootNode, rootNode.text);
@@ -162,8 +170,16 @@ describe('BaseLanguageHandler', () => {
 
       const rootNode = createMockNode('program', 'function outerFunction() { function innerFunction() {} }', [outerFuncNode], [outerFuncNode]);
 
-      // Mock descendantsOfType to return both function nodes
-      rootNode.descendantsOfType = vi.fn().mockReturnValue([outerFuncNode, innerFuncNode]);
+      // Mock descendantsOfType to return both function nodes for function_declaration, empty for method_definition
+      rootNode.descendantsOfType = vi.fn().mockImplementation((types: string[]) => {
+        if (types === 'function_declaration') {
+          return [outerFuncNode, innerFuncNode];
+        }
+        if (types === 'method_definition') {
+          return [];
+        }
+        return [];
+      });
 
       // Mock isNestedFunction to return true for innerFuncNode
       vi.spyOn(handler as any, 'isNestedFunction').mockImplementation(function(this: any, node: any) {
@@ -196,8 +212,16 @@ describe('BaseLanguageHandler', () => {
 
       const rootNode = createMockNode('program', 'class MyClass {}', [classNode], [classNode]);
 
-      // Mock descendantsOfType to return our class node
-      rootNode.descendantsOfType = vi.fn().mockReturnValue([classNode]);
+      // Mock descendantsOfType to return our class node only for class_declaration
+      rootNode.descendantsOfType = vi.fn().mockImplementation((types: string[]) => {
+        if (types === 'class_declaration') {
+          return [classNode];
+        }
+        if (types === 'class_expression') {
+          return [];
+        }
+        return [];
+      });
 
       // Extract classes
       const classes = handler.extractClasses(rootNode, rootNode.text);
