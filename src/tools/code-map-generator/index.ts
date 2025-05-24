@@ -78,8 +78,6 @@ const codeMapInputSchemaShape = {
 
 // Epic1-Task007: Define the asynchronous executor function stub for the tool.
 export const codeMapExecutor: ToolExecutor = async (params: Record<string, unknown>, _config: OpenRouterConfig, context?: ToolExecutionContext) => {
-  console.time('CodeMapGenerator_Total'); // Profiling Start: Total
-
   // Get session ID from context
   const sessionId = context?.sessionId || 'unknown-session';
   const transportType = context?.transportType || 'unknown';
@@ -125,7 +123,6 @@ context: ToolExecutionContext | undefined,
 jobId: string
 ): Promise<CallToolResult> {
 const sessionId = context?.sessionId || 'unknown-session';
-console.time('CodeMapGenerator_Total'); // Profiling Start: Total
 
 // NEW: Clear memory samples at the start of execution
 clearMemoryUsageSamples();
@@ -232,7 +229,6 @@ try {
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Initializing parser...');
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Initializing parser...');
 
-    console.time('CodeMapGenerator_Initialization'); // Profiling Start: Initialization
     await initializeParser(); // This now includes grammar manager initialization with preloading
     logger.info('Parser and memory management initialized.');
 
@@ -254,8 +250,6 @@ try {
     // Log initial memory usage statistics
     const initialMemoryStats = getMemoryStats();
     logger.info({ initialMemoryStats }, 'Initial memory usage statistics');
-
-    console.timeEnd('CodeMapGenerator_Initialization'); // Profiling End: Initialization
 
     // Update job status
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Preparing file scanning...');
@@ -299,10 +293,8 @@ try {
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Scanning for source files...');
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Scanning for source files...');
 
-    console.time('CodeMapGenerator_FileScanning'); // Profiling Start: FileScanning
     logger.info(`Scanning for source files in: ${projectRoot}`);
     const filePaths = await collectSourceFiles(projectRoot, supportedExtensions, combinedIgnoredPatterns, config);
-    console.timeEnd('CodeMapGenerator_FileScanning'); // Profiling End: FileScanning
 
     // Log memory usage after file scanning
     const postScanningMemoryStats = getMemoryStats();
@@ -336,7 +328,6 @@ try {
     takeMemorySample('After file scanning');
 
     // Process files in batches using the new batch processor
-    console.time('CodeMapGenerator_ParsingAndSymbolExtraction'); // Profiling Start: ParsingAndSymbolExtraction
 
     // Define the file processing function
     const processFile = async (filePath: string): Promise<FileInfo> => {
@@ -548,8 +539,6 @@ try {
       70
     );
 
-    console.timeEnd('CodeMapGenerator_ParsingAndSymbolExtraction'); // Profiling End: ParsingAndSymbolExtraction
-
     // Log memory usage after parsing and symbol extraction
     const postParsingMemoryStats = getMemoryStats();
     logger.info({ postParsingMemoryStats }, 'Memory usage after parsing and symbol extraction');
@@ -566,8 +555,6 @@ try {
 
     // Construct CodeMap object for the formatter
     const codeMapData: CodeMap = { projectPath: projectRoot, files: fileInfosWithEnhancedImports };
-
-    console.time('CodeMapGenerator_GraphBuilding'); // Profiling Start: GraphBuilding
 
     // Build graphs with intermediate storage
     const fileDepGraph = await buildFileDependencyGraph(fileInfosWithEnhancedImports, config, jobId);
@@ -604,8 +591,6 @@ try {
     const funcCallNodes = functionCallGraph.nodes;
     const funcCallEdges = functionCallGraph.edges;
 
-    console.timeEnd('CodeMapGenerator_GraphBuilding'); // Profiling End: GraphBuilding
-
     // Log memory usage after graph building
     const postGraphBuildingMemoryStats = getMemoryStats();
     logger.info({ postGraphBuildingMemoryStats }, 'Memory usage after graph building');
@@ -616,8 +601,6 @@ try {
     // Update job status for diagram generation
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating diagrams...');
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating diagrams...', 70);
-
-    console.time('CodeMapGenerator_DiagramGeneration'); // Profiling Start: DiagramGeneration
 
     // Generate file dependency diagram
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating file dependency diagram...');
@@ -645,8 +628,6 @@ try {
     // The sequence diagram generator uses the same nodes and edges as the function call graph
     const sequenceDiagramMd = generateMermaidSequenceDiagram(funcCallNodes, funcCallEdges);
 
-    console.timeEnd('CodeMapGenerator_DiagramGeneration'); // Profiling End: DiagramGeneration
-
     // Log memory usage after diagram generation
     const postDiagramGenerationMemoryStats = getMemoryStats();
     logger.info({ postDiagramGenerationMemoryStats }, 'Memory usage after diagram generation');
@@ -654,8 +635,6 @@ try {
     // Update job status for output generation
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating output...');
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating output...', 80);
-
-    console.time('CodeMapGenerator_OutputGeneration'); // Profiling Start: OutputGeneration
 
     // Generate output using the new output generator
     const outputPath = await generateMarkdownOutput(
@@ -666,8 +645,6 @@ try {
       config,
       jobId
     );
-
-    console.timeEnd('CodeMapGenerator_OutputGeneration'); // Profiling End: OutputGeneration
 
     // Log memory usage after output generation
     const postOutputGenerationMemoryStats = getMemoryStats();
@@ -681,8 +658,6 @@ try {
     logger.info(memoryReport);
 
     // For backward compatibility, also generate the old-style output
-    console.time('CodeMapGenerator_OutputFormatting'); // Profiling Start: OutputFormatting
-
     // Call formatCodeMapToMarkdown
     const textualCodeMapMd = formatCodeMapToMarkdown(codeMapData, projectRoot);
 
@@ -707,7 +682,6 @@ try {
       finalMarkdownOutput += `### Method Call Sequence Diagram\n\n\`\`\`mermaid\n${sequenceDiagramMd}\n\`\`\`\n\n`;
     }
     finalMarkdownOutput += `## Detailed Code Structure\n\n${textualCodeMapMd}`;
-    console.timeEnd('CodeMapGenerator_OutputFormatting'); // Profiling End: OutputFormatting
 
     // Log memory usage after output formatting
     const postOutputFormattingMemoryStats = getMemoryStats();
@@ -760,8 +734,6 @@ try {
     return errorResult;
   }
 } finally {
-  console.timeEnd('CodeMapGenerator_Total'); // Ensure total time is logged
-
   // Clean up resources
   try {
     // Unregister job from process lifecycle manager
@@ -826,7 +798,7 @@ try {
 // Epic1-Task008: Define the ToolDefinition object for the "Code-Map Generator".
 const codeMapToolDefinition: ToolDefinition = {
   name: "map-codebase", // Chosen name for CLI invocation and semantic routing
-  description: "Recursively scans a target codebase, extracts semantic information (classes, functions, doc-strings, comments), and generates a token-efficient, context-dense Markdown index and Mermaid diagrams. For security reasons, the tool only scans directories specified in the 'allowedMappingDirectory' configuration. This directory must be explicitly configured in the tool configuration to ensure secure access boundaries.",
+  description: "Indexes and maps a codebase structure, providing class/function maps, comments, and Mermaid diagrams for AI consumption. Captures doc-strings and inline comments for semantic context.",
   inputSchema: codeMapInputSchemaShape,
   executor: codeMapExecutor,
 };
