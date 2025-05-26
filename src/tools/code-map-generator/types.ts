@@ -225,6 +225,22 @@ export interface CodeMapGeneratorConfig {
   output?: OutputConfig;
 
   /**
+   * Optional universal optimization configuration for cross-language optimization.
+   */
+  universalOptimization?: UniversalOptimizationConfig;
+
+  /**
+   * Maximum optimization level for quality-first approach.
+   * Default: 'conservative'
+   */
+  maxOptimizationLevel?: 'conservative' | 'balanced' | 'aggressive' | 'maximum';
+
+  /**
+   * Quality thresholds for optimization validation.
+   */
+  qualityThresholds?: QualityThresholds;
+
+  /**
    * Optional feature flags for enabling or disabling enhanced function detection features.
    */
   featureFlags?: FeatureFlagsConfig;
@@ -390,6 +406,64 @@ export interface IncrementalProcessingConfig {
    * Default is true.
    */
   saveProcessedFilesList?: boolean;
+}
+
+/**
+ * Configuration for universal optimization across all tech stacks.
+ */
+export interface UniversalOptimizationConfig {
+  /**
+   * Whether to eliminate verbose mermaid diagrams and replace with text summaries.
+   * Default: false
+   */
+  eliminateVerboseDiagrams?: boolean;
+
+  /**
+   * Whether to reduce class details to public interfaces only.
+   * Default: false
+   */
+  reduceClassDetails?: boolean;
+
+  /**
+   * Whether to consolidate repetitive content patterns.
+   * Default: false
+   */
+  consolidateRepetitiveContent?: boolean;
+
+  /**
+   * Whether to focus on public interfaces and eliminate private implementation details.
+   * Default: false
+   */
+  focusOnPublicInterfaces?: boolean;
+
+  /**
+   * Whether to enable adaptive optimization based on codebase characteristics.
+   * Default: false
+   */
+  adaptiveOptimization?: boolean;
+}
+
+/**
+ * Quality thresholds for optimization validation.
+ */
+export interface QualityThresholds {
+  /**
+   * Minimum semantic completeness percentage (90-98%).
+   * Default: 95
+   */
+  minSemanticCompleteness: number;
+
+  /**
+   * Minimum architectural integrity percentage (95-99%).
+   * Default: 98
+   */
+  minArchitecturalIntegrity: number;
+
+  /**
+   * Maximum information loss percentage (5-15%).
+   * Default: 8
+   */
+  maxInformationLoss: number;
 }
 
 /**
