@@ -144,53 +144,87 @@ async function generateSingleMarkdownOutput(
 
   markdown += '```\n\n';
 
-  // Add file dependency graph section
+  // Add file dependency graph section - use optimized diagrams
   markdown += '## File Dependencies\n\n';
-  markdown += '```mermaid\ngraph TD;\n';
 
-  // Add nodes
-  fileDependencyGraph.nodes.forEach(node => {
-    markdown += `  ${node.id.replace(/[^a-zA-Z0-9]/g, '_')}["${node.label}"];\n`;
-  });
+  // Import optimization components
+  const { UniversalDiagramOptimizer } = await import('./optimization/universalDiagramOptimizer.js');
+  const { EnhancementConfigManager } = await import('./config/enhancementConfig.js');
 
-  // Add edges
-  fileDependencyGraph.edges.forEach(edge => {
-    markdown += `  ${edge.from.replace(/[^a-zA-Z0-9]/g, '_')} --> ${edge.to.replace(/[^a-zA-Z0-9]/g, '_')};\n`;
-  });
+  const diagramOptimizer = new UniversalDiagramOptimizer();
+  const enhancementConfig = EnhancementConfigManager.getInstance().getConfig();
 
-  markdown += '```\n\n';
+  // Use optimized diagram generation
+  const optimizedDiagram = diagramOptimizer.optimizeDependencyDiagram(
+    fileDependencyGraph.nodes,
+    fileDependencyGraph.edges,
+    enhancementConfig.universalOptimization
+  );
 
-  // Add class inheritance graph section
+  if (enhancementConfig.universalOptimization.eliminateVerboseDiagrams) {
+    // Use text summary (maximum optimization)
+    markdown += optimizedDiagram + '\n\n';
+  } else {
+    // Fallback to mermaid (for backward compatibility)
+    markdown += '```mermaid\ngraph TD;\n';
+    fileDependencyGraph.nodes.forEach(node => {
+      markdown += `  ${node.id.replace(/[^a-zA-Z0-9]/g, '_')}["${node.label}"];\n`;
+    });
+    fileDependencyGraph.edges.forEach(edge => {
+      markdown += `  ${edge.from.replace(/[^a-zA-Z0-9]/g, '_')} --> ${edge.to.replace(/[^a-zA-Z0-9]/g, '_')};\n`;
+    });
+    markdown += '```\n\n';
+  }
+
+  // Add class inheritance graph section - use optimized diagrams
   markdown += '## Class Inheritance\n\n';
-  markdown += '```mermaid\nclassDiagram;\n';
 
-  // Add classes
-  classInheritanceGraph.nodes.forEach(node => {
-    markdown += `  class ${node.id.replace(/[^a-zA-Z0-9]/g, '_')} "${node.label}";\n`;
-  });
+  // Use optimized diagram generation for class inheritance
+  const optimizedClassDiagram = diagramOptimizer.optimizeDependencyDiagram(
+    classInheritanceGraph.nodes,
+    classInheritanceGraph.edges,
+    enhancementConfig.universalOptimization
+  );
 
-  // Add inheritance relationships
-  classInheritanceGraph.edges.forEach(edge => {
-    markdown += `  ${edge.from.replace(/[^a-zA-Z0-9]/g, '_')} <|-- ${edge.to.replace(/[^a-zA-Z0-9]/g, '_')};\n`;
-  });
+  if (enhancementConfig.universalOptimization.eliminateVerboseDiagrams) {
+    // Use text summary (maximum optimization)
+    markdown += optimizedClassDiagram + '\n\n';
+  } else {
+    // Fallback to mermaid (for backward compatibility)
+    markdown += '```mermaid\nclassDiagram;\n';
+    classInheritanceGraph.nodes.forEach(node => {
+      markdown += `  class ${node.id.replace(/[^a-zA-Z0-9]/g, '_')} "${node.label}";\n`;
+    });
+    classInheritanceGraph.edges.forEach(edge => {
+      markdown += `  ${edge.from.replace(/[^a-zA-Z0-9]/g, '_')} <|-- ${edge.to.replace(/[^a-zA-Z0-9]/g, '_')};\n`;
+    });
+    markdown += '```\n\n';
+  }
 
-  markdown += '```\n\n';
-
-  // Add function call graph section
+  // Add function call graph section - use optimized diagrams
   markdown += '## Function Calls\n\n';
-  markdown += '```mermaid\ngraph TD;\n';
 
-  // Add nodes
-  functionCallGraph.nodes.forEach(node => {
-    markdown += `  ${node.id.replace(/[^a-zA-Z0-9]/g, '_')}["${node.label}"];\n`;
-  });
+  // Use optimized diagram generation for function calls
+  const optimizedFunctionDiagram = diagramOptimizer.optimizeDependencyDiagram(
+    functionCallGraph.nodes,
+    functionCallGraph.edges,
+    enhancementConfig.universalOptimization
+  );
 
-  // Add edges
-  functionCallGraph.edges.forEach(edge => {
-    markdown += `  ${edge.from.replace(/[^a-zA-Z0-9]/g, '_')} --> ${edge.to.replace(/[^a-zA-Z0-9]/g, '_')};\n`;
-  });
-
-  markdown += '```\n\n';
+  if (enhancementConfig.universalOptimization.eliminateVerboseDiagrams) {
+    // Use text summary (maximum optimization)
+    markdown += optimizedFunctionDiagram + '\n\n';
+  } else {
+    // Fallback to mermaid (for backward compatibility)
+    markdown += '```mermaid\ngraph TD;\n';
+    functionCallGraph.nodes.forEach(node => {
+      markdown += `  ${node.id.replace(/[^a-zA-Z0-9]/g, '_')}["${node.label}"];\n`;
+    });
+    functionCallGraph.edges.forEach(edge => {
+      markdown += `  ${edge.from.replace(/[^a-zA-Z0-9]/g, '_')} --> ${edge.to.replace(/[^a-zA-Z0-9]/g, '_')};\n`;
+    });
+    markdown += '```\n\n';
+  }
 
   // Add sequence diagram section
   markdown += '## Method Call Sequence\n\n';
@@ -206,7 +240,10 @@ async function generateSingleMarkdownOutput(
   // Add file details section
   markdown += '## File Details\n\n';
 
-  allFilesInfo.forEach(fileInfo => {
+  // Apply import optimization to all files
+  const optimizedFilesInfo = diagramOptimizer.optimizeFileInfos(allFilesInfo);
+
+  optimizedFilesInfo.forEach(fileInfo => {
     markdown += `### ${fileInfo.relativePath}\n\n`;
 
     if (fileInfo.comment) {
@@ -448,65 +485,99 @@ async function generateSplitMarkdownOutput(
   // Write the file structure file
   await writeFileSecure(fileStructurePath, fileStructureMarkdown, config.allowedMappingDirectory, 'utf-8', outputDir);
 
-  // Generate file dependencies file
+  // Generate file dependencies file - use optimized diagrams
   const fileDependenciesPath = path.join(outputDirWithTimestamp, 'file-dependencies.md');
   let fileDependenciesMarkdown = '# File Dependencies\n\n';
   fileDependenciesMarkdown += '[Back to Index](index.md)\n\n';
-  fileDependenciesMarkdown += '```mermaid\ngraph TD;\n';
 
-  // Add nodes
-  fileDependencyGraph.nodes.forEach(node => {
-    fileDependenciesMarkdown += `  ${node.id.replace(/[^a-zA-Z0-9]/g, '_')}["${node.label}"];\n`;
-  });
+  // Import optimization components for split output
+  const { UniversalDiagramOptimizer: SplitDiagramOptimizer } = await import('./optimization/universalDiagramOptimizer.js');
+  const { EnhancementConfigManager: SplitConfigManager } = await import('./config/enhancementConfig.js');
 
-  // Add edges
-  fileDependencyGraph.edges.forEach(edge => {
-    fileDependenciesMarkdown += `  ${edge.from.replace(/[^a-zA-Z0-9]/g, '_')} --> ${edge.to.replace(/[^a-zA-Z0-9]/g, '_')};\n`;
-  });
+  const splitDiagramOptimizer = new SplitDiagramOptimizer();
+  const splitEnhancementConfig = SplitConfigManager.getInstance().getConfig();
 
-  fileDependenciesMarkdown += '```\n';
+  // Use optimized diagram generation for split output
+  const splitOptimizedDiagram = splitDiagramOptimizer.optimizeDependencyDiagram(
+    fileDependencyGraph.nodes,
+    fileDependencyGraph.edges,
+    splitEnhancementConfig.universalOptimization
+  );
+
+  if (splitEnhancementConfig.universalOptimization.eliminateVerboseDiagrams) {
+    // Use text summary (maximum optimization)
+    fileDependenciesMarkdown += splitOptimizedDiagram + '\n';
+  } else {
+    // Fallback to mermaid (for backward compatibility)
+    fileDependenciesMarkdown += '```mermaid\ngraph TD;\n';
+    fileDependencyGraph.nodes.forEach(node => {
+      fileDependenciesMarkdown += `  ${node.id.replace(/[^a-zA-Z0-9]/g, '_')}["${node.label}"];\n`;
+    });
+    fileDependencyGraph.edges.forEach(edge => {
+      fileDependenciesMarkdown += `  ${edge.from.replace(/[^a-zA-Z0-9]/g, '_')} --> ${edge.to.replace(/[^a-zA-Z0-9]/g, '_')};\n`;
+    });
+    fileDependenciesMarkdown += '```\n';
+  }
 
   // Write the file dependencies file
   await writeFileSecure(fileDependenciesPath, fileDependenciesMarkdown, config.allowedMappingDirectory, 'utf-8', outputDir);
 
-  // Generate class inheritance file
+  // Generate class inheritance file - use optimized diagrams
   const classInheritancePath = path.join(outputDirWithTimestamp, 'class-inheritance.md');
   let classInheritanceMarkdown = '# Class Inheritance\n\n';
   classInheritanceMarkdown += '[Back to Index](index.md)\n\n';
-  classInheritanceMarkdown += '```mermaid\nclassDiagram;\n';
 
-  // Add classes
-  classInheritanceGraph.nodes.forEach(node => {
-    classInheritanceMarkdown += `  class ${node.id.replace(/[^a-zA-Z0-9]/g, '_')} "${node.label}";\n`;
-  });
+  // Use optimized diagram generation for split class inheritance
+  const splitOptimizedClassDiagram = splitDiagramOptimizer.optimizeDependencyDiagram(
+    classInheritanceGraph.nodes,
+    classInheritanceGraph.edges,
+    splitEnhancementConfig.universalOptimization
+  );
 
-  // Add inheritance relationships
-  classInheritanceGraph.edges.forEach(edge => {
-    classInheritanceMarkdown += `  ${edge.from.replace(/[^a-zA-Z0-9]/g, '_')} <|-- ${edge.to.replace(/[^a-zA-Z0-9]/g, '_')};\n`;
-  });
-
-  classInheritanceMarkdown += '```\n';
+  if (splitEnhancementConfig.universalOptimization.eliminateVerboseDiagrams) {
+    // Use text summary (maximum optimization)
+    classInheritanceMarkdown += splitOptimizedClassDiagram + '\n';
+  } else {
+    // Fallback to mermaid (for backward compatibility)
+    classInheritanceMarkdown += '```mermaid\nclassDiagram;\n';
+    classInheritanceGraph.nodes.forEach(node => {
+      classInheritanceMarkdown += `  class ${node.id.replace(/[^a-zA-Z0-9]/g, '_')} "${node.label}";\n`;
+    });
+    classInheritanceGraph.edges.forEach(edge => {
+      classInheritanceMarkdown += `  ${edge.from.replace(/[^a-zA-Z0-9]/g, '_')} <|-- ${edge.to.replace(/[^a-zA-Z0-9]/g, '_')};\n`;
+    });
+    classInheritanceMarkdown += '```\n';
+  }
 
   // Write the class inheritance file
   await writeFileSecure(classInheritancePath, classInheritanceMarkdown, config.allowedMappingDirectory, 'utf-8', outputDir);
 
-  // Generate function calls file
+  // Generate function calls file - use optimized diagrams
   const functionCallsPath = path.join(outputDirWithTimestamp, 'function-calls.md');
   let functionCallsMarkdown = '# Function Calls\n\n';
   functionCallsMarkdown += '[Back to Index](index.md)\n\n';
-  functionCallsMarkdown += '```mermaid\ngraph TD;\n';
 
-  // Add nodes
-  functionCallGraph.nodes.forEach(node => {
-    functionCallsMarkdown += `  ${node.id.replace(/[^a-zA-Z0-9]/g, '_')}["${node.label}"];\n`;
-  });
+  // Use optimized diagram generation for split function calls
+  const splitOptimizedFunctionDiagram = splitDiagramOptimizer.optimizeDependencyDiagram(
+    functionCallGraph.nodes,
+    functionCallGraph.edges,
+    splitEnhancementConfig.universalOptimization
+  );
 
-  // Add edges
-  functionCallGraph.edges.forEach(edge => {
-    functionCallsMarkdown += `  ${edge.from.replace(/[^a-zA-Z0-9]/g, '_')} --> ${edge.to.replace(/[^a-zA-Z0-9]/g, '_')};\n`;
-  });
-
-  functionCallsMarkdown += '```\n';
+  if (splitEnhancementConfig.universalOptimization.eliminateVerboseDiagrams) {
+    // Use text summary (maximum optimization)
+    functionCallsMarkdown += splitOptimizedFunctionDiagram + '\n';
+  } else {
+    // Fallback to mermaid (for backward compatibility)
+    functionCallsMarkdown += '```mermaid\ngraph TD;\n';
+    functionCallGraph.nodes.forEach(node => {
+      functionCallsMarkdown += `  ${node.id.replace(/[^a-zA-Z0-9]/g, '_')}["${node.label}"];\n`;
+    });
+    functionCallGraph.edges.forEach(edge => {
+      functionCallsMarkdown += `  ${edge.from.replace(/[^a-zA-Z0-9]/g, '_')} --> ${edge.to.replace(/[^a-zA-Z0-9]/g, '_')};\n`;
+    });
+    functionCallsMarkdown += '```\n';
+  }
 
   // Write the function calls file
   await writeFileSecure(functionCallsPath, functionCallsMarkdown, config.allowedMappingDirectory, 'utf-8', outputDir);
@@ -532,10 +603,13 @@ async function generateSplitMarkdownOutput(
   // Initialize file with header
   await writeFileSecure(fileDetailsPath, '# File Details\n\n[Back to Index](index.md)\n\n', config.allowedMappingDirectory, 'utf-8', outputDir);
 
+  // Apply import optimization to all files for split output
+  const splitOptimizedFilesInfo = splitDiagramOptimizer.optimizeFileInfos(allFilesInfo);
+
   // Process files in batches to avoid memory issues
   const batchSize = 10;
-  for (let i = 0; i < allFilesInfo.length; i += batchSize) {
-    const batch = allFilesInfo.slice(i, i + batchSize);
+  for (let i = 0; i < splitOptimizedFilesInfo.length; i += batchSize) {
+    const batch = splitOptimizedFilesInfo.slice(i, i + batchSize);
     let batchMarkdown = '';
 
     batch.forEach(fileInfo => {
@@ -718,10 +792,15 @@ export async function generateJsonOutput(
   const fileName = generateTimestampFileName(filePrefix, 'json');
   const outputPath = path.join(outputDir, fileName);
 
+  // Apply import optimization to JSON output as well
+  const { UniversalDiagramOptimizer: JsonDiagramOptimizer } = await import('./optimization/universalDiagramOptimizer.js');
+  const jsonDiagramOptimizer = new JsonDiagramOptimizer();
+  const jsonOptimizedFilesInfo = jsonDiagramOptimizer.optimizeFileInfos(allFilesInfo);
+
   // Create a sanitized version of the code map for JSON output
   const codeMap: CodeMap = {
     projectPath: config.allowedMappingDirectory || '',
-    files: allFilesInfo
+    files: jsonOptimizedFilesInfo
   };
 
   const sanitizedCodeMap = {

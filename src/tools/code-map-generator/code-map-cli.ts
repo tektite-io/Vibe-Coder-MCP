@@ -34,6 +34,7 @@ import { program } from 'commander';
 import { executeCodeMapGeneration } from './index.js';
 import { extractCodeMapConfig } from './configValidator.js';
 import { CodeMapGeneratorConfig } from './types.js';
+import { EnhancementConfigManager } from './config/enhancementConfig.js';
 import logger from '../../logger.js';
 
 // Configure the CLI
@@ -48,6 +49,12 @@ program
   .option('-s, --split-output', 'Split output into multiple files (default: false)')
   .option('--incremental', 'Use incremental processing (default: true)')
   .option('--no-incremental', 'Disable incremental processing')
+  .option('--optimization-level <level>', 'Optimization level: conservative, balanced, aggressive, maximum (default: maximum)')
+  .option('--focus-public-interfaces', 'Focus on public interfaces only (maximum token reduction)')
+  .option('--eliminate-diagrams', 'Replace verbose mermaid diagrams with text summaries')
+  .option('--adaptive', 'Enable adaptive optimization based on codebase characteristics')
+  .option('--quality-threshold <number>', 'Minimum quality threshold (90-98)', '90')
+  .option('--disable-optimizations', 'Disable all optimizations (backward compatibility)')
   .option('--interactive', 'Run in interactive mode')
   .option('--help', 'Show help');
 
@@ -253,6 +260,44 @@ async function main(): Promise<void> {
       memoryOptimization: true
     }
   };
+
+  // MAXIMUM AGGRESSIVE: Apply CLI optimization options
+  const enhancementManager = EnhancementConfigManager.getInstance();
+
+  // Apply optimization level (default: maximum)
+  const optimizationLevel = options.optimizationLevel || 'maximum';
+  enhancementManager.setOptimizationLevel(optimizationLevel as 'conservative' | 'balanced' | 'maximum');
+
+  // Apply specific optimization flags
+  if (options.disableOptimizations) {
+    enhancementManager.disableOptimizations();
+    console.log('Optimizations disabled for backward compatibility');
+  } else {
+    // Enable maximum aggressive by default
+    enhancementManager.enableAggressiveOptimizations();
+
+    // Apply specific flags
+    const enhancementConfig = enhancementManager.getConfig();
+    if (options.focusPublicInterfaces) {
+      enhancementConfig.universalOptimization.focusOnPublicInterfaces = true;
+      enhancementConfig.universalOptimization.reduceClassDetails = true;
+    }
+    if (options.eliminateDiagrams) {
+      enhancementConfig.universalOptimization.eliminateVerboseDiagrams = true;
+    }
+    if (options.adaptive) {
+      enhancementConfig.universalOptimization.adaptiveOptimization = true;
+    }
+    if (options.qualityThreshold) {
+      const threshold = parseInt(options.qualityThreshold);
+      if (threshold >= 90 && threshold <= 98) {
+        enhancementConfig.qualityThresholds.minSemanticCompleteness = threshold;
+      }
+    }
+
+    enhancementManager.updateConfig(enhancementConfig);
+    console.log(`Enhanced Code Map Generator configured with ${optimizationLevel} optimization level`);
+  }
 
   // Validate the configuration
   try {

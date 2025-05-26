@@ -40,6 +40,10 @@ import {
 } from './batchProcessor.js';
 import { generateMarkdownOutput } from './outputGenerator.js';
 import { createIncrementalProcessor, IncrementalProcessor } from './incrementalProcessor.js';
+import { EnhancementConfigManager } from './config/enhancementConfig.js';
+import { UniversalClassOptimizer } from './optimization/universalClassOptimizer.js';
+import { UniversalDiagramOptimizer } from './optimization/universalDiagramOptimizer.js';
+import { AdaptiveOptimizationEngine } from './optimization/adaptiveOptimizer.js';
 
 // Cache for source code content, primarily for function call graph generation
 const sourceCodeCache = new Map<string, string>();
@@ -130,6 +134,14 @@ clearMemoryUsageSamples();
 // NEW: Take initial memory sample
 takeMemorySample('Initial');
 
+// MAXIMUM AGGRESSIVE: Initialize universal optimization engines
+const enhancementManager = EnhancementConfigManager.getInstance();
+enhancementManager.enableAggressiveOptimizations(); // Enable maximum aggressive optimization by default
+
+const classOptimizer = new UniversalClassOptimizer();
+const diagramOptimizer = new UniversalDiagramOptimizer();
+const adaptiveEngine = new AdaptiveOptimizationEngine();
+
 try {
   try {
     // Send initial progress update
@@ -147,6 +159,7 @@ try {
     let config: CodeMapGeneratorConfig;
     try {
       config = await extractCodeMapConfig(_config);
+      logger.info('Enhanced Code Map Generator initialized with maximum aggressive optimization');
     } catch (error) {
       logger.error({ err: error }, 'Failed to extract configuration');
 
@@ -602,24 +615,29 @@ try {
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating diagrams...');
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating diagrams...', 70);
 
-    // Generate file dependency diagram
-    jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating file dependency diagram...');
-    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating file dependency diagram...', 70);
-    const fileDepDiagramMd = generateMermaidFileDependencyDiagram(fileDepNodes, fileDepEdges);
+    // MAXIMUM AGGRESSIVE: Generate optimized diagrams (text summaries instead of verbose mermaid)
+    jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating optimized architecture overview...');
+    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating optimized architecture overview...', 70);
 
-    // Generate class diagram
-    jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating class inheritance diagram...');
-    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating class inheritance diagram...', 75);
-    const classDiagramMd = generateMermaidClassDiagram(
-        classInheritanceNodes,
-        classInheritanceEdges,
-        fileInfosWithEnhancedImports.flatMap(fi => fi.classes) // Pass all ClassInfo objects
-    );
+    // Get enhancement configuration
+    const enhancementConfig = EnhancementConfigManager.getInstance().getConfig();
 
-    // Generate function call diagram
-    jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating function call diagram...');
-    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating function call diagram...', 80);
-    const funcCallDiagramMd = generateMermaidFunctionCallDiagram(funcCallNodes, funcCallEdges);
+    // ALWAYS use optimized diagrams (maximum aggressive by default)
+    const fileDepDiagramMd = diagramOptimizer.optimizeDependencyDiagram(fileDepNodes, fileDepEdges, enhancementConfig.universalOptimization);
+
+    // Generate optimized class overview
+    jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating optimized class overview...');
+    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating optimized class overview...', 75);
+
+    // ALWAYS use optimized diagrams (maximum aggressive by default)
+    const classDiagramMd = diagramOptimizer.optimizeDependencyDiagram(classInheritanceNodes, classInheritanceEdges, enhancementConfig.universalOptimization);
+
+    // Generate optimized function call overview
+    jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating optimized function overview...');
+    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating optimized function overview...', 80);
+
+    // ALWAYS use optimized diagrams (maximum aggressive by default)
+    const funcCallDiagramMd = diagramOptimizer.optimizeDependencyDiagram(funcCallNodes, funcCallEdges, enhancementConfig.universalOptimization);
 
     // Generate sequence diagram
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Generating sequence diagram...');
@@ -669,17 +687,32 @@ try {
     finalMarkdownOutput += `**Summary:** Processed ${fileInfosWithEnhancedImports.length} files. Successfully analyzed: ${successfullyProcessedCount}. Files with errors/skipped: ${filesWithErrorsCount}.\n\n`;
     finalMarkdownOutput += `**Output saved to:** ${outputPath}\n\n`;
 
+    // MAXIMUM AGGRESSIVE: Use optimized text summaries instead of mermaid diagrams
     if (fileDepEdges.length > 0 || fileDepNodes.length > 0) {
-      finalMarkdownOutput += `### File Dependency Graph\n\n\`\`\`mermaid\n${fileDepDiagramMd}\n\`\`\`\n\n`;
+      if (enhancementConfig.universalOptimization.eliminateVerboseDiagrams) {
+        finalMarkdownOutput += `### File Dependencies\n\n${fileDepDiagramMd}\n\n`;
+      } else {
+        finalMarkdownOutput += `### File Dependency Graph\n\n\`\`\`mermaid\n${fileDepDiagramMd}\n\`\`\`\n\n`;
+      }
     }
     if (classInheritanceEdges.length > 0 || classInheritanceNodes.length > 0) {
-      finalMarkdownOutput += `### Class Inheritance Diagram\n\n\`\`\`mermaid\n${classDiagramMd}\n\`\`\`\n\n`;
+      if (enhancementConfig.universalOptimization.eliminateVerboseDiagrams) {
+        finalMarkdownOutput += `### Class Inheritance\n\n${classDiagramMd}\n\n`;
+      } else {
+        finalMarkdownOutput += `### Class Inheritance Diagram\n\n\`\`\`mermaid\n${classDiagramMd}\n\`\`\`\n\n`;
+      }
     }
     if (funcCallEdges.length > 0 || funcCallNodes.length > 0) {
-      finalMarkdownOutput += `### Function Call Map (Heuristic)\n\n\`\`\`mermaid\n${funcCallDiagramMd}\n\`\`\`\n\n`;
+      if (enhancementConfig.universalOptimization.eliminateVerboseDiagrams) {
+        finalMarkdownOutput += `### Function Calls\n\n${funcCallDiagramMd}\n\n`;
+      } else {
+        finalMarkdownOutput += `### Function Call Map (Heuristic)\n\n\`\`\`mermaid\n${funcCallDiagramMd}\n\`\`\`\n\n`;
+      }
 
-      // Add sequence diagram (already generated earlier)
-      finalMarkdownOutput += `### Method Call Sequence Diagram\n\n\`\`\`mermaid\n${sequenceDiagramMd}\n\`\`\`\n\n`;
+      // Add sequence diagram (only if not eliminating diagrams)
+      if (!enhancementConfig.universalOptimization.eliminateVerboseDiagrams) {
+        finalMarkdownOutput += `### Method Call Sequence Diagram\n\n\`\`\`mermaid\n${sequenceDiagramMd}\n\`\`\`\n\n`;
+      }
     }
     finalMarkdownOutput += `## Detailed Code Structure\n\n${textualCodeMapMd}`;
 
@@ -687,8 +720,47 @@ try {
     const postOutputFormattingMemoryStats = getMemoryStats();
     logger.info({ postOutputFormattingMemoryStats }, 'Memory usage after output formatting');
 
-    // Call optimizeMarkdownOutput
-    const optimizedOutput = optimizeMarkdownOutput(finalMarkdownOutput);
+    // MAXIMUM AGGRESSIVE: Apply adaptive optimization for maximum token reduction
+    let optimizedOutput = finalMarkdownOutput;
+
+    if (enhancementConfig.enableOptimizations) {
+      // Apply adaptive optimization based on codebase characteristics
+      const optimizationResult = adaptiveEngine.optimizeBasedOnCodebase(codeMapData, enhancementConfig.universalOptimization);
+
+      // Log optimization results
+      logger.info({
+        reductionAchieved: optimizationResult.reductionAchieved,
+        qualityMetrics: optimizationResult.qualityMetrics,
+        strategy: optimizationResult.strategy
+      }, 'Applied adaptive optimization');
+
+      // Apply class optimization to the detailed code structure
+      if (enhancementConfig.universalOptimization.reduceClassDetails) {
+        let optimizedClassContent = '';
+        fileInfosWithEnhancedImports.forEach(fileInfo => {
+          fileInfo.classes.forEach(cls => {
+            optimizedClassContent += classOptimizer.optimizeClassInfo(cls, enhancementConfig.universalOptimization);
+          });
+        });
+
+        // Replace detailed code structure with optimized version
+        if (optimizedClassContent) {
+          const detailedStructureStart = optimizedOutput.indexOf('## Detailed Code Structure');
+          if (detailedStructureStart !== -1) {
+            optimizedOutput = optimizedOutput.substring(0, detailedStructureStart) +
+              '## Optimized Code Structure\n\n' + optimizedClassContent;
+          }
+        }
+      }
+
+      // Apply final markdown optimization
+      optimizedOutput = optimizeMarkdownOutput(optimizedOutput);
+
+      logger.info('Applied maximum aggressive optimization for AI agent consumption');
+    } else {
+      // Fallback to standard optimization
+      optimizedOutput = optimizeMarkdownOutput(finalMarkdownOutput);
+    }
 
     // Update job status to completed
     jobManager.updateJobStatus(jobId, JobStatus.COMPLETED, 'Code map generation complete');
