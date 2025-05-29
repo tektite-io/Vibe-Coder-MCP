@@ -44,6 +44,7 @@ if not exist "VibeCoderOutput\fullstack-starter-kit-generator" mkdir "VibeCoderO
 REM Additional tool output dirs:
 if not exist "VibeCoderOutput\workflow-runner" mkdir "VibeCoderOutput\workflow-runner"
 if not exist "VibeCoderOutput\code-map-generator" mkdir "VibeCoderOutput\code-map-generator"
+if not exist "VibeCoderOutput\vibe-task-manager" mkdir "VibeCoderOutput\vibe-task-manager"
 REM New tools generally don't save files here by default.
 
 REM Build TypeScript project
@@ -72,22 +73,38 @@ if not exist ".env" (
 echo.
 echo Setup script completed successfully!
 echo ==================================================
-echo Vibe Coder MCP Server is now set up with core features:
-echo   - Planning & Documentation Tools (PRD, User Stories, Tasks, Rules)
-echo   - Project Scaffolding (Fullstack Starter Kit)
-echo   - Code Map Generator (semantic codebase analysis with Mermaid diagrams)
-echo   - Research Manager (using configured models)
-echo   - Workflow Runner (using workflows.json)
-echo   - Job Result Retriever (for asynchronous task management)
-echo   - Semantic Routing & Sequential Thinking (for specific tools)
-echo   - Asynchronous Job Handling (JobManager, SSE Notifications) for long-running tools
+echo Vibe Coder MCP Server v1.1.0 is now set up with 10 core tools:
+echo.
+echo 📋 PLANNING ^& DOCUMENTATION TOOLS:
+echo   - Research Manager (research-manager) - AI-powered research with multiple models
+echo   - PRD Generator (generate-prd) - Product Requirements Documents
+echo   - User Stories Generator (generate-user-stories) - Agile user stories with acceptance criteria
+echo   - Task List Generator (generate-task-list) - Development task breakdown with dependencies
+echo   - Rules Generator (generate-rules) - Development guidelines and coding standards
+echo.
+echo 🏗️ PROJECT SCAFFOLDING ^& CODE ANALYSIS:
+echo   - Fullstack Starter Kit Generator (generate-fullstack-starter-kit) - Complete project scaffolding
+echo   - Code Map Generator (map-codebase) - Semantic codebase analysis with Mermaid diagrams
+echo.
+echo 🤖 TASK MANAGEMENT ^& AUTOMATION:
+echo   - Vibe Task Manager (vibe-task-manager) - AI-agent-native task management with RDD methodology
+echo   - Workflow Runner (run-workflow) - Predefined development workflow execution
+echo   - Job Result Retriever (get-job-result) - Asynchronous task result management
+echo.
+echo 🔧 ADVANCED FEATURES:
+echo   - Semantic Routing ^& Sequential Thinking for intelligent tool selection
+echo   - Asynchronous Job Handling with SSE notifications for long-running tasks
+echo   - Multi-language support (30+ programming languages)
+echo   - Agent coordination and autonomous development workflows
 echo.
 echo IMPORTANT NEXT STEPS:
-echo 1. If you haven't already, **edit the .env file** to add your valid OPENROUTER_API_KEY.
-echo 2. Review the default models in `.env` (GEMINI_MODEL, PERPLEXITY_MODEL) and ensure they fit your needs/OpenRouter plan.
-echo 3. Review workflow definitions in `workflows.json` if you plan to use the `run-workflow` tool.
-echo 4. To run the server (using stdio for Claude Desktop): npm start
-echo 5. To run the server (using SSE on http://localhost:3000): npm run start:sse
-echo 6. For Claude Desktop integration, update its MCP settings using the current `mcp-config.json` and ensure the path in Claude's config points to `build/index.js`.
-echo 7. Use the 'get-job-result' tool to retrieve outcomes from long-running asynchronous tasks.
+echo 1. **REQUIRED**: Edit the .env file to add your valid OPENROUTER_API_KEY
+echo 2. Review default models in .env (GEMINI_MODEL, PERPLEXITY_MODEL) for your OpenRouter plan
+echo 3. Review workflow definitions in workflows.json for the run-workflow tool
+echo 4. Start the server:
+echo    - For Claude Desktop (stdio): npm start
+echo    - For web clients (SSE): npm run start:sse
+echo 5. Configure Claude Desktop MCP settings using mcp-config.json
+echo 6. Use 'get-job-result' tool to retrieve outcomes from long-running tasks
+echo 7. Try the Vibe Task Manager: 'vibe-task-manager create project "My Project" "Description"'
 echo.
