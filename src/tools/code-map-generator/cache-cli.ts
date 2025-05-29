@@ -20,9 +20,9 @@
 
 import path from 'path';
 import fs from 'fs/promises';
-import fsSync from 'fs';
+
 import { program } from 'commander';
-import logger from '../../logger.js';
+
 import { CodeMapGeneratorConfig } from './types.js';
 import { extractCodeMapConfig } from './configValidator.js';
 import { initializeCaches, clearCaches } from './parser.js';
@@ -99,7 +99,7 @@ program
   });
 
 // Helper functions
-async function loadConfig(options: { config?: string; cacheDir?: string; [key: string]: any }): Promise<CodeMapGeneratorConfig> {
+async function loadConfig(options: { config?: string; cacheDir?: string; [key: string]: unknown }): Promise<CodeMapGeneratorConfig> {
   let config: CodeMapGeneratorConfig;
 
   if (options.config) {
@@ -152,7 +152,7 @@ async function getCacheStats(config: CodeMapGeneratorConfig): Promise<CacheStats
   // Check if cache directory exists
   try {
     await fs.access(cacheDir);
-  } catch (error) {
+  } catch {
     return stats; // Return empty stats if directory doesn't exist
   }
 
@@ -181,7 +181,7 @@ async function getDirectoryStats(dirPath: string): Promise<DirStats> {
   // Check if directory exists
   try {
     await fs.access(dirPath);
-  } catch (error) {
+  } catch {
     return stats; // Return empty stats if directory doesn't exist
   }
 
@@ -294,7 +294,7 @@ async function pruneCache(config: CodeMapGeneratorConfig, maxAge: number, verbos
   // Check if cache directory exists
   try {
     await fs.access(cacheDir);
-  } catch (error) {
+  } catch {
     console.log('Cache directory does not exist.');
     return;
   }
@@ -355,7 +355,7 @@ async function validateCache(config: CodeMapGeneratorConfig, verbose: boolean): 
   // Check if cache directory exists
   try {
     await fs.access(cacheDir);
-  } catch (error) {
+  } catch {
     console.log('Cache directory does not exist.');
     return;
   }

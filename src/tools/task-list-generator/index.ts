@@ -20,7 +20,7 @@ const TASK_LIST_DIR_NAME = 'generated_task_lists';
 function getBaseOutputDir(): string {
   return process.env.VIBE_CODER_OUTPUT_DIR
     ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
-    : path.join(process.cwd(), 'workflow-agent-files');
+    : path.join(process.cwd(), 'VibeCoderOutput');
 }
 
 // Define tool-specific directory using the helper

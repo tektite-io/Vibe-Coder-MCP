@@ -158,7 +158,7 @@ describe('Universal Class Optimizer', () => {
       // Check that description is compressed (should be much shorter than original)
       const purposeMatch = result.match(/Purpose: (.+)/);
       if (purposeMatch) {
-        expect(purposeMatch[1].length).toBeLessThanOrEqual(60); // Maximum aggressive compression
+        expect(purposeMatch[1].length).toBeLessThanOrEqual(45); // Maximum aggressive compression
       }
     });
   });
@@ -234,7 +234,7 @@ describe('Enhancement Configuration Manager', () => {
       expect(config.universalOptimization.eliminateVerboseDiagrams).toBe(true);
       expect(config.universalOptimization.reduceClassDetails).toBe(true);
       expect(config.universalOptimization.focusOnPublicInterfaces).toBe(true);
-      expect(config.contentDensity.maxContentLength).toBe(60); // Maximum compression
+      expect(config.contentDensity.maxContentLength).toBe(25); // Changed from 45 to 25 for higher compression
     });
 
     it('should have quality thresholds adjusted for aggressive optimization', () => {
@@ -263,7 +263,7 @@ describe('Enhancement Configuration Manager', () => {
       expect(config.maxOptimizationLevel).toBe('maximum');
       expect(config.qualityThresholds.minSemanticCompleteness).toBe(90);
       expect(config.universalOptimization.eliminateVerboseDiagrams).toBe(true);
-      expect(config.contentDensity.maxContentLength).toBe(60);
+      expect(config.contentDensity.maxContentLength).toBe(25); // Changed from 45 to 25
     });
   });
 
@@ -280,7 +280,41 @@ describe('Enhancement Configuration Manager', () => {
       expect(config.functionCompression.enabled).toBe(true);
       expect(config.semanticCompression.enabled).toBe(true);
       expect(config.contentDensity.enabled).toBe(true);
-      expect(config.contentDensity.maxContentLength).toBe(60);
+      expect(config.contentDensity.maxContentLength).toBe(25); // Changed from 45 to 25
+    });
+  });
+
+  describe('Pattern-Based Consolidation', () => {
+    it('should enable pattern consolidation with aggressive settings', () => {
+      const configManager = EnhancementConfigManager.getInstance();
+      configManager.enableAggressiveOptimizations();
+      const config = configManager.getConfig();
+
+      expect(config.patternConsolidation.enabled).toBe(true);
+      expect(config.patternConsolidation.maxComponentsShown).toBe(3); // Changed from 6 to 3
+      expect(config.patternConsolidation.groupArchitecturalPatterns).toBe(true);
+      expect(config.patternConsolidation.groupFunctionPatterns).toBe(true);
+      expect(config.patternConsolidation.consolidationThreshold).toBe(3);
+    });
+
+    it('should apply pattern consolidation in maximum preset', () => {
+      const configManager = EnhancementConfigManager.getInstance();
+      configManager.applyPreset('maximum');
+      const config = configManager.getConfig();
+
+      expect(config.patternConsolidation.enabled).toBe(true);
+      expect(config.patternConsolidation.maxComponentsShown).toBe(3);
+      expect(config.patternConsolidation.groupArchitecturalPatterns).toBe(true);
+      expect(config.patternConsolidation.groupFunctionPatterns).toBe(true);
+      expect(config.patternConsolidation.consolidationThreshold).toBe(3);
+    });
+
+    it('should disable pattern consolidation when optimizations are disabled', () => {
+      const configManager = EnhancementConfigManager.getInstance();
+      configManager.disableOptimizations();
+      const config = configManager.getConfig();
+
+      expect(config.patternConsolidation.enabled).toBe(false);
     });
   });
 });
@@ -370,6 +404,172 @@ describe('Adaptive Optimization Engine', () => {
       expect(result.qualityMetrics.architecturalIntegrity).toBeGreaterThanOrEqual(95);
       expect(result.qualityMetrics.informationLoss).toBeLessThanOrEqual(15);
       expect(result.qualityMetrics.publicInterfacePreservation).toBeGreaterThanOrEqual(98);
+    });
+
+    it('should detect architectural patterns for consolidation', () => {
+      // Create a mock codebase with architectural patterns
+      const mockCodeMapWithPatterns: CodeMap = {
+        ...mockCodeMap,
+        files: [
+          {
+            relativePath: 'src/services/userService.ts',
+            classes: [{ name: 'UserService', methods: [], properties: [], isExported: true }],
+            functions: [],
+            imports: []
+          },
+          {
+            relativePath: 'src/services/authService.ts',
+            classes: [{ name: 'AuthService', methods: [], properties: [], isExported: true }],
+            functions: [],
+            imports: []
+          },
+          {
+            relativePath: 'src/services/dataService.ts',
+            classes: [{ name: 'DataService', methods: [], properties: [], isExported: true }],
+            functions: [],
+            imports: []
+          },
+          {
+            relativePath: 'src/handlers/userHandler.ts',
+            classes: [{ name: 'UserHandler', methods: [], properties: [], isExported: true }],
+            functions: [],
+            imports: []
+          },
+          {
+            relativePath: 'src/handlers/authHandler.ts',
+            classes: [{ name: 'AuthHandler', methods: [], properties: [], isExported: true }],
+            functions: [],
+            imports: []
+          },
+          {
+            relativePath: 'src/handlers/dataHandler.ts',
+            classes: [{ name: 'DataHandler', methods: [], properties: [], isExported: true }],
+            functions: [],
+            imports: []
+          }
+        ]
+      };
+
+      const result = engine.optimizeBasedOnCodebase(mockCodeMapWithPatterns, {});
+
+      expect(result.optimizedContent).toContain('Pattern-Based Consolidation');
+      expect(result.optimizedContent).toContain('Services');
+      expect(result.optimizedContent).toContain('Handlers');
+      expect(result.reductionAchieved).toBeGreaterThan(15); // Should include pattern consolidation reduction
+    });
+
+    it('should detect function patterns for consolidation', () => {
+      // Create a mock codebase with function patterns that meet the thresholds
+      const mockCodeMapWithFunctions: CodeMap = {
+        ...mockCodeMap,
+        files: [
+          {
+            relativePath: 'src/models/user.ts',
+            classes: [{
+              name: 'User',
+              methods: [
+                { name: 'constructor', parameters: [], returnType: 'void', isStatic: false, isPrivate: false },
+                { name: 'getInstance', parameters: [], returnType: 'User', isStatic: true, isPrivate: false },
+                { name: 'getName', parameters: [], returnType: 'string', isStatic: false, isPrivate: false },
+                { name: 'setName', parameters: [], returnType: 'void', isStatic: false, isPrivate: false },
+                { name: 'getEmail', parameters: [], returnType: 'string', isStatic: false, isPrivate: false },
+                { name: 'setEmail', parameters: [], returnType: 'void', isStatic: false, isPrivate: false },
+                { name: 'getAge', parameters: [], returnType: 'number', isStatic: false, isPrivate: false },
+                { name: 'setAge', parameters: [], returnType: 'void', isStatic: false, isPrivate: false },
+                { name: 'getId', parameters: [], returnType: 'string', isStatic: false, isPrivate: false },
+                { name: 'setId', parameters: [], returnType: 'void', isStatic: false, isPrivate: false }
+              ],
+              properties: [],
+              isExported: true
+            }],
+            functions: [
+              { name: 'createUser', parameters: [], returnType: 'User', isExported: true },
+              { name: 'initializeUser', parameters: [], returnType: 'void', isExported: true }
+            ],
+            imports: []
+          },
+          {
+            relativePath: 'src/models/auth.ts',
+            classes: [{
+              name: 'Auth',
+              methods: [
+                { name: 'constructor', parameters: [], returnType: 'void', isStatic: false, isPrivate: false },
+                { name: 'getInstance', parameters: [], returnType: 'Auth', isStatic: true, isPrivate: false },
+                { name: 'getToken', parameters: [], returnType: 'string', isStatic: false, isPrivate: false },
+                { name: 'setToken', parameters: [], returnType: 'void', isStatic: false, isPrivate: false }
+              ],
+              properties: [],
+              isExported: true
+            }],
+            functions: [
+              { name: 'createAuth', parameters: [], returnType: 'Auth', isExported: true },
+              { name: 'initializeAuth', parameters: [], returnType: 'void', isExported: true }
+            ],
+            imports: []
+          },
+          {
+            relativePath: 'src/models/data.ts',
+            classes: [{
+              name: 'Data',
+              methods: [
+                { name: 'constructor', parameters: [], returnType: 'void', isStatic: false, isPrivate: false },
+                { name: 'getInstance', parameters: [], returnType: 'Data', isStatic: true, isPrivate: false },
+                { name: 'getValue', parameters: [], returnType: 'string', isStatic: false, isPrivate: false },
+                { name: 'setValue', parameters: [], returnType: 'void', isStatic: false, isPrivate: false }
+              ],
+              properties: [],
+              isExported: true
+            }],
+            functions: [
+              { name: 'createData', parameters: [], returnType: 'Data', isExported: true },
+              { name: 'initializeData', parameters: [], returnType: 'void', isExported: true }
+            ],
+            imports: []
+          },
+          {
+            relativePath: 'src/models/config.ts',
+            classes: [{
+              name: 'Config',
+              methods: [
+                { name: 'constructor', parameters: [], returnType: 'void', isStatic: false, isPrivate: false },
+                { name: 'getInstance', parameters: [], returnType: 'Config', isStatic: true, isPrivate: false }
+              ],
+              properties: [],
+              isExported: true
+            }],
+            functions: [
+              { name: 'createConfig', parameters: [], returnType: 'Config', isExported: true },
+              { name: 'initializeConfig', parameters: [], returnType: 'void', isExported: true }
+            ],
+            imports: []
+          },
+          {
+            relativePath: 'src/models/session.ts',
+            classes: [{
+              name: 'Session',
+              methods: [
+                { name: 'constructor', parameters: [], returnType: 'void', isStatic: false, isPrivate: false }
+              ],
+              properties: [],
+              isExported: true
+            }],
+            functions: [],
+            imports: []
+          }
+        ]
+      };
+
+      const result = engine.optimizeBasedOnCodebase(mockCodeMapWithFunctions, {});
+
+      expect(result.optimizedContent).toContain('Function Patterns');
+      expect(result.optimizedContent).toContain('Constructors');
+      expect(result.optimizedContent).toContain('getInstance Patterns');
+      expect(result.optimizedContent).toContain('Initialization Functions');
+      expect(result.optimizedContent).toContain('Creation Functions');
+      expect(result.optimizedContent).toContain('Setter Functions');
+      expect(result.optimizedContent).toContain('Consolidation Summary');
+      expect(result.optimizedContent).toContain('Total consolidation potential');
+      expect(result.reductionAchieved).toBeGreaterThan(15);
     });
   });
 });

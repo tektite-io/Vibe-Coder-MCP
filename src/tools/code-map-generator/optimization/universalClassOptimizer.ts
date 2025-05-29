@@ -6,8 +6,9 @@
  * details to achieve maximum token reduction while preserving essential information.
  */
 
-import { ClassInfo, FunctionInfo, ClassPropertyInfo } from '../codeMapModel.js';
+import { ClassInfo, FunctionInfo, ClassPropertyInfo, FileInfo } from '../codeMapModel.js';
 import { UniversalOptimizationConfig, QualityThresholds } from '../types.js';
+import * as path from 'path';
 
 /**
  * Represents a public interface extracted from a class.
@@ -160,9 +161,9 @@ export class UniversalClassOptimizer {
     }
     result += '\n';
 
-    // Compressed description (maximum aggressive: 60 chars)
+    // Compressed description (maximum aggressive: 45 chars)
     if (cls.comment) {
-      const compressed = this.compressDescription(cls.comment, 60);
+      const compressed = this.compressDescription(cls.comment, 45);
       result += `- **Purpose**: ${compressed}\n`;
     }
 
@@ -256,7 +257,7 @@ export class UniversalClassOptimizer {
     if (description.length <= maxLength) return description;
 
     // Remove redundant phrases first for better compression
-    let compressed = description
+    const compressed = description
       .replace(/\bthis (function|method|class)\b/gi, '')
       .replace(/\bprovides? (a|an|the)?\b/gi, '')
       .replace(/\bis used (to|for)\b/gi, '')
@@ -274,6 +275,35 @@ export class UniversalClassOptimizer {
     }
 
     return compressed;
+  }
+
+  /**
+   * Calculates file importance score (0-10).
+   */
+  calculateFileImportance(fileInfo: FileInfo): number {
+    let score = 5.0;
+
+    // Boost for exported classes/functions
+    const exportCount = (fileInfo.classes?.filter(c => c.isExported).length || 0) +
+                       (fileInfo.functions?.filter(f => f.isExported).length || 0);
+    score += Math.min(exportCount * 0.5, 2.0);
+
+    // Boost for files with many classes/functions
+    const totalSymbols = (fileInfo.classes?.length || 0) + (fileInfo.functions?.length || 0);
+    score += Math.min(totalSymbols * 0.1, 1.5);
+
+    // Boost for core files (index, main, app, server)
+    const fileName = path.basename(fileInfo.relativePath, path.extname(fileInfo.relativePath));
+    if (['index', 'main', 'app', 'server', 'config'].includes(fileName.toLowerCase())) {
+      score += 2.0;
+    }
+
+    // Penalty for test files
+    if (fileInfo.relativePath.includes('test') || fileInfo.relativePath.includes('spec')) {
+      score -= 3.0;
+    }
+
+    return Math.max(0, Math.min(score, 10.0));
   }
 
   /**

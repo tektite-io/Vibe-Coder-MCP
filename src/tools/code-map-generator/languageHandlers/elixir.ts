@@ -523,7 +523,7 @@ export class ElixirHandler extends BaseLanguageHandler {
   private extractImportOptions(argsNode: SyntaxNode, sourceCode: string): Record<string, any> | undefined {
     try {
       // Skip the first child (module name)
-      let optionsNode = argsNode.firstChild?.nextNamedSibling;
+      const optionsNode = argsNode.firstChild?.nextNamedSibling;
 
       if (!optionsNode) {
         return undefined;

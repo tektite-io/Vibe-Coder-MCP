@@ -33,7 +33,7 @@ export async function performResearchQuery(query: string, config: OpenRouterConf
           { role: "system", content: "You are a sophisticated AI research assistant using Perplexity Sonar Deep Research. Provide comprehensive, accurate, and up-to-date information. Research the user's query thoroughly." },
           { role: "user", content: query }
         ],
-        max_tokens: 4000,
+        max_tokens: 8000, // Increased from 4000 to handle larger research responses
         temperature: 0.1
       },
       {

@@ -16,7 +16,7 @@ This tool executes a predefined sequence of tool calls, known as a workflow, bas
 ## Outputs
 
 *   **Primary Output:** A summary message indicating the success or failure of the workflow execution. If the workflow definition includes an `output` template, the resolved output object might also be included or summarized in the message. This is returned within the `CallToolResult.content` array (type `text`).
-*   **File Storage:** This tool itself does not save files. However, the individual tools *called within* the workflow might save files to their respective directories under `workflow-agent-files/`.
+*   **File Storage:** This tool itself does not save files. However, the individual tools *called within* the workflow might save files to their respective directories under `VibeCoderOutput/`.
 *   **Error Details:** If the workflow fails, the `CallToolResult` will have `isError: true` and may include `errorDetails` specifying the step and reason for failure.
 
 ## Asynchronous Execution
@@ -71,7 +71,7 @@ flowchart TD
 {
   "tool_name": "run-workflow",
   "arguments": {
-    "workflowName": "newFeatureSetup", 
+    "workflowName": "newFeatureSetup",
     "workflowInput": {
       "featureName": "User Authentication",
       "featureType": "Core Security"
@@ -103,7 +103,7 @@ The `workflows.json` file must be located in the root directory of the project (
   - The `workflows.json` file exists in the root directory
   - The file has valid JSON syntax with proper commas between properties
   - The workflow name you're calling matches exactly (case-sensitive)
-  
+
 - **Parameter Resolution Errors**: Ensure template strings in workflow step parameters are correctly formatted:
   - For workflow inputs: `{workflow.input.paramName}`
   - For previous step outputs: `{steps.stepId.output.content[0].text}`

@@ -1,22 +1,22 @@
 import fs from 'fs-extra';
 import path from 'path';
 import { z } from 'zod';
-import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js'; 
+import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
-import { performDirectLlmCall } from '../../utils/llmHelper.js'; 
+import { performDirectLlmCall } from '../../utils/llmHelper.js';
 import { performResearchQuery } from '../../utils/researchHelper.js';
 import logger from '../../logger.js';
-import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js'; 
-import { AppError, ToolExecutionError } from '../../utils/errors.js'; 
-import { jobManager, JobStatus } from '../../services/job-manager/index.js'; 
-import { sseNotifier } from '../../services/sse-notifier/index.js'; 
-import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js'; 
+import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js';
+import { AppError, ToolExecutionError } from '../../utils/errors.js';
+import { jobManager, JobStatus } from '../../services/job-manager/index.js';
+import { sseNotifier } from '../../services/sse-notifier/index.js';
+import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js';
 
 // Helper function to get the base output directory
 function getBaseOutputDir(): string {
   return process.env.VIBE_CODER_OUTPUT_DIR
     ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
-    : path.join(process.cwd(), 'workflow-agent-files');
+    : path.join(process.cwd(), 'VibeCoderOutput');
 }
 
 // Define tool-specific directory using the helper
@@ -26,9 +26,9 @@ const USER_STORIES_DIR = path.join(getBaseOutputDir(), 'user-stories-generator')
 export async function initDirectories() {
   const baseOutputDir = getBaseOutputDir();
   try {
-    await fs.ensureDir(baseOutputDir); 
+    await fs.ensureDir(baseOutputDir);
     const toolDir = path.join(baseOutputDir, 'user-stories-generator');
-    await fs.ensureDir(toolDir); 
+    await fs.ensureDir(toolDir);
     logger.debug(`Ensured user stories directory exists: ${toolDir}`);
   } catch (error) {
     logger.error({ err: error, path: baseOutputDir }, `Failed to ensure base output directory exists for user-stories-generator.`);
@@ -69,17 +69,17 @@ Generate detailed user stories based on the user's product description and the p
 
   **ID:** US-[auto-incrementing number, e.g., US-101]
   **Title:** [Concise Story Title]
-  
+
   **Story:**
   > As a **[User Role/Persona - informed by research]**,
   > I want to **[perform an action or achieve a goal]**
   > So that **[I gain a specific benefit - linked to user needs/pain points from research]**.
-  
+
   **Acceptance Criteria:**
   *   GIVEN [precondition/context] WHEN [action is performed] THEN [expected, testable outcome].
   *   GIVEN [another context] WHEN [different action] THEN [another outcome].
   *   *(Provide multiple, specific, measurable criteria)*
-  
+
   **Priority:** [High | Medium | Low - informed by perceived value/dependencies/research]
   **Dependencies:** [List of User Story IDs this depends on, e.g., US-100 | None]
   **(Optional) Notes:** [Any clarifying details or technical considerations.]
@@ -114,10 +114,10 @@ const userStoriesInputSchemaShape = {
  * @returns A Promise resolving to a CallToolResult object.
  */
 export const generateUserStories: ToolExecutor = async (
-  params: Record<string, unknown>, 
+  params: Record<string, unknown>,
   config: OpenRouterConfig,
-  context?: ToolExecutionContext 
-): Promise<CallToolResult> => { 
+  context?: ToolExecutionContext
+): Promise<CallToolResult> => {
   const sessionId = context?.sessionId || 'unknown-session';
   if (sessionId === 'unknown-session') {
       logger.warn({ tool: 'generateUserStories' }, 'Executing tool without a valid sessionId. SSE progress updates will not be sent.');
@@ -129,20 +129,20 @@ export const generateUserStories: ToolExecutor = async (
     mappingKeys: config.llm_mapping ? Object.keys(config.llm_mapping) : []
   }, 'generateUserStories executor received config');
 
-  const productDescription = params.productDescription as string; 
+  const productDescription = params.productDescription as string;
 
   const jobId = jobManager.createJob('generate-user-stories', params);
   logger.info({ jobId, tool: 'generateUserStories', sessionId }, 'Starting background job.');
 
   const initialResponse = formatBackgroundJobInitiationResponse(
     jobId,
-    'generate-user-stories', 
-    'User Stories Generator' 
+    'generate-user-stories',
+    'User Stories Generator'
   );
 
   setImmediate(async () => {
-    const logs: string[] = []; 
-    let filePath: string = ''; 
+    const logs: string[] = [];
+    let filePath: string = '';
 
     try {
       jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Starting user stories generation process...');
@@ -154,7 +154,7 @@ export const generateUserStories: ToolExecutor = async (
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const sanitizedName = productDescription.substring(0, 30).toLowerCase().replace(/[^a-z0-9]+/g, '-');
       const filename = `${timestamp}-${sanitizedName}-user-stories.md`;
-      filePath = path.join(USER_STORIES_DIR, filename); 
+      filePath = path.join(USER_STORIES_DIR, filename);
 
       logger.info({ jobId, inputs: { productDescription: productDescription.substring(0, 50) } }, "User Stories Generator: Starting pre-generation research...");
       jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Performing pre-generation research...');
@@ -166,15 +166,15 @@ export const generateUserStories: ToolExecutor = async (
       const query1 = `User personas and stakeholders for: ${productDescription}`;
       const query2 = `Common user workflows and use cases for: ${productDescription}`;
       const query3 = `User experience expectations and pain points for: ${productDescription}`;
-      
+
       const researchResults = await Promise.allSettled([
-        performResearchQuery(query1, config), 
+        performResearchQuery(query1, config),
         performResearchQuery(query2, config),
         performResearchQuery(query3, config)
       ]);
-      
+
       researchContext = "## Pre-Generation Research Context (From Perplexity Sonar Deep Research):\n\n";
-      
+
       researchResults.forEach((result, index) => {
         const queryLabels = ["User Personas & Stakeholders", "User Workflows & Use Cases", "User Experience Expectations & Pain Points"];
         if (result.status === "fulfilled") {
@@ -206,10 +206,10 @@ export const generateUserStories: ToolExecutor = async (
 
     const userStoriesMarkdown = await performDirectLlmCall(
       mainGenerationPrompt,
-      USER_STORIES_SYSTEM_PROMPT, 
+      USER_STORIES_SYSTEM_PROMPT,
       config,
-      'user_stories_generation', 
-      0.3 
+      'user_stories_generation',
+      0.3
     );
 
     logger.info({ jobId }, "User Stories Generator: Main generation completed.");
@@ -264,9 +264,9 @@ export const generateUserStories: ToolExecutor = async (
       jobManager.setJobResult(jobId, errorResult);
       sseNotifier.sendProgress(sessionId, jobId, JobStatus.FAILED, `Job failed: ${mcpError.message}`);
     }
-  }); 
+  });
 
-  return initialResponse; 
+  return initialResponse;
 };
 
 // --- Tool Registration ---
@@ -274,8 +274,8 @@ export const generateUserStories: ToolExecutor = async (
 const userStoriesToolDefinition: ToolDefinition = {
   name: "generate-user-stories",
   description: "Creates detailed user stories with acceptance criteria based on a product description and research.",
-  inputSchema: userStoriesInputSchemaShape, 
-  executor: generateUserStories 
+  inputSchema: userStoriesInputSchemaShape,
+  executor: generateUserStories
 };
 
 registerTool(userStoriesToolDefinition);

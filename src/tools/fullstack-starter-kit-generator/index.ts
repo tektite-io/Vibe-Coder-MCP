@@ -20,7 +20,7 @@ import { YAMLComposer } from './yaml-composer.js';
 function getBaseOutputDir(): string {
   return process.env.VIBE_CODER_OUTPUT_DIR
     ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
-    : path.join(process.cwd(), 'workflow-agent-files');
+    : path.join(process.cwd(), 'VibeCoderOutput');
 }
 
 const STARTER_KIT_DIR = path.join(getBaseOutputDir(), 'fullstack-starter-kit-generator');
@@ -210,7 +210,7 @@ The response should start with { and end with } without any other characters bef
       logger.info({ jobId, selections: llmModuleSelections }, 'LLM module selections parsed.');
       sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Project components identified. Assembling kit...');
       jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Assembling kit from components...');
-      
+
       const composedDefinition = await yamlComposer.compose(
         llmModuleSelections.moduleSelections,
         llmModuleSelections.globalParams
@@ -265,9 +265,9 @@ ${Object.entries(validatedDefinition.techStack).map(([key, tech]) =>
 
 ## Project Structure Generation
 Setup scripts and the full definition JSON have been generated:
-* **Definition JSON:** \`workflow-agent-files/fullstack-starter-kit-generator/${definitionFilename}\`
-* **Linux/macOS Script:** \`workflow-agent-files/fullstack-starter-kit-generator/${scriptShFilename}\`
-* **Windows Script:** \`workflow-agent-files/fullstack-starter-kit-generator/${scriptBatFilename}\`
+* **Definition JSON:** \`VibeCoderOutput/fullstack-starter-kit-generator/${definitionFilename}\`
+* **Linux/macOS Script:** \`VibeCoderOutput/fullstack-starter-kit-generator/${scriptShFilename}\`
+* **Windows Script:** \`VibeCoderOutput/fullstack-starter-kit-generator/${scriptBatFilename}\`
 
 To use these scripts:
 1. Navigate to an empty directory outside this project.
@@ -296,7 +296,7 @@ If any modules were dynamically generated because their templates were missing, 
       const errorMsg = error instanceof Error ? error.message : String(error);
       logger.error({ err: error, jobId, tool: 'generateFullstackStarterKit' }, 'Error during background job execution.');
       logs.push(`[${new Date().toISOString()}] Error: ${errorMsg}`);
-      
+
       let appError: AppError;
       if (error instanceof AppError) {
         appError = error;
@@ -305,7 +305,7 @@ If any modules were dynamically generated because their templates were missing, 
       } else {
         appError = new ToolExecutionError(`Background job ${jobId} failed with unknown error: ${errorMsg}`);
       }
-      
+
       const mcpError = new McpError(ErrorCode.InternalError, appError.message, appError.context);
       jobManager.setJobResult(jobId, {
         content: [{ type: 'text', text: `Error in job ${jobId}: ${mcpError.message}\n\nFull Error: ${appError.stack}\n\nLogs:\n${logs.join('\n')}` }],

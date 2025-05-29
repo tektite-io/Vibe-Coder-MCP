@@ -10,6 +10,7 @@ import './fullstack-starter-kit-generator/index.js';
 import './workflow-runner/index.js';
 import './job-result-retriever/index.js';
 import './code-map-generator/index.js';
+import './vibe-task-manager/index.js';
 
 // Note: process-request is currently registered in src/services/request-processor/index.ts
 // If it were moved to src/tools/, its import would go here too.

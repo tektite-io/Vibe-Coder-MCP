@@ -19,7 +19,7 @@ function getBaseOutputDir(): string {
   // Fallback to default relative to CWD
   return process.env.VIBE_CODER_OUTPUT_DIR
     ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
-    : path.join(process.cwd(), 'workflow-agent-files');
+    : path.join(process.cwd(), 'VibeCoderOutput');
 }
 
 // Define tool-specific directory using the helper

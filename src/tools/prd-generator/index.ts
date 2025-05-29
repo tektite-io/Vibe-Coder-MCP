@@ -19,7 +19,7 @@ function getBaseOutputDir(): string {
   // Fallback to default relative to CWD
   return process.env.VIBE_CODER_OUTPUT_DIR
     ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
-    : path.join(process.cwd(), 'workflow-agent-files');
+    : path.join(process.cwd(), 'VibeCoderOutput');
 }
 
 // Define tool-specific directory using the helper
@@ -196,17 +196,17 @@ export const generatePRD: ToolExecutor = async (
       const query1 = `Market analysis and competitive landscape for: ${productDescription}`;
       const query2 = `User needs, demographics, and expectations for: ${productDescription}`;
       const query3 = `Industry standards, best practices, and common feature sets for products like: ${productDescription}`;
-      
+
       // Execute research queries in parallel using Perplexity
       const researchResults = await Promise.allSettled([
         performResearchQuery(query1, config), // Uses config.perplexityModel (perplexity/sonar-deep-research)
         performResearchQuery(query2, config),
         performResearchQuery(query3, config)
       ]);
-      
+
       // Process research results
       researchContext = "## Pre-Generation Research Context (From Perplexity Sonar Deep Research):\n\n";
-      
+
       // Add results that were fulfilled
       researchResults.forEach((result, index) => {
         const queryLabels = ["Market Analysis", "User Needs & Expectations", "Industry Standards & Best Practices"];

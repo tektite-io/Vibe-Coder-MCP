@@ -8,7 +8,7 @@ import { CodeMapGeneratorConfig } from './types.js';
 import { jobManager, JobStatus } from '../../services/job-manager/index.js';
 import { sseNotifier } from '../../services/sse-notifier/index.js';
 import { getMemoryStats, clearCaches } from './parser.js';
-import { grammarManager, sourceCodeMemoryCache, astMemoryCache } from './parser.js';
+import { grammarManager } from './parser.js';
 import path from 'path';
 
 /**
@@ -173,7 +173,6 @@ export async function processBatchesWithIntermediateStorage<T, I, R>(
 
   // Calculate progress ranges
   const processingRange = (endProgress - startProgress) * 0.8; // 80% for processing
-  const combiningRange = (endProgress - startProgress) * 0.2; // 20% for combining
 
   for (let i = 0; i < totalBatches; i++) {
     const batch = batches[i];

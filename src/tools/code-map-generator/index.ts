@@ -48,6 +48,81 @@ import { AdaptiveOptimizationEngine } from './optimization/adaptiveOptimizer.js'
 // Cache for source code content, primarily for function call graph generation
 const sourceCodeCache = new Map<string, string>();
 
+/**
+ * Filters out compiled/generated files when source equivalents exist
+ */
+function filterDuplicateFiles(files: string[], projectRoot: string): string[] {
+  const sourceFiles = new Set<string>();
+  const compiledFiles = new Map<string, string[]>();
+
+  // First pass: identify source files and potential compiled files
+  files.forEach(file => {
+    const ext = path.extname(file).toLowerCase();
+    const baseName = file.replace(/\.[^.]+$/, '');
+
+    // Source file extensions
+    if (['.ts', '.py', '.java', '.c', '.cpp', '.cs', '.go'].includes(ext)) {
+      sourceFiles.add(baseName);
+    }
+
+    // Compiled file extensions
+    const compiledExts = ['.js', '.pyc', '.pyo', '.class', '.o', '.obj', '.dll', '.exe'];
+    if (compiledExts.includes(ext)) {
+      if (!compiledFiles.has(baseName)) {
+        compiledFiles.set(baseName, []);
+      }
+      compiledFiles.get(baseName)!.push(file);
+    }
+  });
+
+  // Second pass: filter out compiled files where source exists
+  return files.filter(file => {
+    const ext = path.extname(file).toLowerCase();
+    const baseName = file.replace(/\.[^.]+$/, '');
+
+    // Always keep source files
+    if (['.ts', '.py', '.java', '.c', '.cpp', '.cs', '.go'].includes(ext)) {
+      return true;
+    }
+
+    // Filter compiled files
+    if (['.js', '.pyc', '.pyo', '.class', '.o', '.obj', '.dll', '.exe'].includes(ext)) {
+      return !sourceFiles.has(baseName);
+    }
+
+    // Always exclude .js.map and .d.ts files
+    if (file.endsWith('.js.map') || file.endsWith('.d.ts')) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+/**
+ * Filters out trivial files with minimal content
+ */
+async function filterTrivialFiles(files: string[], projectRoot: string): Promise<string[]> {
+  const significantFiles: string[] = [];
+
+  for (const file of files) {
+    try {
+      const content = await fs.readFile(path.join(projectRoot, file), 'utf-8');
+      const lines = content.split('\n').filter(line => line.trim() && !line.trim().startsWith('//')).length;
+
+      // Keep files with substantial content
+      if (lines >= 10) {
+        significantFiles.push(file);
+      }
+    } catch (error) {
+      // Keep file if we can't read it (might be binary)
+      significantFiles.push(file);
+    }
+  }
+
+  return significantFiles;
+}
+
 // Functions for testing and cache management
 export function clearCodeMapCaches(): void {
   sourceCodeCache.clear();
@@ -294,6 +369,11 @@ try {
         /node_modules/i, /\.git/i, /dist/i, /build/i, /out/i, /coverage/i, /vendor/i,
         /\.(log|lock|env|bak|tmp|swp|DS_Store|map)$/i, /.*\/\..*/, /^\..*/,
         /(?:^|[/\\])__(tests|mocks|snapshots)__[/\\]/i, /(?:^|[/\\])(test|tests)[/\\]/i,
+        // Enhanced test file exclusions
+        /(?:^|[/\\])(spec|e2e)[/\\]/i,
+        /\.spec\./i,
+        /\.e2e\./i,
+        /(?:^|[/\\])__(mocks|fixtures|snapshots)__[/\\]/i,
         /\.min\.(js|css)$/i, /package-lock\.json/i, /yarn\.lock/i,
         /\.(png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot|mp3|mp4|webm|ogg|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|tar|gz|rar|7z|exe|dll|bin|obj|o|iso|dmg|pdb|bak)$/i,
     ];
@@ -307,7 +387,26 @@ try {
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Scanning for source files...');
 
     logger.info(`Scanning for source files in: ${projectRoot}`);
-    const filePaths = await collectSourceFiles(projectRoot, supportedExtensions, combinedIgnoredPatterns, config);
+    let filePathsResult = await collectSourceFiles(projectRoot, supportedExtensions, combinedIgnoredPatterns, config);
+
+    // Ensure we have a flat array of strings
+    let filePaths: string[] = Array.isArray(filePathsResult[0]) ? (filePathsResult as string[][]).flat() : filePathsResult as string[];
+
+    // Apply Phase 1 optimizations: Filter duplicate and trivial files
+    jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Filtering duplicate and trivial files...');
+    sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Filtering duplicate and trivial files...', 25);
+
+    const originalFileCount = filePaths.length;
+
+    // Filter duplicate files (compiled when source exists)
+    filePaths = filterDuplicateFiles(filePaths, projectRoot);
+    const afterDuplicateFilter = filePaths.length;
+
+    // Filter trivial files (minimal content)
+    filePaths = await filterTrivialFiles(filePaths, projectRoot);
+    const afterTrivialFilter = filePaths.length;
+
+    logger.info(`File filtering results: ${originalFileCount} → ${afterDuplicateFilter} (after duplicate filter) → ${afterTrivialFilter} (after trivial filter)`);
 
     // Log memory usage after file scanning
     const postScanningMemoryStats = getMemoryStats();

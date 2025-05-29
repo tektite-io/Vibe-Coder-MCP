@@ -19,7 +19,7 @@ This tool accepts the following parameters via the MCP call:
 ## Outputs
 
 * **Primary Output:** A comprehensive set of development rules in Markdown format.
-* **File Storage:** The generated artifact is saved for historical purposes to the configured output directory (default: `workflow-agent-files/`, override with `VIBE_CODER_OUTPUT_DIR` env var):
+* **File Storage:** The generated artifact is saved for historical purposes to the configured output directory (default: `VibeCoderOutput/`, override with `VIBE_CODER_OUTPUT_DIR` env var):
   `[output_dir]/rules-generator/[timestamp]-[sanitized-name]-rules.md`
 * **MCP Response:** The generated content is returned as text content within the MCP `CallToolResult`.
 

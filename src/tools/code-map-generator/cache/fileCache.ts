@@ -258,7 +258,7 @@ export class FileCache<T> {
       // Check if the entry exists
       try {
         await fs.access(entryPath, fsSync.constants.R_OK);
-      } catch (error) {
+      } catch {
         // Entry doesn't exist
         this.stats.misses++;
         return undefined;
@@ -325,7 +325,7 @@ export class FileCache<T> {
       // Create the directory if it doesn't exist (in case it was deleted)
       try {
         await fs.mkdir(path.dirname(entryPath), { recursive: true });
-      } catch (error) {
+      } catch {
         // Ignore if directory already exists
       }
 
@@ -401,7 +401,7 @@ export class FileCache<T> {
       }
 
       return true;
-    } catch (error) {
+    } catch {
       return false;
     }
   }

@@ -226,16 +226,9 @@ async function generateSingleMarkdownOutput(
     markdown += '```\n\n';
   }
 
-  // Add sequence diagram section
-  markdown += '## Method Call Sequence\n\n';
-
-  // Generate the sequence diagram
-  const sequenceDiagram = generateMermaidSequenceDiagram(
-    functionCallGraph.nodes,
-    functionCallGraph.edges
-  );
-
-  markdown += '```mermaid\n' + sequenceDiagram + '\n```\n\n';
+  // Skip sequence diagram generation entirely for optimization
+  // markdown += '## Method Call Sequence\n\n';
+  // markdown += 'Sequence diagrams disabled for optimization.\n\n';
 
   // Add file details section
   markdown += '## File Details\n\n';
@@ -243,7 +236,17 @@ async function generateSingleMarkdownOutput(
   // Apply import optimization to all files
   const optimizedFilesInfo = diagramOptimizer.optimizeFileInfos(allFilesInfo);
 
-  optimizedFilesInfo.forEach(fileInfo => {
+  // Apply importance-based filtering for Phase 6 optimization
+  const { UniversalClassOptimizer } = await import('./optimization/universalClassOptimizer.js');
+  const classOptimizer = new UniversalClassOptimizer();
+
+  const importantFiles = optimizedFilesInfo.filter(fileInfo => {
+    const importance = classOptimizer.calculateFileImportance(fileInfo);
+    return importance >= 6.0; // Only show files with importance >= 6
+  });
+
+  // Process only important files for detailed breakdown
+  importantFiles.forEach(fileInfo => {
     markdown += `### ${fileInfo.relativePath}\n\n`;
 
     if (fileInfo.comment) {
@@ -396,6 +399,12 @@ async function generateSingleMarkdownOutput(
 
     markdown += '---\n\n';
   });
+
+  // Add summary for filtered files
+  const filteredCount = optimizedFilesInfo.length - importantFiles.length;
+  if (filteredCount > 0) {
+    markdown += `\n*${filteredCount} additional files with lower importance scores were excluded from detailed breakdown.*\n\n`;
+  }
 
   // Write the Markdown content to the output file
   await writeFileSecure(outputPath, markdown, config.allowedMappingDirectory, 'utf-8', outputDir);

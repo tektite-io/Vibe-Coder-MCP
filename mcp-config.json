@@ -44,6 +44,11 @@
       "description": "Indexes and maps a codebase structure, providing class/function maps, comments, and Mermaid diagrams for AI consumption. Captures doc-strings and inline comments for semantic context.",
       "use_cases": ["map codebase", "analyze code structure", "understand project architecture", "generate code documentation map", "index project symbols", "visualize code dependencies", "semantic code map"],
       "input_patterns": ["map codebase {path}", "generate a code map for project {projectName}", "analyze the structure of {directory}", "show me a semantic map of the codebase", "create architecture diagram for {path}"]
+    },
+    "vibe-task-manager": {
+      "description": "AI-agent-native task management system with recursive decomposition design (RDD) methodology. Supports project creation, task decomposition, dependency management, and agent coordination for autonomous software development workflows.",
+      "use_cases": ["task management", "project planning", "task decomposition", "dependency tracking", "agent coordination", "recursive task breakdown", "atomic task detection", "development workflow", "project organization"],
+      "input_patterns": ["create project {projectName}", "decompose task {taskId}", "list projects", "run task {taskId}", "check status of {projectName}", "refine task {taskId}", "manage tasks for {projectName}", "break down {requirement} into atomic tasks", "coordinate agents for {projectName}"]
     }
   }
 }
