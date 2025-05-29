@@ -12,7 +12,7 @@ import './services/request-processor/index.js';
 
 // Import registry functions
 import { getAllTools, executeTool, ToolExecutionContext } from './services/routing/toolRegistry.js'; // Import ToolExecutionContext
-import { addInteraction, getLastInteraction } from './services/state/sessionState.js'; // Import state functions
+import { addInteraction } from './services/state/sessionState.js'; // Import state functions
 
 // Import necessary types
 import { OpenRouterConfig } from "./types/workflow.js";

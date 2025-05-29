@@ -52,7 +52,7 @@ export async function performDirectLlmCall(
           { role: "system", content: systemPrompt },
           { role: "user", content: prompt }
         ],
-        max_tokens: 4000, // Consider making this configurable if needed
+        max_tokens: 8000, // Increased from 4000 to handle larger template generations
         temperature: temperature // Use the provided or default temperature
       },
       {

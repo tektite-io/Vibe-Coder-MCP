@@ -2,12 +2,12 @@
 import fs from 'fs-extra';
 import path from 'path';
 import { fileURLToPath } from 'url'; // Need this for relative pathing in ES Modules
-import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js'; // Import McpError, ErrorCode
+import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { executeTool, ToolExecutionContext } from '../routing/toolRegistry.js'; // Import ToolExecutionContext
 import { OpenRouterConfig } from '../../types/workflow.js';
 import logger from '../../logger.js';
 import { AppError, ToolExecutionError, ConfigurationError, ParsingError } from '../../utils/errors.js';
-import { jobManager, Job, JobStatus } from '../job-manager/index.js'; // Import Job Manager
+import { jobManager, JobStatus } from '../job-manager/index.js'; // Import Job Manager
 import { sseNotifier } from '../sse-notifier/index.js'; // Import SSE Notifier
 
 // --- Constants for Adaptive Job Polling ---
