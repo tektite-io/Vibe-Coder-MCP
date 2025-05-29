@@ -19,7 +19,7 @@ function getBaseOutputDir(): string {
   // Fallback to default relative to CWD
   return process.env.VIBE_CODER_OUTPUT_DIR
     ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
-    : path.join(process.cwd(), 'workflow-agent-files');
+    : path.join(process.cwd(), 'VibeCoderOutput');
 }
 
 // Define tool-specific directory using the helper
@@ -85,13 +85,13 @@ Generate a detailed set of development rules based on the user's product descrip
 - For **each rule**, use the following precise template:
 
   ### Rule: [Clear Rule Title Starting with a Verb, e.g., Use PascalCase for Components]
-  
+
   **Description:** [Concise explanation of what the rule entails.]
-  
+
   **Rationale:** [Why this rule is important for this specific project. Reference research/best practices.]
-  
+
   **Applicability:** [Glob patterns or description of where this rule applies (e.g., \`src/components/**/*.tsx\`, "All API endpoint handlers").]
-  
+
   **Guidelines / Examples:**
   \`\`\`[language, e.g., javascript, typescript, css, python]
   // Good Example:
@@ -158,7 +158,7 @@ export const generateRules: ToolExecutor = async (
   const userStories = params.userStories as string | undefined;
   const ruleCategories = params.ruleCategories as string[] | undefined;
 
-  // ---> Step 2.5(Rules).3: Create Job & Return Job ID <--- 
+  // ---> Step 2.5(Rules).3: Create Job & Return Job ID <---
   const jobId = jobManager.createJob('generate-rules', params);
   logger.info({ jobId, tool: 'generateRules', sessionId }, 'Starting background job.');
 
@@ -169,7 +169,7 @@ export const generateRules: ToolExecutor = async (
     'Rules Generator' // User-friendly display name
   );
 
-  // ---> Step 2.5(Rules).4: Wrap Logic in Async Block <--- 
+  // ---> Step 2.5(Rules).4: Wrap Logic in Async Block <---
   setImmediate(async () => {
     const logs: string[] = []; // Keep logs specific to this job execution
     let filePath: string = ''; // Define filePath in outer scope for catch block
@@ -200,11 +200,11 @@ export const generateRules: ToolExecutor = async (
     try {
       // Define relevant research queries
       const query1 = `Best development practices and coding standards for building: ${productDescription}`;
-      
-      const query2 = ruleCategories && ruleCategories.length > 0 
+
+      const query2 = ruleCategories && ruleCategories.length > 0
         ? `Specific rules and guidelines for these categories in software development: ${ruleCategories.join(', ')}`
         : `Common software development rule categories for: ${productDescription}`;
-      
+
       // Extract product type for the third query
       const productTypeLowercase = productDescription.toLowerCase();
       let productType = "software application";
@@ -217,19 +217,19 @@ export const generateRules: ToolExecutor = async (
       } else if (productTypeLowercase.includes("game")) {
         productType = "game";
       }
-      
+
       const query3 = `Modern architecture patterns and file organization for ${productType} development`;
-      
+
       // Execute research queries in parallel using Perplexity
       const researchResults = await Promise.allSettled([
         performResearchQuery(query1, config), // Uses config.perplexityModel (perplexity/sonar-deep-research)
         performResearchQuery(query2, config),
         performResearchQuery(query3, config)
       ]);
-      
+
       // Process research results
       researchContext = "## Pre-Generation Research Context (From Perplexity Sonar Deep Research):\n\n";
-      
+
       // Add results that were fulfilled
       researchResults.forEach((result, index) => {
         const queryLabels = ["Best Practices", "Rule Categories", "Architecture Patterns"];
@@ -257,7 +257,7 @@ export const generateRules: ToolExecutor = async (
 
     // Create the main generation prompt with combined research and inputs
     let mainGenerationPrompt = `Create a comprehensive set of development rules for the following product:\n\n${productDescription}`;
-    
+
     if (userStories) {
       mainGenerationPrompt += `\n\nBased on these user stories:\n\n${userStories}`;
     }

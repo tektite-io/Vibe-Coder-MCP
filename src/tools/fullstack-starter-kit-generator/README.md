@@ -21,7 +21,7 @@ This tool accepts the following parameters via the MCP call:
 ## Outputs
 
 *   **Primary Output (MCP Response):** A JSON string containing the job ID and an initial message. The actual result is retrieved asynchronously. The final job result is a formatted report summarizing the generated starter kit, including paths to the definition file and setup scripts.
-*   **File Storage:** Artifacts are saved to the configured output directory (default: `workflow-agent-files/`, override with `VIBE_CODER_OUTPUT_DIR` env var), under the `fullstack-starter-kit-generator` subdirectory:
+*   **File Storage:** Artifacts are saved to the configured output directory (default: `VibeCoderOutput/`, override with `VIBE_CODER_OUTPUT_DIR` env var), under the `fullstack-starter-kit-generator` subdirectory:
     *   **JSON Definition:** `[output_dir]/fullstack-starter-kit-generator/[timestamp]-[sanitized-name]-definition.json`
         *   This JSON file contains the complete, assembled starter kit definition, composed from various YAML modules.
     *   **Shell Script:** `[output_dir]/fullstack-starter-kit-generator/[timestamp]-[sanitized-name]-setup.sh`

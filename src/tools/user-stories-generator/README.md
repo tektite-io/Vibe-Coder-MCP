@@ -17,7 +17,7 @@ This tool accepts the following parameters via the MCP call:
 ## Outputs
 
 * **Primary Output:** A comprehensive set of user stories in Markdown format, hierarchically organized with acceptance criteria.
-* **File Storage:** The generated artifact is saved for historical purposes to the configured output directory (default: `workflow-agent-files/`, override with `VIBE_CODER_OUTPUT_DIR` env var):
+* **File Storage:** The generated artifact is saved for historical purposes to the configured output directory (default: `VibeCoderOutput/`, override with `VIBE_CODER_OUTPUT_DIR` env var):
   `[output_dir]/user-stories-generator/[timestamp]-[sanitized-name]-user-stories.md`
 * **MCP Response:** The generated content is returned as text content within the MCP `CallToolResult`.
 
