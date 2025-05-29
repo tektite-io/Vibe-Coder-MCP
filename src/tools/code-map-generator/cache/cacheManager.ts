@@ -11,9 +11,16 @@ import { CacheOptions, CacheStats } from './types.js';
 import { CodeMapGeneratorConfig } from '../types.js';
 import { getCacheDirectory } from '../directoryUtils.js';
 
+// Interface for cache instances with common methods
+interface CacheInstance {
+  clear(): Promise<void>;
+  prune(): Promise<number>;
+  getStats(): CacheStats | Promise<CacheStats>;
+  close(): void;
+}
+
 // Map of cache instances by name
-// Using any type to avoid type compatibility issues with generic cache implementations
-const cacheInstances = new Map<string, any>();
+const cacheInstances = new Map<string, CacheInstance>();
 
 /**
  * Creates a cache manager instance.
@@ -56,8 +63,8 @@ export function createCacheManager(config: CodeMapGeneratorConfig) {
     const cache = new FileCache<T>(cacheOptions);
     await cache.init();
 
-    // Store the cache instance
-    cacheInstances.set(name, cache);
+    // Store the cache instance (cast to CacheInstance interface)
+    cacheInstances.set(name, cache as CacheInstance);
 
     logger.debug(`Created file cache instance: ${name}`);
     return cache;
@@ -101,8 +108,8 @@ export function createCacheManager(config: CodeMapGeneratorConfig) {
     const cache = new TieredCache<T>(cacheOptions);
     await cache.init();
 
-    // Store the cache instance
-    cacheInstances.set(name, cache);
+    // Store the cache instance (cast to CacheInstance interface)
+    cacheInstances.set(name, cache as CacheInstance);
 
     logger.debug(`Created tiered cache instance: ${name}`);
     return cache;
@@ -175,7 +182,7 @@ export function createCacheManager(config: CodeMapGeneratorConfig) {
     });
 
     const results = await Promise.all(prunePromises);
-    totalPruned = results.reduce((total, count) => total + count, 0);
+    totalPruned = results.reduce((total: number, count: number) => total + count, 0);
 
     logger.info(`Pruned ${totalPruned} entries from all caches (${cacheInstances.size} instances)`);
     return totalPruned;
@@ -186,10 +193,11 @@ export function createCacheManager(config: CodeMapGeneratorConfig) {
    * @param name The name of the cache
    * @returns The cache statistics, or undefined if the cache doesn't exist
    */
-  function getCacheStats(name: string): CacheStats | undefined {
+  async function getCacheStats(name: string): Promise<CacheStats | undefined> {
     const cache = cacheInstances.get(name);
     if (cache) {
-      return cache.getStats();
+      const stats = cache.getStats();
+      return stats instanceof Promise ? await stats : stats;
     }
     return undefined;
   }
@@ -198,12 +206,12 @@ export function createCacheManager(config: CodeMapGeneratorConfig) {
    * Gets statistics about all cache instances.
    * @returns An object mapping cache names to their statistics
    */
-  function getAllCacheStats(): Record<string, CacheStats> {
+  async function getAllCacheStats(): Promise<Record<string, CacheStats>> {
     const stats: Record<string, CacheStats> = {};
 
     for (const [name, cache] of cacheInstances.entries()) {
       const cacheStats = cache.getStats();
-      stats[name] = cacheStats;
+      stats[name] = cacheStats instanceof Promise ? await cacheStats : cacheStats;
     }
 
     return stats;
@@ -264,7 +272,7 @@ export async function pruneAllCaches(): Promise<number> {
   });
 
   const results = await Promise.all(prunePromises);
-  totalPruned = results.reduce((total, count) => total + count, 0);
+  totalPruned = results.reduce((total: number, count: number) => total + count, 0);
 
   logger.info(`Pruned ${totalPruned} entries from all caches (${cacheInstances.size} instances)`);
   return totalPruned;
@@ -274,11 +282,12 @@ export async function pruneAllCaches(): Promise<number> {
  * Gets statistics about all cache instances.
  * @returns An object mapping cache names to their statistics
  */
-export function getCacheStats(): Record<string, CacheStats> {
+export async function getCacheStats(): Promise<Record<string, CacheStats>> {
   const stats: Record<string, CacheStats> = {};
 
   for (const [name, cache] of cacheInstances.entries()) {
-    stats[name] = cache.getStats();
+    const cacheStats = cache.getStats();
+    stats[name] = cacheStats instanceof Promise ? await cacheStats : cacheStats;
   }
 
   return stats;

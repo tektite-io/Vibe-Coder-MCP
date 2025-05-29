@@ -78,8 +78,12 @@ function hashString(str: string): number {
 export function extractMethodCallSequences(
   nodes: GraphNode[],
   edges: GraphEdge[],
-  maxCalls: number = 20
+  maxCalls: number = 0  // Changed from 20 to 0 to disable sequence diagrams
 ): MethodCall[] {
+  // Return empty array when sequence diagrams are disabled
+  if (maxCalls === 0) {
+    return [];
+  }
   // Filter nodes to only include functions and methods
   const functionNodes = nodes.filter(n => n.type === 'function' || n.type === 'method');
 

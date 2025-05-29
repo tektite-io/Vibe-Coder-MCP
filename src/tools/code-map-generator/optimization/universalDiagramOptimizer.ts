@@ -39,6 +39,7 @@ export class UniversalDiagramOptimizer {
 
   /**
    * Optimizes import lists by cleaning up unresolved imports and reducing redundancy.
+   * Enhanced with smart consolidation and pattern recognition.
    */
   optimizeImports(imports: ImportInfo[]): ImportInfo[] {
     if (!imports || imports.length === 0) {
@@ -46,25 +47,113 @@ export class UniversalDiagramOptimizer {
     }
 
     const optimizedImports: ImportInfo[] = [];
-    const unresolvedCount = this.countUnresolvedImports(imports);
+    const resolved = imports.filter(imp => !this.isUnresolvedImport(imp));
+    const unresolved = imports.filter(imp => this.isUnresolvedImport(imp));
 
-    // Process each import
-    for (const imp of imports) {
-      if (this.isUnresolvedImport(imp)) {
-        // Skip individual unresolved imports - we'll add a summary later
-        continue;
-      } else {
-        // Keep resolved imports
-        optimizedImports.push(imp);
+    // Group and consolidate imports
+    const consolidatedSummary = this.consolidateImports(resolved, unresolved);
+
+    // Add consolidated summary as a single import entry
+    if (consolidatedSummary) {
+      optimizedImports.push({
+        path: consolidatedSummary,
+        type: 'summary',
+        comment: 'Consolidated import summary',
+        isExternalPackage: false
+      });
+    }
+
+    // Only keep the most important resolved imports (top 3)
+    const importantResolved = resolved
+      .filter(imp => this.isImportantImport(imp))
+      .slice(0, 3);
+
+    optimizedImports.push(...importantResolved);
+
+    return optimizedImports;
+  }
+
+  /**
+   * Consolidates imports into a smart summary with pattern recognition.
+   */
+  private consolidateImports(resolved: ImportInfo[], unresolved: ImportInfo[]): string {
+    const parts: string[] = [];
+
+    // Count resolved imports
+    if (resolved.length > 0) {
+      parts.push(`${resolved.length} internal modules`);
+    }
+
+    // Analyze unresolved imports for patterns
+    if (unresolved.length > 0) {
+      const patterns = this.analyzeUnresolvedPatterns(unresolved);
+
+      if (patterns.standardLibs > 0) {
+        parts.push(`${patterns.standardLibs} standard libraries`);
+      }
+
+      if (patterns.frameworks > 0) {
+        parts.push(`${patterns.frameworks} framework dependencies`);
+      }
+
+      if (patterns.utilities > 0) {
+        parts.push(`${patterns.utilities} utility packages`);
+      }
+
+      const otherUnresolved = unresolved.length - patterns.standardLibs - patterns.frameworks - patterns.utilities;
+      if (otherUnresolved > 0) {
+        parts.push(`${otherUnresolved} external dependencies`);
       }
     }
 
-    // Add summary for unresolved imports if any exist
-    if (unresolvedCount > 0) {
-      optimizedImports.push(this.createUnresolvedImportSummary(unresolvedCount));
-    }
+    return parts.length > 0 ? parts.join(', ') : '';
+  }
 
-    return optimizedImports;
+  /**
+   * Analyzes unresolved import patterns to categorize them.
+   */
+  private analyzeUnresolvedPatterns(unresolved: ImportInfo[]): {
+    standardLibs: number;
+    frameworks: number;
+    utilities: number;
+  } {
+    const standardLibPatterns = ['fs', 'path', 'crypto', 'util', 'os', 'http', 'https', 'url', 'events', 'stream'];
+    const frameworkPatterns = ['react', 'vue', 'angular', 'express', 'fastify', 'next', 'nuxt', 'django', 'flask', 'spring'];
+    const utilityPatterns = ['lodash', 'moment', 'axios', 'fetch', 'uuid', 'chalk', 'debug', 'winston'];
+
+    let standardLibs = 0;
+    let frameworks = 0;
+    let utilities = 0;
+
+    unresolved.forEach(imp => {
+      const path = imp.path.toLowerCase();
+
+      if (standardLibPatterns.some(pattern => path.includes(pattern))) {
+        standardLibs++;
+      } else if (frameworkPatterns.some(pattern => path.includes(pattern))) {
+        frameworks++;
+      } else if (utilityPatterns.some(pattern => path.includes(pattern))) {
+        utilities++;
+      }
+    });
+
+    return { standardLibs, frameworks, utilities };
+  }
+
+  /**
+   * Determines if an import is important enough to keep in detailed view.
+   */
+  private isImportantImport(imp: ImportInfo): boolean {
+    const path = imp.path.toLowerCase();
+
+    // Keep imports that are likely core to the application
+    const importantPatterns = [
+      'config', 'service', 'manager', 'controller', 'handler',
+      'model', 'schema', 'types', 'interface', 'api'
+    ];
+
+    return importantPatterns.some(pattern => path.includes(pattern)) ||
+           Boolean(imp.importedItems && imp.importedItems.length > 3); // Many imported items suggests importance
   }
 
   /**
