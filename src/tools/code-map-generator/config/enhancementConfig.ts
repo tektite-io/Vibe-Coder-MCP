@@ -5,7 +5,7 @@
  * Achieves 95-97% token reduction while preserving essential architectural information.
  */
 
-import { UniversalOptimizationConfig, QualityThresholds } from '../types.js';
+import { UniversalOptimizationConfig, QualityThresholds, PatternConsolidationConfig } from '../types.js';
 
 /**
  * Enhanced configuration interface for code map optimization.
@@ -25,6 +25,11 @@ export interface CodeMapEnhancementConfig {
    * Universal optimization configuration (DEFAULT: all enabled).
    */
   universalOptimization: UniversalOptimizationConfig;
+
+  /**
+   * Pattern-based consolidation configuration (DEFAULT: enabled with aggressive settings).
+   */
+  patternConsolidation: PatternConsolidationConfig;
 
   /**
    * Quality thresholds for optimization validation.
@@ -64,7 +69,7 @@ export interface CodeMapEnhancementConfig {
   contentDensity: {
     enabled: boolean;
     importanceThreshold: number;
-    maxContentLength: number; // 60 for maximum compression
+    maxContentLength: number; // 45 for maximum compression
     layeredDetailLevels: string;
     fileImportanceScoring: boolean;
   };
@@ -84,9 +89,18 @@ export const DEFAULT_ENHANCEMENT_CONFIG: CodeMapEnhancementConfig = {
   universalOptimization: {
     eliminateVerboseDiagrams: true,
     reduceClassDetails: true,
-    consolidateRepetitiveContent: true,
+    consolidateRepetitiveContent: true, // Enhanced with pattern-based consolidation
     focusOnPublicInterfaces: true,
     adaptiveOptimization: true
+  },
+
+  // PATTERN-BASED CONSOLIDATION: Enhanced consolidation settings
+  patternConsolidation: {
+    enabled: true,
+    maxComponentsShown: 3, // Changed from 6 to 3 for more aggressive consolidation
+    groupArchitecturalPatterns: true,
+    groupFunctionPatterns: true,
+    consolidationThreshold: 3 // Minimum items needed to form a consolidation group
   },
 
   // Quality thresholds adjusted for maximum optimization
@@ -117,11 +131,11 @@ export const DEFAULT_ENHANCEMENT_CONFIG: CodeMapEnhancementConfig = {
     compressDescriptions: true
   },
 
-  // MAXIMUM AGGRESSIVE: Content density with 60 char limit
+  // MAXIMUM AGGRESSIVE: Content density with 45 char limit
   contentDensity: {
     enabled: true,
-    importanceThreshold: 3.0, // Very aggressive threshold
-    maxContentLength: 60, // Maximum compression
+    importanceThreshold: 6.0, // Changed from 3.0 to 6.0 for more aggressive filtering
+    maxContentLength: 25, // Changed from 45 to 25 for higher compression
     layeredDetailLevels: 'aggressive',
     fileImportanceScoring: true
   }
@@ -188,14 +202,22 @@ export const QUALITY_FIRST_PRESETS = {
     universalOptimization: {
       eliminateVerboseDiagrams: true,
       reduceClassDetails: true,
-      consolidateRepetitiveContent: true,
+      consolidateRepetitiveContent: true, // Enhanced with pattern-based consolidation
       focusOnPublicInterfaces: true,
       adaptiveOptimization: true
     },
+
+    patternConsolidation: {
+      enabled: true,
+      maxComponentsShown: 3, // Changed from 6 to 3 for more aggressive consolidation
+      groupArchitecturalPatterns: true,
+      groupFunctionPatterns: true,
+      consolidationThreshold: 3 // Minimum items needed to form a consolidation group
+    },
     contentDensity: {
       enabled: true,
-      importanceThreshold: 3.0,
-      maxContentLength: 60, // Maximum compression
+      importanceThreshold: 6.0, // Changed from 3.0 to 6.0 for more aggressive filtering
+      maxContentLength: 25, // Changed from 45 to 25 for higher compression
       layeredDetailLevels: 'aggressive',
       fileImportanceScoring: true
     }
@@ -255,6 +277,11 @@ export class EnhancementConfigManager {
     this.config.qualityThresholds = { ...presetConfig.qualityThresholds };
     this.config.universalOptimization = { ...presetConfig.universalOptimization };
     this.config.contentDensity = { ...this.config.contentDensity, ...presetConfig.contentDensity };
+
+    // Apply pattern consolidation settings if available in preset
+    if ('patternConsolidation' in presetConfig) {
+      this.config.patternConsolidation = { ...presetConfig.patternConsolidation };
+    }
   }
 
   /**
@@ -269,8 +296,8 @@ export class EnhancementConfigManager {
     this.config.functionCompression.enabled = true;
     this.config.semanticCompression.enabled = true;
     this.config.contentDensity.enabled = true;
-    this.config.contentDensity.importanceThreshold = 3.0;
-    this.config.contentDensity.maxContentLength = 60; // Maximum compression
+    this.config.contentDensity.importanceThreshold = 6.0; // Changed from 3.0 to 6.0
+    this.config.contentDensity.maxContentLength = 25; // Changed from 45 to 25 for higher compression
 
     // Enable all universal optimizations
     this.config.universalOptimization.eliminateVerboseDiagrams = true;
@@ -278,6 +305,13 @@ export class EnhancementConfigManager {
     this.config.universalOptimization.consolidateRepetitiveContent = true;
     this.config.universalOptimization.focusOnPublicInterfaces = true;
     this.config.universalOptimization.adaptiveOptimization = true;
+
+    // Enable pattern-based consolidation with aggressive settings
+    this.config.patternConsolidation.enabled = true;
+    this.config.patternConsolidation.maxComponentsShown = 3; // Changed from 6 to 3
+    this.config.patternConsolidation.groupArchitecturalPatterns = true;
+    this.config.patternConsolidation.groupFunctionPatterns = true;
+    this.config.patternConsolidation.consolidationThreshold = 3;
   }
 
   /**
@@ -296,6 +330,9 @@ export class EnhancementConfigManager {
     this.config.universalOptimization.consolidateRepetitiveContent = false;
     this.config.universalOptimization.focusOnPublicInterfaces = false;
     this.config.universalOptimization.adaptiveOptimization = false;
+
+    // Disable pattern-based consolidation
+    this.config.patternConsolidation.enabled = false;
   }
 
   /**

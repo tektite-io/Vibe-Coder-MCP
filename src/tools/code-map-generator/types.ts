@@ -444,6 +444,41 @@ export interface UniversalOptimizationConfig {
 }
 
 /**
+ * Configuration for pattern-based consolidation.
+ */
+export interface PatternConsolidationConfig {
+  /**
+   * Whether pattern-based consolidation is enabled.
+   * Default: false
+   */
+  enabled: boolean;
+
+  /**
+   * Maximum number of components to show in each pattern group.
+   * Default: 6
+   */
+  maxComponentsShown: number;
+
+  /**
+   * Whether to group files by architectural patterns (services, handlers, etc.).
+   * Default: true
+   */
+  groupArchitecturalPatterns: boolean;
+
+  /**
+   * Whether to group functions by common patterns (constructors, getInstance, etc.).
+   * Default: true
+   */
+  groupFunctionPatterns: boolean;
+
+  /**
+   * Minimum number of items needed to form a consolidation group.
+   * Default: 3
+   */
+  consolidationThreshold: number;
+}
+
+/**
  * Quality thresholds for optimization validation.
  */
 export interface QualityThresholds {
