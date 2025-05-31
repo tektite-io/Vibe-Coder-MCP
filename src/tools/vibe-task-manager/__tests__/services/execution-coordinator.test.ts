@@ -263,18 +263,25 @@ describe('ExecutionCoordinator', () => {
       const schedule = taskScheduler.getCurrentSchedule();
       const scheduledTask = schedule!.scheduledTasks.get('T001');
 
-      // Temporarily modify the simulation to always fail
-      const originalMethod = (coordinator as any).simulateTaskExecution;
-      (coordinator as any).simulateTaskExecution = vi.fn().mockRejectedValue(new Error('Simulated failure'));
+      // Mock the communication channel to fail task sending
+      const { AgentOrchestrator } = await import('../../services/agent-orchestrator.js');
+      const orchestrator = AgentOrchestrator.getInstance();
+      const originalChannel = (orchestrator as any).communicationChannel;
+
+      // Mock sendTask to fail
+      (orchestrator as any).communicationChannel = {
+        ...originalChannel,
+        sendTask: vi.fn().mockResolvedValue(false)
+      };
 
       const execution = await coordinator.executeTask(scheduledTask!);
 
       expect(execution.status).toBe('failed');
       expect(execution.result?.success).toBe(false);
-      expect(execution.result?.error).toContain('Simulated failure');
+      expect(execution.result?.error).toContain('Failed to send task to agent');
 
       // Restore original method
-      (coordinator as any).simulateTaskExecution = originalMethod;
+      (orchestrator as any).communicationChannel = originalChannel;
     });
 
     it('should throw error when no agents available', async () => {
@@ -366,18 +373,74 @@ describe('ExecutionCoordinator', () => {
       const schedule = taskScheduler.getCurrentSchedule();
       const scheduledTask = schedule!.scheduledTasks.get('T001');
 
+      // Mock the agent communication to delay execution
+      const { AgentOrchestrator } = await import('../../services/agent-orchestrator.js');
+      const orchestrator = AgentOrchestrator.getInstance();
+      const originalChannel = (orchestrator as any).communicationChannel;
+
+      // Mock delayed task sending
+      (orchestrator as any).communicationChannel = {
+        ...originalChannel,
+        sendTask: vi.fn().mockImplementation(async () => {
+          await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
+          return true;
+        }),
+        receiveResponse: vi.fn().mockResolvedValue(JSON.stringify({
+          status: 'DONE',
+          message: 'Task completed successfully',
+          progress_percentage: 100,
+          timestamp: Date.now()
+        }))
+      };
+
       // Start execution but don't wait for completion
       const executionPromise = coordinator.executeTask(scheduledTask!);
 
-      // Check active executions immediately
+      // Give it a moment to start and be tracked
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      // Check active executions
       const activeExecutions = coordinator.getActiveExecutions();
       expect(activeExecutions.length).toBeGreaterThan(0);
 
       // Wait for completion
       await executionPromise;
+
+      // Restore original channel
+      (orchestrator as any).communicationChannel = originalChannel;
     });
 
     it('should get execution by ID', async () => {
+      const schedule = taskScheduler.getCurrentSchedule();
+      const scheduledTask = schedule!.scheduledTasks.get('T002'); // Use T002 to avoid file conflicts
+
+      // Mock the agent communication to fail so execution stays in activeExecutions
+      const { AgentOrchestrator } = await import('../../services/agent-orchestrator.js');
+      const orchestrator = AgentOrchestrator.getInstance();
+      const originalChannel = (orchestrator as any).communicationChannel;
+
+      // Mock failing task sending
+      (orchestrator as any).communicationChannel = {
+        ...originalChannel,
+        sendTask: vi.fn().mockRejectedValue(new Error('Agent not found - cannot send task'))
+      };
+
+      const execution = await coordinator.executeTask(scheduledTask!);
+      const retrievedExecution = coordinator.getExecution(execution.metadata.executionId);
+
+      expect(retrievedExecution).toBeDefined();
+      expect(retrievedExecution?.metadata.executionId).toBe(execution.metadata.executionId);
+
+      // Restore original channel
+      (orchestrator as any).communicationChannel = originalChannel;
+    });
+
+    it('should return undefined for non-existent execution ID', () => {
+      const execution = coordinator.getExecution('non_existent_id');
+      expect(execution).toBeUndefined();
+    });
+
+    it('should get task execution status by task ID', async () => {
       const schedule = taskScheduler.getCurrentSchedule();
       const scheduledTask = schedule!.scheduledTasks.get('T001');
 
@@ -386,18 +449,20 @@ describe('ExecutionCoordinator', () => {
       (coordinator as any).simulateTaskExecution = vi.fn().mockRejectedValue(new Error('Test failure'));
 
       const execution = await coordinator.executeTask(scheduledTask!);
-      const retrievedExecution = coordinator.getExecution(execution.metadata.executionId);
+      const status = await coordinator.getTaskExecutionStatus('T001');
 
-      expect(retrievedExecution).toBeDefined();
-      expect(retrievedExecution?.metadata.executionId).toBe(execution.metadata.executionId);
+      expect(status).toBeDefined();
+      expect(status?.status).toBe('failed');
+      expect(status?.executionId).toBe(execution.metadata.executionId);
+      expect(status?.message).toContain('Task failed');
 
       // Restore original method
       (coordinator as any).simulateTaskExecution = originalMethod;
     });
 
-    it('should return undefined for non-existent execution ID', () => {
-      const execution = coordinator.getExecution('non_existent_id');
-      expect(execution).toBeUndefined();
+    it('should return null for non-existent task execution status', async () => {
+      const status = await coordinator.getTaskExecutionStatus('non_existent_task');
+      expect(status).toBeNull();
     });
   });
 
@@ -487,13 +552,22 @@ describe('ExecutionCoordinator', () => {
       const schedule = taskScheduler.getCurrentSchedule();
       const scheduledTask = schedule!.scheduledTasks.get('T001');
 
-      // Mock a successful execution to ensure deterministic behavior
-      const originalMethod = (coordinator as any).simulateTaskExecution;
-      (coordinator as any).simulateTaskExecution = vi.fn().mockResolvedValue({
-        success: true,
-        output: 'Task completed successfully',
-        exitCode: 0
-      });
+      // Mock the communication channel to succeed
+      const { AgentOrchestrator } = await import('../../services/agent-orchestrator.js');
+      const orchestrator = AgentOrchestrator.getInstance();
+      const originalChannel = (orchestrator as any).communicationChannel;
+
+      // Mock successful task sending and response
+      (orchestrator as any).communicationChannel = {
+        ...originalChannel,
+        sendTask: vi.fn().mockResolvedValue(true),
+        receiveResponse: vi.fn().mockResolvedValue(JSON.stringify({
+          status: 'DONE',
+          message: 'Task completed successfully',
+          progress_percentage: 100,
+          timestamp: Date.now()
+        }))
+      };
 
       const execution = await coordinator.executeTask(scheduledTask!);
       // execution should be completed, not failed
@@ -504,7 +578,7 @@ describe('ExecutionCoordinator', () => {
       expect(retriedExecution).toBeNull();
 
       // Restore original method
-      (coordinator as any).simulateTaskExecution = originalMethod;
+      (orchestrator as any).communicationChannel = originalChannel;
     });
   });
 

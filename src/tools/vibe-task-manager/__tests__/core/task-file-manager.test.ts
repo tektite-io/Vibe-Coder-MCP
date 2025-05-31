@@ -24,6 +24,26 @@ vi.mock('zlib', () => ({
   })
 }));
 
+// Mock util.promisify to handle the async versions
+vi.mock('util', async () => {
+  const actual = await vi.importActual('util');
+  return {
+    ...actual,
+    promisify: vi.fn((fn) => {
+      if (fn.name === 'gzip') {
+        return async (buffer: Buffer) => Buffer.from('compressed-' + buffer.toString());
+      }
+      if (fn.name === 'gunzip') {
+        return async (buffer: Buffer) => {
+          const decompressed = buffer.toString().replace('compressed-', '');
+          return Buffer.from(decompressed);
+        };
+      }
+      return actual.promisify(fn);
+    })
+  };
+});
+
 // Mock TaskManagerMemoryManager
 vi.mock('../../utils/memory-manager-integration.js', () => ({
   TaskManagerMemoryManager: {
@@ -272,12 +292,17 @@ describe('TaskFileManager', () => {
 
       (fileManager as any).fileIndex.set('T001', indexEntry);
 
-      // Mock compressed file content - return a valid compressed buffer
+      // Mock compressed file content - return a properly "compressed" buffer
       const taskJson = JSON.stringify(mockTask);
-      const compressedBuffer = Buffer.from(taskJson); // Simplified for test
+      const compressedBuffer = Buffer.from('compressed-' + taskJson); // Match our mock compression
       mockFs.readFile.mockResolvedValue(compressedBuffer);
 
       const result = await fileManager.loadTask('T001');
+
+      // Debug the result if it fails
+      if (!result.success) {
+        console.log('Load task failed:', result.error);
+      }
 
       expect(result.success).toBe(true);
       expect(mockFs.readFile).toHaveBeenCalledWith(indexEntry.filePath);

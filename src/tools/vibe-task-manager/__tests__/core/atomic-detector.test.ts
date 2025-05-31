@@ -6,7 +6,8 @@ import { createMockConfig } from '../utils/test-setup.js';
 
 // Mock the LLM helper
 vi.mock('../../../../utils/llmHelper.js', () => ({
-  performDirectLlmCall: vi.fn()
+  performDirectLlmCall: vi.fn(),
+  performFormatAwareLlmCall: vi.fn()
 }));
 
 // Mock the config loader
@@ -77,7 +78,7 @@ describe('AtomicTaskDetector', () => {
 
   describe('analyzeTask', () => {
     it('should analyze atomic task successfully', async () => {
-      const { performDirectLlmCall } = await import('../../../../utils/llmHelper.js');
+      const { performFormatAwareLlmCall } = await import('../../../../utils/llmHelper.js');
       const mockResponse = JSON.stringify({
         isAtomic: true,
         confidence: 0.85,
@@ -87,7 +88,7 @@ describe('AtomicTaskDetector', () => {
         recommendations: ['Add unit tests', 'Consider error handling']
       });
 
-      vi.mocked(performDirectLlmCall).mockResolvedValue(mockResponse);
+      vi.mocked(performFormatAwareLlmCall).mockResolvedValue(mockResponse);
 
       const result = await detector.analyzeTask(mockTask, mockContext);
 
@@ -100,17 +101,19 @@ describe('AtomicTaskDetector', () => {
         recommendations: ['Add unit tests', 'Consider error handling']
       });
 
-      expect(performDirectLlmCall).toHaveBeenCalledWith(
+      expect(performFormatAwareLlmCall).toHaveBeenCalledWith(
         expect.stringContaining('Analyze the following task'),
         expect.stringContaining('You are an expert software development task analyzer'),
         mockConfig,
         'task_decomposition',
+        'json',
+        undefined,
         0.1
       );
     });
 
     it('should handle non-atomic task analysis', async () => {
-      const { performDirectLlmCall } = await import('../../../../utils/llmHelper.js');
+      const { performFormatAwareLlmCall } = await import('../../../../utils/llmHelper.js');
       const mockResponse = JSON.stringify({
         isAtomic: false,
         confidence: 0.9,
@@ -120,7 +123,7 @@ describe('AtomicTaskDetector', () => {
         recommendations: ['Break into smaller tasks', 'Define clearer acceptance criteria']
       });
 
-      vi.mocked(performDirectLlmCall).mockResolvedValue(mockResponse);
+      vi.mocked(performFormatAwareLlmCall).mockResolvedValue(mockResponse);
 
       const largeTask = {
         ...mockTask,
@@ -156,17 +159,17 @@ describe('AtomicTaskDetector', () => {
     });
 
     it('should handle multiple file paths validation', async () => {
-      const { performDirectLlmCall } = await import('../../../../utils/llmHelper.js');
+      const { performFormatAwareLlmCall } = await import('../../../../utils/llmHelper.js');
       const mockResponse = JSON.stringify({
         isAtomic: true,
         confidence: 0.8,
         reasoning: 'Task seems manageable',
         estimatedHours: 3,
-        complexityFactors: [],
+        complexityFactors: ['Multiple file modifications'],
         recommendations: []
       });
 
-      vi.mocked(performDirectLlmCall).mockResolvedValue(mockResponse);
+      vi.mocked(performFormatAwareLlmCall).mockResolvedValue(mockResponse);
 
       const multiFileTask = {
         ...mockTask,
@@ -233,8 +236,8 @@ describe('AtomicTaskDetector', () => {
     });
 
     it('should return fallback analysis on LLM failure', async () => {
-      const { performDirectLlmCall } = await import('../../../../utils/llmHelper.js');
-      vi.mocked(performDirectLlmCall).mockRejectedValue(new Error('LLM API failed'));
+      const { performFormatAwareLlmCall } = await import('../../../../utils/llmHelper.js');
+      vi.mocked(performFormatAwareLlmCall).mockRejectedValue(new Error('LLM API failed'));
 
       const result = await detector.analyzeTask(mockTask, mockContext);
 
@@ -245,8 +248,8 @@ describe('AtomicTaskDetector', () => {
     });
 
     it('should handle malformed LLM response', async () => {
-      const { performDirectLlmCall } = await import('../../../../utils/llmHelper.js');
-      vi.mocked(performDirectLlmCall).mockResolvedValue('Invalid JSON response');
+      const { performFormatAwareLlmCall } = await import('../../../../utils/llmHelper.js');
+      vi.mocked(performFormatAwareLlmCall).mockResolvedValue('Invalid JSON response');
 
       const result = await detector.analyzeTask(mockTask, mockContext);
 
@@ -255,14 +258,14 @@ describe('AtomicTaskDetector', () => {
     });
 
     it('should handle partial LLM response', async () => {
-      const { performDirectLlmCall } = await import('../../../../utils/llmHelper.js');
+      const { performFormatAwareLlmCall } = await import('../../../../utils/llmHelper.js');
       const partialResponse = JSON.stringify({
         isAtomic: true,
         confidence: 0.8
         // Missing other fields
       });
 
-      vi.mocked(performDirectLlmCall).mockResolvedValue(partialResponse);
+      vi.mocked(performFormatAwareLlmCall).mockResolvedValue(partialResponse);
 
       const result = await detector.analyzeTask(mockTask, mockContext);
 
@@ -277,12 +280,12 @@ describe('AtomicTaskDetector', () => {
 
   describe('prompt building', () => {
     it('should build comprehensive analysis prompt', async () => {
-      const { performDirectLlmCall } = await import('../../../../utils/llmHelper.js');
-      vi.mocked(performDirectLlmCall).mockResolvedValue('{"isAtomic": true, "confidence": 0.8}');
+      const { performFormatAwareLlmCall } = await import('../../../../utils/llmHelper.js');
+      vi.mocked(performFormatAwareLlmCall).mockResolvedValue('{"isAtomic": true, "confidence": 0.8}');
 
       await detector.analyzeTask(mockTask, mockContext);
 
-      const callArgs = vi.mocked(performDirectLlmCall).mock.calls[0];
+      const callArgs = vi.mocked(performFormatAwareLlmCall).mock.calls[0];
       const prompt = callArgs[0];
 
       expect(prompt).toContain(mockTask.title);
@@ -293,12 +296,12 @@ describe('AtomicTaskDetector', () => {
     });
 
     it('should build appropriate system prompt', async () => {
-      const { performDirectLlmCall } = await import('../../../../utils/llmHelper.js');
-      vi.mocked(performDirectLlmCall).mockResolvedValue('{"isAtomic": true, "confidence": 0.8}');
+      const { performFormatAwareLlmCall } = await import('../../../../utils/llmHelper.js');
+      vi.mocked(performFormatAwareLlmCall).mockResolvedValue('{"isAtomic": true, "confidence": 0.8}');
 
       await detector.analyzeTask(mockTask, mockContext);
 
-      const callArgs = vi.mocked(performDirectLlmCall).mock.calls[0];
+      const callArgs = vi.mocked(performFormatAwareLlmCall).mock.calls[0];
       const systemPrompt = callArgs[1];
 
       expect(systemPrompt).toContain('expert software development task analyzer');
