@@ -1,10 +1,19 @@
 # Fullstack Starter Kit Generator (`generate-fullstack-starter-kit`)
 
+**Status**: Production Ready | **Tech Stacks**: Multiple Supported | **Dynamic Generation**: YAML Module Creation
+
 ## Overview
 
 Generates full-stack project starter kits by composing YAML modules based on user requirements and tech stack preferences. This tool leverages Large Language Models (LLMs) via OpenRouter to select appropriate modules and parameters, and then assembles them into a final JSON definition using a `YAMLComposer`.
 
-**New Feature: Dynamic YAML Module Generation**
+**Production Highlights:**
+- **Multiple Tech Stacks**: React, Vue, Angular, Node.js, Python, Go, and more
+- **Dynamic YAML Module Generation**: Auto-generates missing templates using LLM
+- **Asynchronous Processing**: Job-based execution with real-time status tracking
+- **Comprehensive Output**: Complete project structure with setup scripts
+- **Template Caching**: In-memory and persistent template caching for performance
+
+**Dynamic YAML Module Generation:**
 If a specified YAML module template (e.g., `frontend/react-vite.yaml`) is not found in the `src/tools/fullstack-starter-kit-generator/templates/` directory, the system will attempt to dynamically generate it using an LLM. The generated module (in JSON format from LLM, then converted to YAML) will then be saved to the templates directory for future use and cached in memory for the current session.
 
 ## Inputs

@@ -1,8 +1,17 @@
 # User Stories Generator (`generate-user-stories`)
 
+**Status**: Production Ready | **Research Integration**: Perplexity Sonar | **Output**: Comprehensive User Stories
+
 ## Overview
 
 Creates detailed user stories with acceptance criteria. This tool leverages Large Language Models (LLMs) via OpenRouter to perform its task.
+
+**Production Highlights:**
+- **Research-Enhanced Generation**: Integrates Perplexity Sonar for user behavior analysis and industry patterns
+- **Asynchronous Processing**: Job-based execution with real-time status tracking
+- **Comprehensive Coverage**: Multiple user personas and detailed acceptance criteria
+- **Multi-Phase Workflow**: Research → Analysis → Generation → Formatting
+- **Agile-Ready Output**: Standard user story format with acceptance criteria and priority levels
 
 ## Inputs
 

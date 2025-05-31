@@ -1,8 +1,17 @@
 # PRD Generator (`generate-prd`)
 
+**Status**: Production Ready | **Research Integration**: Perplexity Sonar | **Output**: Comprehensive PRDs
+
 ## Overview
 
 Creates comprehensive product requirements documents. This tool leverages Large Language Models (LLMs) via OpenRouter to perform its task.
+
+**Production Highlights:**
+- **Research-Enhanced Generation**: Integrates Perplexity Sonar for market analysis and competitive landscape
+- **Asynchronous Processing**: Job-based execution with real-time status tracking
+- **Comprehensive Structure**: Standard PRD sections with industry best practices
+- **Multi-Phase Workflow**: Research → Analysis → Generation → Formatting
+- **Error Resilience**: Graceful handling of research failures with fallback generation
 
 ## Inputs
 

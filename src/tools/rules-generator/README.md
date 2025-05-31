@@ -1,8 +1,17 @@
 # Rules Generator (`generate-rules`)
 
+**Status**: Production Ready | **Research Integration**: Perplexity Sonar | **Output**: Development Guidelines
+
 ## Overview
 
 Creates project-specific development rules based on product description. This tool leverages Large Language Models (LLMs) via OpenRouter to perform its task.
+
+**Production Highlights:**
+- **Research-Enhanced Generation**: Integrates Perplexity Sonar for industry best practices and coding standards
+- **Asynchronous Processing**: Job-based execution with real-time status tracking
+- **Comprehensive Coverage**: Coding standards, architecture guidelines, and team protocols
+- **Multi-Phase Workflow**: Research → Analysis → Generation → Formatting
+- **Team-Ready Output**: Structured guidelines with rationale and implementation examples
 
 ## Inputs
 

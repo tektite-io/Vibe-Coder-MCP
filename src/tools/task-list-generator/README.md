@@ -1,8 +1,17 @@
 # Task List Generator (`generate-task-list`)
 
+**Status**: Production Ready | **Research Integration**: Perplexity Sonar | **Output**: Structured Task Lists
+
 ## Overview
 
 Creates structured development task lists with dependencies. This tool leverages Large Language Models (LLMs) via OpenRouter to perform its task.
+
+**Production Highlights:**
+- **Research-Enhanced Generation**: Integrates Perplexity Sonar for development lifecycle and task estimation best practices
+- **Asynchronous Processing**: Job-based execution with real-time status tracking
+- **Hierarchical Structure**: High-level tasks with detailed sub-task decomposition
+- **Multi-Phase Workflow**: Research → Generation → Decomposition → Formatting
+- **Project-Ready Output**: Task IDs, dependencies, priorities, and time estimations
 
 ## Inputs
 

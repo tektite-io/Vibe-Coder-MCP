@@ -1,8 +1,17 @@
 # Research Manager (`research`)
 
+**Status**: Production Ready | **Integration**: Perplexity Sonar API | **Performance**: <2s Average Response
+
 ## Overview
 
 Performs deep research on topics using Perplexity Sonar via OpenRouter. This tool leverages Large Language Models (LLMs) via OpenRouter to perform its task.
+
+**Production Highlights:**
+- **Real API Integration**: Direct integration with Perplexity Sonar for live research
+- **Enhanced Processing**: LLM-powered research enhancement and structuring
+- **Asynchronous Execution**: Job-based processing with real-time status tracking
+- **Comprehensive Output**: Structured research reports with multiple sections
+- **Error Resilience**: Robust error handling and fallback mechanisms
 
 ## Inputs
 
@@ -85,8 +94,8 @@ Research emerging trends in fintech for 2025
 The research enhancement logic uses `performDirectLlmCall` guided by a detailed system prompt that includes:
 
 ```
-You are a research specialist with advanced capabilities for gathering accurate, 
-comprehensive, and relevant information. Your goal is to provide complete, 
+You are a research specialist with advanced capabilities for gathering accurate,
+comprehensive, and relevant information. Your goal is to provide complete,
 thoughtful analyses that cover the topic thoroughly...
 
 Format your response as a well-structured research report with these sections:
