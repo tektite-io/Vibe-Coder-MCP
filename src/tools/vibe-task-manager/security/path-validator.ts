@@ -13,6 +13,7 @@ import fs from 'fs-extra';
 import path from 'path';
 import { VibeTaskManagerConfig } from '../utils/config-loader.js';
 import { AppError, ValidationError } from '../../../utils/errors.js';
+import { getUnifiedSecurityConfig } from './unified-security-config.js';
 import logger from '../../../logger.js';
 
 /**
@@ -69,42 +70,88 @@ export class PathSecurityValidator {
   private auditCounter = 0;
 
   private constructor(config?: Partial<PathWhitelistConfig>) {
-    this.config = {
-      allowedDirectories: [
-        process.cwd(),
-        path.join(process.cwd(), 'data'),
-        path.join(process.cwd(), 'src'),
-        path.join(process.cwd(), 'temp'),
-        '/tmp', // Allow temp directory
-        '/test' // Allow test paths
-      ],
-      allowedExtensions: [
-        '.json', '.yaml', '.yml', '.txt', '.md', '.log',
-        '.js', '.ts', '.jsx', '.tsx', '.vue', '.svelte',
-        '.py', '.java', '.go', '.rs', '.cpp', '.c', '.h',
-        '.html', '.css', '.scss', '.sass', '.less',
-        '.xml', '.csv', '.sql', '.sh', '.bat', '.ps1'
-      ],
-      blockedPatterns: [
-        /\.\./g, // Directory traversal
-        /~\//g, // Home directory access
-        /\/etc\//g, // System config access
-        /\/proc\//g, // Process info access
-        /\/sys\//g, // System info access
-        /\/dev\//g, // Device access
-        /\/var\/log\//g, // System logs
-        /\/root\//g, // Root directory
-        /\/home\/[^\/]+\/\.[^\/]+/g, // Hidden files in home dirs
-        /\0/g, // Null bytes
-        /[\x00-\x1f\x7f-\x9f]/g // Control characters
-      ],
-      allowSymlinks: false,
-      allowAbsolutePaths: true, // Allow but validate against whitelist
-      maxPathLength: 4096,
-      ...config
-    };
+    try {
+      // Try to get configuration from unified security config manager
+      const unifiedConfig = getUnifiedSecurityConfig();
+      const unifiedPathConfig = unifiedConfig.getPathValidatorConfig();
 
-    logger.info({ config: this.config }, 'Path Security Validator initialized');
+      this.config = {
+        allowedDirectories: unifiedPathConfig.allowedDirectories,
+        allowedExtensions: [
+          '.json', '.yaml', '.yml', '.txt', '.md', '.log', '.gz',
+          '.js', '.ts', '.jsx', '.tsx', '.vue', '.svelte',
+          '.py', '.java', '.go', '.rs', '.cpp', '.c', '.h',
+          '.html', '.css', '.scss', '.sass', '.less',
+          '.xml', '.csv', '.sql', '.sh', '.bat', '.ps1'
+        ],
+        blockedPatterns: [
+          /\.\./g, // Directory traversal
+          /~\//g, // Home directory access
+          /\/etc\//g, // System config access
+          /\/proc\//g, // Process info access
+          /\/sys\//g, // System info access
+          /\/dev\//g, // Device access
+          /\/var\/log\//g, // System logs
+          /\/root\//g, // Root directory
+          /\/home\/[^\/]+\/\.[^\/]+/g, // Hidden files in home dirs
+          /\0/g, // Null bytes
+          /[\x00-\x1f\x7f-\x9f]/g // Control characters
+        ],
+        allowSymlinks: false,
+        allowAbsolutePaths: true, // Allow but validate against whitelist
+        maxPathLength: unifiedPathConfig.maxPathLength,
+        ...config
+      };
+
+      logger.info({
+        config: this.config,
+        source: 'unified-security-config'
+      }, 'Path Security Validator initialized from unified configuration');
+
+    } catch (error) {
+      // Fallback to hardcoded defaults if unified config is not available
+      logger.warn({ err: error }, 'Unified security config not available, falling back to defaults');
+
+      this.config = {
+        allowedDirectories: [
+          process.cwd(),
+          path.join(process.cwd(), 'data'),
+          path.join(process.cwd(), 'src'),
+          path.join(process.cwd(), 'temp'),
+          '/tmp', // Allow temp directory
+          '/test' // Allow test paths
+        ],
+        allowedExtensions: [
+          '.json', '.yaml', '.yml', '.txt', '.md', '.log', '.gz',
+          '.js', '.ts', '.jsx', '.tsx', '.vue', '.svelte',
+          '.py', '.java', '.go', '.rs', '.cpp', '.c', '.h',
+          '.html', '.css', '.scss', '.sass', '.less',
+          '.xml', '.csv', '.sql', '.sh', '.bat', '.ps1'
+        ],
+        blockedPatterns: [
+          /\.\./g, // Directory traversal
+          /~\//g, // Home directory access
+          /\/etc\//g, // System config access
+          /\/proc\//g, // Process info access
+          /\/sys\//g, // System info access
+          /\/dev\//g, // Device access
+          /\/var\/log\//g, // System logs
+          /\/root\//g, // Root directory
+          /\/home\/[^\/]+\/\.[^\/]+/g, // Hidden files in home dirs
+          /\0/g, // Null bytes
+          /[\x00-\x1f\x7f-\x9f]/g // Control characters
+        ],
+        allowSymlinks: false,
+        allowAbsolutePaths: true, // Allow but validate against whitelist
+        maxPathLength: 4096,
+        ...config
+      };
+
+      logger.info({
+        config: this.config,
+        source: 'hardcoded-defaults'
+      }, 'Path Security Validator initialized from defaults (fallback)');
+    }
   }
 
   /**

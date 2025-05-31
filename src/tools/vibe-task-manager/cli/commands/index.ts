@@ -5,6 +5,9 @@ import { openCommand } from './open.js';
 import { epicCommand } from './epic.js';
 import { refineCommand } from './refine.js';
 import { agentCommand } from './agent.js';
+import { decomposeCommand } from './decompose.js';
+import { searchCommand } from './search.js';
+import { contextCommand } from './context.js';
 import logger from '../../../../logger.js';
 
 /**
@@ -56,6 +59,9 @@ export function createVibeTasksCLI(): Command {
   program.addCommand(epicCommand);
   program.addCommand(refineCommand);
   program.addCommand(agentCommand);
+  program.addCommand(decomposeCommand);
+  program.addCommand(searchCommand);
+  program.addCommand(contextCommand);
 
   // Handle unknown commands
   program.on('command:*', (operands) => {
@@ -283,4 +289,17 @@ export class CLIUtils {
     if (text.length <= maxLength) return text;
     return text.substring(0, maxLength - 3) + '...';
   }
+
+  /**
+   * Format bytes for display
+   */
+  static formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  }
+
+
 }
