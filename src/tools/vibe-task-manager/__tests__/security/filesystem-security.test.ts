@@ -141,7 +141,7 @@ describe('FilesystemSecurity', () => {
     it('should handle permission errors gracefully', async () => {
       const nonExistentFile = path.join(allowedDir, 'nonexistent.txt');
 
-      await expect(fsecurity.statSecure(nonExistentFile)).rejects.toThrow('File not found');
+      await expect(fsecurity.statSecure(nonExistentFile)).rejects.toThrow('Access denied: Path does not exist');
     });
   });
 
@@ -222,8 +222,7 @@ describe('FilesystemSecurity', () => {
   describe('Error Handling', () => {
     it('should handle filesystem errors gracefully', async () => {
       // Mock fs.access to throw EACCES error
-      const originalAccess = fs.access;
-      vi.mocked(fs.access).mockRejectedValueOnce(
+      const accessSpy = vi.spyOn(fs, 'access').mockRejectedValueOnce(
         Object.assign(new Error('Permission denied'), { code: 'EACCES' })
       );
 
@@ -233,7 +232,7 @@ describe('FilesystemSecurity', () => {
       expect(result.reason).toContain('Permission denied');
 
       // Restore original function
-      fs.access = originalAccess;
+      accessSpy.mockRestore();
     });
 
     it('should handle path normalization errors', async () => {

@@ -715,6 +715,286 @@ function aggressiveExtractionParsing(response: string, context: string): any {
 }
 
 /**
+ * Smart multi-pass extraction strategy to replace O(n²) brute force
+ * Uses intelligent bracket matching and size-based prioritization
+ */
+function smartMultiPassExtraction(jsonString: string, jobId?: string): string[] {
+  const results: string[] = [];
+
+  // Pass 1: Smart outermost object extraction
+  const outermost = extractOutermostObjects(jsonString);
+  results.push(...outermost);
+
+  // Pass 2: Enhanced markdown recovery
+  const markdownRecovered = extractFromMarkdownPatterns(jsonString);
+  results.push(...markdownRecovered);
+
+  // Pass 3: Improved balanced bracket extraction with multiple starting points
+  const balancedExtractions = extractMultipleBalancedObjects(jsonString);
+  results.push(...balancedExtractions);
+
+  // Pass 4: Intelligent substring search (size-prioritized, limited iterations)
+  const intelligentSubstrings = extractIntelligentSubstrings(jsonString);
+  results.push(...intelligentSubstrings);
+
+  // Remove duplicates and sort by length (largest first)
+  const uniqueResults = [...new Set(results)];
+  uniqueResults.sort((a, b) => b.length - a.length);
+
+  logger.debug({
+    jobId,
+    stage: 'smart-multi-pass',
+    totalCandidates: uniqueResults.length,
+    largestSize: uniqueResults[0]?.length || 0
+  }, "Smart multi-pass extraction completed");
+
+  return uniqueResults;
+}
+
+/**
+ * Extract outermost complete objects/arrays using smart bracket matching
+ * Prioritizes larger, more complete objects that are likely to be the root
+ */
+function extractOutermostObjects(content: string): string[] {
+  const results: string[] = [];
+  const stack: Array<{ char: string; pos: number }> = [];
+  let inString = false;
+  let escaped = false;
+  let currentStart = -1;
+
+  for (let i = 0; i < content.length; i++) {
+    const char = content[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+
+    if (char === '"' && !escaped) {
+      inString = !inString;
+      continue;
+    }
+
+    if (!inString) {
+      if (char === '{' || char === '[') {
+        if (stack.length === 0) {
+          currentStart = i;
+        }
+        stack.push({ char: char === '{' ? '}' : ']', pos: i });
+      } else if (char === '}' || char === ']') {
+        if (stack.length > 0 && stack[stack.length - 1].char === char) {
+          stack.pop();
+          if (stack.length === 0 && currentStart !== -1) {
+            // Found complete outermost object
+            const extracted = content.substring(currentStart, i + 1);
+            if (extracted.length > 10) { // Only consider substantial extractions
+              results.push(extracted);
+            }
+            currentStart = -1;
+          }
+        }
+      }
+    }
+  }
+
+  // Sort by size (largest first) and prioritize objects that look like root objects
+  results.sort((a, b) => {
+    // First priority: size (larger is better)
+    const sizeDiff = b.length - a.length;
+    if (Math.abs(sizeDiff) > 100) return sizeDiff; // Significant size difference
+
+    // Second priority: objects that start early in the content (likely root objects)
+    const aStart = content.indexOf(a);
+    const bStart = content.indexOf(b);
+    const startDiff = aStart - bStart;
+    if (Math.abs(startDiff) > 50) return startDiff; // Significant position difference
+
+    // Third priority: objects with common root-level properties
+    const aHasRootProps = /["'](?:moduleName|name|type|id|description|provides|requires)["']\s*:/.test(a);
+    const bHasRootProps = /["'](?:moduleName|name|type|id|description|provides|requires)["']\s*:/.test(b);
+
+    if (aHasRootProps && !bHasRootProps) return -1;
+    if (!aHasRootProps && bHasRootProps) return 1;
+
+    return sizeDiff; // Fall back to size
+  });
+
+  return results;
+}
+
+/**
+ * Extract JSON from various markdown patterns
+ */
+function extractFromMarkdownPatterns(content: string): string[] {
+  const results: string[] = [];
+
+  // Pattern 1: Standard markdown code blocks
+  const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)```/g;
+  let match;
+  while ((match = codeBlockRegex.exec(content)) !== null) {
+    const extracted = match[1].trim();
+    if (extracted.length > 10) {
+      results.push(extracted);
+    }
+  }
+
+  // Pattern 2: Single-line backticks with JSON
+  const singleLineRegex = /`\s*(\{[\s\S]*?\}|\[[\s\S]*?\])\s*`/g;
+  while ((match = singleLineRegex.exec(content)) !== null) {
+    const extracted = match[1].trim();
+    if (extracted.length > 10) {
+      results.push(extracted);
+    }
+  }
+
+  // Pattern 3: JSON blocks after common prefixes
+  const prefixPatterns = [
+    /(?:json|response|result|data):\s*(\{[\s\S]*?\}|\[[\s\S]*?\])/gi,
+    /(?:here is|here's)\s+(?:the\s+)?(?:json|response):\s*(\{[\s\S]*?\}|\[[\s\S]*?\])/gi
+  ];
+
+  for (const pattern of prefixPatterns) {
+    while ((match = pattern.exec(content)) !== null) {
+      const extracted = match[1].trim();
+      if (extracted.length > 10) {
+        results.push(extracted);
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Extract multiple balanced objects from different starting positions
+ */
+function extractMultipleBalancedObjects(content: string): string[] {
+  const results: string[] = [];
+  const startPositions: Array<{ char: string; pos: number }> = [];
+
+  // Find all potential starting positions
+  for (let i = 0; i < content.length; i++) {
+    if (content[i] === '{' || content[i] === '[') {
+      startPositions.push({ char: content[i], pos: i });
+    }
+  }
+
+  // Try extraction from each position (limit to prevent performance issues)
+  const maxAttempts = Math.min(startPositions.length, 50);
+  for (let i = 0; i < maxAttempts; i++) {
+    const start = startPositions[i];
+    try {
+      const extracted = extractBalancedJson(content, start.pos, start.char);
+      if (extracted && extracted.length > 10) {
+        results.push(extracted);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Intelligent substring search with size-based prioritization
+ * Limited iterations to prevent O(n²) performance issues
+ * Prioritizes substrings that look like complete root objects
+ */
+function extractIntelligentSubstrings(content: string): string[] {
+  const results: string[] = [];
+  const maxIterations = 1000; // Prevent O(n²) explosion
+  let iterations = 0;
+
+  // Start with larger substrings and work down
+  const minSize = 100; // Increase minimum size for more substantial objects
+  const stepSize = Math.max(1, Math.floor(content.length / 50)); // More aggressive step size
+
+  // First pass: Look for substrings that start near the beginning (likely root objects)
+  const priorityStarts = [0, 1, 2, 3, 4, 5]; // Check first few positions first
+
+  for (const priorityStart of priorityStarts) {
+    if (priorityStart >= content.length) continue;
+
+    for (let size = content.length - priorityStart; size >= minSize && iterations < maxIterations; size -= stepSize * 2) {
+      iterations++;
+
+      const substring = content.substring(priorityStart, priorityStart + size);
+
+      // Quick heuristic checks before expensive JSON.parse
+      if (!substring.includes('{')) continue;
+      if (substring.split('{').length !== substring.split('}').length) continue;
+
+      // Prioritize substrings that start with { (likely complete objects)
+      if (!substring.trim().startsWith('{')) continue;
+
+      try {
+        const parsed = JSON.parse(substring);
+
+        // Prioritize objects with root-level properties
+        if (typeof parsed === 'object' && parsed !== null) {
+          const hasRootProps = Object.keys(parsed).some(key =>
+            ['moduleName', 'name', 'type', 'id', 'description', 'provides', 'requires'].includes(key)
+          );
+
+          if (hasRootProps) {
+            results.unshift(substring); // Add to front for priority
+          } else {
+            results.push(substring);
+          }
+
+          // Found a very large valid substring, likely the root object
+          if (substring.length > content.length * 0.8) {
+            return results;
+          }
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  // Second pass: Regular search if priority search didn't find enough
+  if (results.length < 3) {
+    for (let size = content.length; size >= minSize && iterations < maxIterations; size -= stepSize) {
+      for (let start = 0; start <= content.length - size && iterations < maxIterations; start += stepSize) {
+        iterations++;
+
+        const substring = content.substring(start, start + size);
+
+        // Quick heuristic checks before expensive JSON.parse
+        if (!substring.includes('{') && !substring.includes('[')) continue;
+        if (substring.split('{').length !== substring.split('}').length) continue;
+        if (substring.split('[').length !== substring.split(']').length) continue;
+
+        try {
+          JSON.parse(substring);
+          results.push(substring);
+          // Found a valid large substring, can break early
+          if (substring.length > content.length * 0.8) {
+            return results;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      // If we found good results, don't need to go smaller
+      if (results.length > 0 && results[0].length > content.length * 0.5) {
+        break;
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
  * Extract the largest valid JSON substring from potentially malformed content
  * Prioritizes complete objects/arrays over simple values
  */
@@ -770,34 +1050,35 @@ function extractPartialJson(jsonString: string, jobId?: string): string {
     return maxValidObject;
   }
 
-  // Fallback: search for any valid JSON but STRONGLY prefer objects over primitives
+  // Fallback: Use smart multi-pass extraction instead of O(n²) brute force
   let maxValidPrimitive = '';
 
-  for (let end = jsonString.length; end > 0; end--) {
-    for (let start = 0; start < end; start++) {
-      const substring = jsonString.substring(start, end);
-      try {
-        const parsed = JSON.parse(substring);
+  // Multi-pass extraction strategy for complex cases
+  const extractionResults = smartMultiPassExtraction(jsonString, jobId);
 
-        // Strongly prefer objects/arrays, even small ones, over primitives
-        if (typeof parsed === 'object' && parsed !== null) {
-          if (substring.length > maxValidObject.length) {
-            maxValidObject = substring;
-          }
-        } else {
-          // Only consider primitives if they're significantly longer and no objects found
-          if (substring.length > maxValidPrimitive.length && substring.length > 20) {
-            maxValidPrimitive = substring;
-          }
-        }
+  // Process results from smart extraction
+  for (const result of extractionResults) {
+    try {
+      const parsed = JSON.parse(result);
 
-        // Keep track of overall longest
-        if (substring.length > maxValidJson.length) {
-          maxValidJson = substring;
+      // Strongly prefer objects/arrays, even small ones, over primitives
+      if (typeof parsed === 'object' && parsed !== null) {
+        if (result.length > maxValidObject.length) {
+          maxValidObject = result;
         }
-      } catch {
-        continue;
+      } else {
+        // Only consider primitives if they're significantly longer and no objects found
+        if (result.length > maxValidPrimitive.length && result.length > 20) {
+          maxValidPrimitive = result;
+        }
       }
+
+      // Keep track of overall longest
+      if (result.length > maxValidJson.length) {
+        maxValidJson = result;
+      }
+    } catch {
+      continue;
     }
   }
 
@@ -881,14 +1162,31 @@ function enhancedProgressiveJsonParsing(rawResponse: string, jobId?: string): an
       logger.debug({ jobId, strategy: 'mixed-content-extraction' }, "Attempting JSON extraction from mixed content");
       const extracted = extractJsonFromMixedContent(rawResponse, jobId);
 
-      // Only accept substantial objects from mixed content extraction
-      // If it's just a primitive value, let other strategies handle it
-      const parsed = JSON.parse(extracted);
-      if (typeof parsed === 'string' || typeof parsed === 'number' || typeof parsed === 'boolean') {
-        throw new Error('Mixed content extraction found only primitive value, trying other strategies');
-      }
+      // Try to parse the extracted content directly first
+      try {
+        const parsed = JSON.parse(extracted);
 
-      return parsed;
+        // Only accept substantial objects from mixed content extraction
+        // If it's just a primitive value, let other strategies handle it
+        if (typeof parsed === 'string' || typeof parsed === 'number' || typeof parsed === 'boolean') {
+          throw new Error('Mixed content extraction found only primitive value, trying other strategies');
+        }
+
+        return parsed;
+      } catch (parseError) {
+        // If direct parsing fails, try smart partial extraction on the extracted content
+        logger.debug({ jobId, strategy: 'mixed-content-smart-fallback' }, "Direct parse of extracted content failed, trying smart partial extraction");
+
+        const partialExtracted = extractPartialJson(extracted, jobId);
+        const parsed = JSON.parse(partialExtracted);
+
+        // Only accept substantial objects
+        if (typeof parsed === 'string' || typeof parsed === 'number' || typeof parsed === 'boolean') {
+          throw new Error('Smart partial extraction found only primitive value, trying other strategies');
+        }
+
+        return parsed;
+      }
     },
 
     // Strategy 3: 4-stage sanitization pipeline
@@ -1262,3 +1560,6 @@ function legacyNormalizeJsonResponse(rawResponse: string, jobId?: string): strin
   // The caller will attempt to parse it.
   return jsonContent;
 }
+
+// Export the enhanced extractPartialJson function for use in other modules
+export { extractPartialJson };

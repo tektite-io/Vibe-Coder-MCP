@@ -500,4 +500,27 @@ export class FilesystemSecurity {
       safeExtensionsCount: SAFE_FILE_EXTENSIONS.size + this.config.additionalSafeExtensions.length
     };
   }
+
+  /**
+   * Add a path to the blacklist
+   */
+  addToBlacklist(pathToBlock: string): void {
+    const normalizedPath = path.resolve(pathToBlock);
+    if (!this.config.additionalBlacklistedPaths.includes(normalizedPath)) {
+      this.config.additionalBlacklistedPaths.push(normalizedPath);
+      logger.info({ path: normalizedPath }, 'Path added to blacklist');
+    }
+  }
+
+  /**
+   * Remove a path from the blacklist
+   */
+  removeFromBlacklist(pathToUnblock: string): void {
+    const normalizedPath = path.resolve(pathToUnblock);
+    const index = this.config.additionalBlacklistedPaths.indexOf(normalizedPath);
+    if (index !== -1) {
+      this.config.additionalBlacklistedPaths.splice(index, 1);
+      logger.info({ path: normalizedPath }, 'Path removed from blacklist');
+    }
+  }
 }
