@@ -158,7 +158,7 @@ describe('Universal Class Optimizer', () => {
       // Check that description is compressed (should be much shorter than original)
       const purposeMatch = result.match(/Purpose: (.+)/);
       if (purposeMatch) {
-        expect(purposeMatch[1].length).toBeLessThanOrEqual(45); // Maximum aggressive compression
+        expect(purposeMatch[1].length).toBeLessThanOrEqual(25); // Semantic-aware comment compression
       }
     });
   });

@@ -8,6 +8,7 @@
 
 import { ClassInfo, FunctionInfo, ClassPropertyInfo, FileInfo } from '../codeMapModel.js';
 import { UniversalOptimizationConfig, QualityThresholds } from '../types.js';
+import { EnhancementConfig } from '../config/enhancementConfig.js';
 import * as path from 'path';
 
 /**
@@ -34,6 +35,7 @@ export interface PropertyPair {
  * Universal class optimizer that works across all programming languages.
  */
 export class UniversalClassOptimizer {
+  constructor(private config?: EnhancementConfig) {}
 
   /**
    * Optimizes class information based on importance and configuration.
@@ -161,10 +163,13 @@ export class UniversalClassOptimizer {
     }
     result += '\n';
 
-    // Compressed description (maximum aggressive: 45 chars)
+    // Compressed description using configuration
     if (cls.comment) {
-      const compressed = this.compressDescription(cls.comment, 45);
-      result += `- **Purpose**: ${compressed}\n`;
+      const maxLength = this.config?.contentDensity?.maxContentLength ?? 25;
+      const compressed = this.compressDescription(cls.comment, maxLength);
+      if (compressed) {
+        result += `- **Purpose**: ${compressed}\n`;
+      }
     }
 
     // Key methods (public interface only)
