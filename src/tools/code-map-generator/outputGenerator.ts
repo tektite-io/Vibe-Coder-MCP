@@ -12,6 +12,7 @@ import { generateMermaidSequenceDiagram } from './diagramGenerator.js';
 import { CodeMapGeneratorConfig } from './types.js';
 import { writeFileSecure } from './fsUtils.js';
 import { generateTimestampFileName, getOutputDirectory } from './directoryUtils.js';
+import { CommentProcessor } from './utils/commentProcessor.js';
 
 /**
  * Sanitizes an absolute path for output to avoid exposing sensitive system information.
@@ -154,6 +155,9 @@ async function generateSingleMarkdownOutput(
   const diagramOptimizer = new UniversalDiagramOptimizer();
   const enhancementConfig = EnhancementConfigManager.getInstance().getConfig();
 
+  // Initialize comment processor for centralized comment handling
+  const commentProcessor = new CommentProcessor(enhancementConfig);
+
   // Use optimized diagram generation
   const optimizedDiagram = diagramOptimizer.optimizeDependencyDiagram(
     fileDependencyGraph.nodes,
@@ -238,7 +242,7 @@ async function generateSingleMarkdownOutput(
 
   // Apply importance-based filtering for Phase 6 optimization
   const { UniversalClassOptimizer } = await import('./optimization/universalClassOptimizer.js');
-  const classOptimizer = new UniversalClassOptimizer();
+  const classOptimizer = new UniversalClassOptimizer(enhancementConfig);
 
   const importantFiles = optimizedFilesInfo.filter(fileInfo => {
     const importance = classOptimizer.calculateFileImportance(fileInfo);
@@ -249,8 +253,13 @@ async function generateSingleMarkdownOutput(
   importantFiles.forEach(fileInfo => {
     markdown += `### ${fileInfo.relativePath}\n\n`;
 
-    if (fileInfo.comment) {
-      markdown += `${fileInfo.comment}\n\n`;
+    // Process file comment with semantic preservation
+    const processedFileComment = commentProcessor.processComment(fileInfo.comment, {
+      type: 'file',
+      name: fileInfo.relativePath
+    });
+    if (processedFileComment) {
+      markdown += `${processedFileComment}\n\n`;
     }
 
     if (fileInfo.imports.length > 0) {
@@ -325,9 +334,13 @@ async function generateSingleMarkdownOutput(
           markdown += `\n  - Resolved to: \`${imp.resolvedPath}\``;
         }
 
-        // Add comment if available
-        if (imp.comment) {
-          markdown += ` - ${imp.comment}`;
+        // Process import comment with semantic preservation
+        const processedImportComment = commentProcessor.processComment(imp.comment, {
+          type: 'import',
+          name: imp.path
+        });
+        if (processedImportComment) {
+          markdown += ` - ${processedImportComment}`;
         }
 
         markdown += '\n';
@@ -340,8 +353,13 @@ async function generateSingleMarkdownOutput(
       fileInfo.classes.forEach(classInfo => {
         markdown += `##### ${classInfo.name}\n\n`;
 
-        if (classInfo.comment) {
-          markdown += `${classInfo.comment}\n\n`;
+        // Process class comment with semantic preservation
+        const processedClassComment = commentProcessor.processComment(classInfo.comment, {
+          type: 'class',
+          name: classInfo.name
+        });
+        if (processedClassComment) {
+          markdown += `${processedClassComment}\n\n`;
         }
 
         if (classInfo.parentClass) {
@@ -369,9 +387,14 @@ async function generateSingleMarkdownOutput(
               propStr += ' (static)';
             }
 
-            // Add comment if available
-            if (prop.comment) {
-              propStr += ` - ${prop.comment}`;
+            // Process property comment with semantic preservation
+            const processedPropComment = commentProcessor.processComment(prop.comment, {
+              type: 'property',
+              name: prop.name,
+              parentClass: classInfo.name
+            });
+            if (processedPropComment) {
+              propStr += ` - ${processedPropComment}`;
             }
 
             markdown += `${propStr}\n`;
@@ -382,7 +405,13 @@ async function generateSingleMarkdownOutput(
         if (classInfo.methods.length > 0) {
           markdown += '**Methods:**\n\n';
           classInfo.methods.forEach(method => {
-            markdown += `- \`${method.name}()\`${method.comment ? ` - ${method.comment}` : ''}\n`;
+            // Process method comment with semantic preservation
+            const processedMethodComment = commentProcessor.processComment(method.comment, {
+              type: 'method',
+              name: method.name,
+              parentClass: classInfo.name
+            });
+            markdown += `- \`${method.name}()\`${processedMethodComment ? ` - ${processedMethodComment}` : ''}\n`;
           });
           markdown += '\n';
         }
@@ -392,7 +421,12 @@ async function generateSingleMarkdownOutput(
     if (fileInfo.functions.length > 0) {
       markdown += '#### Functions\n\n';
       fileInfo.functions.forEach(funcInfo => {
-        markdown += `- \`${funcInfo.name}()\`${funcInfo.comment ? ` - ${funcInfo.comment}` : ''}\n`;
+        // Process function comment with semantic preservation
+        const processedFuncComment = commentProcessor.processComment(funcInfo.comment, {
+          type: 'function',
+          name: funcInfo.name
+        });
+        markdown += `- \`${funcInfo.name}()\`${processedFuncComment ? ` - ${processedFuncComment}` : ''}\n`;
       });
       markdown += '\n';
     }
@@ -505,6 +539,9 @@ async function generateSplitMarkdownOutput(
 
   const splitDiagramOptimizer = new SplitDiagramOptimizer();
   const splitEnhancementConfig = SplitConfigManager.getInstance().getConfig();
+
+  // Initialize comment processor for split output
+  const splitCommentProcessor = new CommentProcessor(splitEnhancementConfig);
 
   // Use optimized diagram generation for split output
   const splitOptimizedDiagram = splitDiagramOptimizer.optimizeDependencyDiagram(
@@ -624,8 +661,13 @@ async function generateSplitMarkdownOutput(
     batch.forEach(fileInfo => {
       batchMarkdown += `## ${fileInfo.relativePath}\n\n`;
 
-      if (fileInfo.comment) {
-        batchMarkdown += `${fileInfo.comment}\n\n`;
+      // Process file comment with semantic preservation for split output
+      const processedSplitFileComment = splitCommentProcessor.processComment(fileInfo.comment, {
+        type: 'file',
+        name: fileInfo.relativePath
+      });
+      if (processedSplitFileComment) {
+        batchMarkdown += `${processedSplitFileComment}\n\n`;
       }
 
       if (fileInfo.imports.length > 0) {
@@ -700,9 +742,13 @@ async function generateSplitMarkdownOutput(
             batchMarkdown += `\n  - Resolved to: \`${imp.resolvedPath}\``;
           }
 
-          // Add comment if available
-          if (imp.comment) {
-            batchMarkdown += ` - ${imp.comment}`;
+          // Process import comment with semantic preservation for split output
+          const processedSplitImportComment = splitCommentProcessor.processComment(imp.comment, {
+            type: 'import',
+            name: imp.path
+          });
+          if (processedSplitImportComment) {
+            batchMarkdown += ` - ${processedSplitImportComment}`;
           }
 
           batchMarkdown += '\n';
@@ -715,8 +761,13 @@ async function generateSplitMarkdownOutput(
         fileInfo.classes.forEach(classInfo => {
           batchMarkdown += `#### ${classInfo.name}\n\n`;
 
-          if (classInfo.comment) {
-            batchMarkdown += `${classInfo.comment}\n\n`;
+          // Process class comment with semantic preservation for split output
+          const processedSplitClassComment = splitCommentProcessor.processComment(classInfo.comment, {
+            type: 'class',
+            name: classInfo.name
+          });
+          if (processedSplitClassComment) {
+            batchMarkdown += `${processedSplitClassComment}\n\n`;
           }
 
           if (classInfo.parentClass) {
@@ -744,9 +795,14 @@ async function generateSplitMarkdownOutput(
                 propStr += ' (static)';
               }
 
-              // Add comment if available
-              if (prop.comment) {
-                propStr += ` - ${prop.comment}`;
+              // Process property comment with semantic preservation for split output
+              const processedSplitPropComment = splitCommentProcessor.processComment(prop.comment, {
+                type: 'property',
+                name: prop.name,
+                parentClass: classInfo.name
+              });
+              if (processedSplitPropComment) {
+                propStr += ` - ${processedSplitPropComment}`;
               }
 
               batchMarkdown += `${propStr}\n`;
@@ -757,7 +813,13 @@ async function generateSplitMarkdownOutput(
           if (classInfo.methods.length > 0) {
             batchMarkdown += '**Methods:**\n\n';
             classInfo.methods.forEach(method => {
-              batchMarkdown += `- \`${method.name}()\`${method.comment ? ` - ${method.comment}` : ''}\n`;
+              // Process method comment with semantic preservation for split output
+              const processedSplitMethodComment = splitCommentProcessor.processComment(method.comment, {
+                type: 'method',
+                name: method.name,
+                parentClass: classInfo.name
+              });
+              batchMarkdown += `- \`${method.name}()\`${processedSplitMethodComment ? ` - ${processedSplitMethodComment}` : ''}\n`;
             });
             batchMarkdown += '\n';
           }
@@ -767,7 +829,12 @@ async function generateSplitMarkdownOutput(
       if (fileInfo.functions.length > 0) {
         batchMarkdown += '### Functions\n\n';
         fileInfo.functions.forEach(funcInfo => {
-          batchMarkdown += `- \`${funcInfo.name}()\`${funcInfo.comment ? ` - ${funcInfo.comment}` : ''}\n`;
+          // Process function comment with semantic preservation for split output
+          const processedSplitFuncComment = splitCommentProcessor.processComment(funcInfo.comment, {
+            type: 'function',
+            name: funcInfo.name
+          });
+          batchMarkdown += `- \`${funcInfo.name}()\`${processedSplitFuncComment ? ` - ${processedSplitFuncComment}` : ''}\n`;
         });
         batchMarkdown += '\n';
       }
