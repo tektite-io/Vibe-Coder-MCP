@@ -4,7 +4,6 @@
     "sequential_thought_generation": "google/gemini-2.5-flash-preview",
     "task_list_initial_generation": "google/gemini-2.5-flash-preview",
     "task_list_decomposition": "google/gemini-2.5-flash-preview",
-    "code_stub_generation": "google/gemini-2.5-flash-preview",
     "prd_generation": "google/gemini-2.5-flash-preview",
     "rules_generation": "google/gemini-2.5-flash-preview",
     "user_stories_generation": "google/gemini-2.5-flash-preview",
