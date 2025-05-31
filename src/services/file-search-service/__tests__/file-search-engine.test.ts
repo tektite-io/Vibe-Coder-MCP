@@ -18,13 +18,51 @@ vi.mock('../../../logger.js', () => ({
   }
 }));
 
+// Create mock filesystem security instance
+const mockFilesystemSecurity = {
+  checkPathSecurity: vi.fn().mockResolvedValue({ allowed: true }),
+  statSecure: vi.fn().mockResolvedValue({
+    isDirectory: () => true,
+    size: 1024,
+    mtime: new Date()
+  }),
+  readDirSecure: vi.fn().mockResolvedValue([
+    { name: 'file1.ts', isDirectory: () => false, isFile: () => true },
+    { name: 'file2.js', isDirectory: () => false, isFile: () => true },
+    { name: 'test.spec.ts', isDirectory: () => false, isFile: () => true },
+    { name: 'subdir', isDirectory: () => true, isFile: () => false }
+  ])
+};
+
+// Mock FilesystemSecurity
+vi.mock('../../tools/vibe-task-manager/security/filesystem-security.js', () => ({
+  FilesystemSecurity: {
+    getInstance: vi.fn(() => mockFilesystemSecurity)
+  }
+}));
+
 describe('FileSearchService', () => {
   let fileSearchService: FileSearchService;
-  const testProjectPath = '/test/project';
+  // Use a path within the allowed directory for testing
+  const testProjectPath = process.cwd() + '/test/project';
 
   beforeEach(() => {
     fileSearchService = FileSearchService.getInstance();
     vi.clearAllMocks();
+
+    // Reset filesystem security mocks
+    mockFilesystemSecurity.checkPathSecurity.mockResolvedValue({ allowed: true });
+    mockFilesystemSecurity.statSecure.mockResolvedValue({
+      isDirectory: () => true,
+      size: 1024,
+      mtime: new Date()
+    });
+    mockFilesystemSecurity.readDirSecure.mockResolvedValue([
+      { name: 'file1.ts', isDirectory: () => false, isFile: () => true },
+      { name: 'file2.js', isDirectory: () => false, isFile: () => true },
+      { name: 'test.spec.ts', isDirectory: () => false, isFile: () => true },
+      { name: 'subdir', isDirectory: () => true, isFile: () => false }
+    ]);
   });
 
   afterEach(async () => {

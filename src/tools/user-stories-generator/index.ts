@@ -3,7 +3,7 @@ import path from 'path';
 import { z } from 'zod';
 import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
-import { performDirectLlmCall } from '../../utils/llmHelper.js';
+import { performFormatAwareLlmCall } from '../../utils/llmHelper.js';
 import { performResearchQuery } from '../../utils/researchHelper.js';
 import logger from '../../logger.js';
 import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js';
@@ -204,11 +204,13 @@ export const generateUserStories: ToolExecutor = async (
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating user stories content via LLM...');
     logs.push(`[${new Date().toISOString()}] Calling LLM for main user stories generation.`);
 
-    const userStoriesMarkdown = await performDirectLlmCall(
+    const userStoriesMarkdown = await performFormatAwareLlmCall(
       mainGenerationPrompt,
       USER_STORIES_SYSTEM_PROMPT,
       config,
       'user_stories_generation',
+      'markdown', // Explicitly specify markdown format
+      undefined, // No schema for markdown
       0.3
     );
 

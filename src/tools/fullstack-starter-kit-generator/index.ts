@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
-import { performDirectLlmCall, normalizeJsonResponse } from '../../utils/llmHelper.js';
+import { performFormatAwareLlmCall } from '../../utils/llmHelper.js';
 import { performResearchQuery } from '../../utils/researchHelper.js';
 import logger from '../../logger.js';
 import fs from 'fs-extra';
@@ -130,65 +130,56 @@ User Request:
 ${researchContext}
 
 Available YAML Module Categories (and example templates):
-- Frontend: 'frontend/react-vite', 'frontend/vue-nuxt', 'frontend/angular-cli', ...
-- Backend: 'backend/nodejs-express', 'backend/python-django', 'backend/java-spring', ...
-- Database: 'database/postgres', 'database/mongodb', 'database/mysql', ...
-- Authentication: 'auth/jwt', 'auth/oauth2-scaffold', 'auth/firebase-auth', ...
-- Deployment: 'deployment/docker-compose', 'deployment/kubernetes-scaffold', ...
-- Utility: 'utility/logging-winston', 'utility/payment-stripe-sdk', 'utility/email-sendgrid', ...
+- Frontend: 'frontend/react-vite', 'frontend/vue-nuxt', 'frontend/angular-cli', 'frontend/nextjs', 'frontend/svelte-kit'
+- Backend: 'backend/nodejs-express', 'backend/python-django', 'backend/java-spring', 'backend/python-fastapi', 'backend/nodejs-nestjs'
+- Database: 'database/postgres', 'database/mongodb', 'database/mysql', 'database/supabase', 'database/firebase'
+- Authentication: 'auth/jwt', 'auth/oauth2-scaffold', 'auth/firebase-auth', 'auth/supabase-auth', 'auth/auth0'
+- Deployment: 'deployment/docker-compose', 'deployment/kubernetes-scaffold', 'deployment/vercel', 'deployment/netlify'
+- Utility: 'utility/logging-winston', 'utility/payment-stripe-sdk', 'utility/email-sendgrid', 'utility/voice-recognition-web-api', 'utility/calendar-integration-google', 'utility/push-notifications-web'
 
-Your response MUST be a VALID JSON object with the following structure:
+CRITICAL: You must respond with EXACTLY this JSON structure. No markdown, no code blocks, no explanations:
+
 {
   "globalParams": {
-    "projectName": "string (e.g., my-ecommerce-app, derived from use case)",
-    "projectDescription": "string (Detailed project description)",
-    "frontendPath": "string (e.g., 'client' or 'packages/frontend', default 'client')",
-    "backendPath": "string (e.g., 'server' or 'packages/backend', default 'server')",
-    "backendPort": "number (e.g., 3001, default 3001)",
-    "frontendPort": "number (e.g., 3000, default 3000)"
+    "projectName": "string (kebab-case, derived from use case)",
+    "projectDescription": "string (detailed description of the project)",
+    "frontendPath": "string (default: 'client')",
+    "backendPath": "string (default: 'server')",
+    "backendPort": 3001,
+    "frontendPort": 3000
   },
   "moduleSelections": [
     {
-      "modulePath": "string (e.g., 'frontend/react-vite')",
-      "moduleKey": "string (Optional, key for specific path params, e.g., 'frontendPath'. Use 'root' if module applies to project root.)",
-      "params": {
-        // Module-specific parameters that might override or supplement globalParams for this module's placeholders
-        // e.g., "customApiEndpoint": "/api/v2"
-      }
+      "modulePath": "string (exact module path from categories above)",
+      "moduleKey": "string (use 'frontendPath', 'backendPath', or 'root')",
+      "params": {}
     }
   ]
 }
 
-Prioritize user preferences. If preferences conflict or are incomplete, use research and best practices.
-Ensure the \`modulePath\` corresponds to available template file paths (e.g., \`frontend/react-vite.yaml\` -> \`modulePath: "frontend/react-vite"\`).
-If a template file for a selected \`modulePath\` does not exist, the system will attempt to dynamically generate it.
-The \`moduleKey\` is used to correctly apply path-specific configurations from globalParams, e.g. if a frontend module needs to know its root is 'client', and globalParams.frontendPath is 'client', then this will be used. A moduleKey of "root" means its directory structure items are placed at the project root.
+REQUIREMENTS:
+1. projectName must be kebab-case (e.g., "productivity-project-app")
+2. Include at least: frontend, backend, database modules
+3. Add authentication if the use case requires user management
+4. Add utility modules based on specific features mentioned
+5. Use "root" for moduleKey when module applies to project root
+6. Use "frontendPath" for frontend modules, "backendPath" for backend modules
 
-Example for \`moduleKey\`:
-If globalParams.frontendPath = "client_app", and a frontend module YAML uses \`{frontendPath}/src\` in its dependency paths or setup commands, and its directory structure items are meant to be under "client_app", then use \`moduleKey: "frontendPath"\` for that module selection.
+Select a comprehensive set of modules for: ${input.use_case}
 
-Select a sensible and comprehensive set of modules for a complete starter kit.
-Consider including:
-- A frontend framework
-- A backend framework
-- A database (if applicable)
-- Authentication (if applicable)
-- Basic security considerations (e.g., CORS for backend)
-- Docker setup (if 'Docker' is in optional_features or appropriate)
-
-Output ONLY the raw JSON object without any Markdown formatting, code blocks, or additional text.
-The response should start with { and end with } without any other characters before or after.
-`;
+RESPOND WITH ONLY THE JSON OBJECT - NO OTHER TEXT OR FORMATTING.`;
 
       logger.info({ jobId }, 'Prompting LLM for YAML module selections and parameters...');
       sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Determining project components...');
       jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Determining project components...');
 
-      const llmModuleResponseRaw = await performDirectLlmCall(
+      const llmModuleResponseRaw = await performFormatAwareLlmCall(
         moduleSelectionPrompt,
         '', // System prompt is part of main prompt for this call
         config,
         'fullstack_starter_kit_module_selection',
+        'json', // Explicitly specify JSON format
+        undefined, // Schema will be inferred from task name
         0.1
       );
       logs.push(`[${new Date().toISOString()}] LLM response for module selection received.`);
@@ -196,9 +187,10 @@ The response should start with { and end with } without any other characters bef
 
       let llmModuleSelections;
       try {
-        const normalizedResponse = normalizeJsonResponse(llmModuleResponseRaw, jobId);
-        logger.debug({ jobId, normalizedResponse }, "Normalized LLM response for JSON parsing");
-        llmModuleSelections = JSON.parse(normalizedResponse);
+        // Use intelligent parsing with validation-first approach for module selection
+        const { intelligentJsonParse } = await import('../../utils/llmHelper.js');
+        llmModuleSelections = intelligentJsonParse(llmModuleResponseRaw, `module-selection-${jobId}`);
+        logger.debug({ jobId, responseLength: llmModuleResponseRaw.length, parsedSize: JSON.stringify(llmModuleSelections).length }, "Intelligent JSON parsing successful for module selection");
       } catch (e) {
         throw new ParsingError("Failed to parse LLM response for module selections as JSON.", { rawResponse: llmModuleResponseRaw }, e instanceof Error ? e : undefined);
       }

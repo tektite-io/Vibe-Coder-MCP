@@ -6,7 +6,7 @@ import logger from '../../logger.js';
 import { StarterKitDefinition, FileStructureItem, fileStructureItemSchema } from './schema.js';
 import { AppError, ParsingError, ConfigurationError, ToolExecutionError } from '../../utils/errors.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
-import { performDirectLlmCall, normalizeJsonResponse } from '../../utils/llmHelper.js';
+import { performFormatAwareLlmCall, normalizeJsonResponse } from '../../utils/llmHelper.js';
 import { z } from 'zod';
 
 // Get the directory name equivalent to __dirname in CommonJS
@@ -82,6 +82,46 @@ This JSON object must conform to the ParsedYamlModule TypeScript interface struc
 The generated module is for: Category '${category}', Technology '${technology}'.
 The module path segment is '${modulePathSegment}'.
 
+=== CRITICAL JSON FORMATTING REQUIREMENTS ===
+🚨 RESPOND WITH ONLY A VALID JSON OBJECT - NO MARKDOWN, NO CODE BLOCKS, NO EXPLANATIONS, NO SURROUNDING TEXT
+🚨 FAILURE TO FOLLOW THESE RULES WILL CAUSE SYSTEM FAILURE
+
+JSON SYNTAX RULES:
+1. Use double quotes for ALL strings and property names (never single quotes)
+2. Escape ALL special characters in string values:
+   - Newlines: \\n (not actual line breaks)
+   - Tabs: \\t
+   - Backslashes: \\\\
+   - Double quotes: \\"
+   - Carriage returns: \\r
+3. For multi-line code content, use \\n for line breaks within the string
+4. Ensure all braces {} and brackets [] are properly closed and balanced
+5. Do NOT include trailing commas after the last property/element
+6. Do NOT include comments (// or /* */)
+7. Do NOT wrap response in markdown code blocks like \`\`\`json
+8. Do NOT include any text before or after the JSON object
+
+EDGE CASE HANDLING:
+- File paths: Use forward slashes / (never backslashes \\)
+- Empty arrays: Use [] (not null)
+- Empty objects: Use {} (not null)
+- Boolean values: Use true/false (not "true"/"false")
+- Numbers: Use numeric values (not strings) for ports, versions when numeric
+- Null values: Use null (not "null", undefined, or empty string)
+- Unicode characters: Escape as \\uXXXX if problematic
+- Control characters (\\x00-\\x1F): Must be escaped as \\uXXXX
+- Large code blocks: Keep as single string with \\n separators
+
+CONTENT STRING FORMATTING EXAMPLES:
+❌ WRONG: "content": "console.log('Hello');
+console.log('World');"
+
+✅ CORRECT: "content": "console.log('Hello');\\nconsole.log('World');"
+
+❌ WRONG: "content": "const path = "src\\\\components""
+
+✅ CORRECT: "content": "const path = \\"src/components\\""
+
 JSON Structure to follow:
 {
   "moduleName": "string (e.g., ${technology}-${category})",
@@ -93,8 +133,8 @@ JSON Structure to follow:
       "uniqueKeyPerStackItem": { "name": "string", "version": "string (optional)", "rationale": "string" }
     },
     "directoryStructure": [ // Optional: Array of FileStructureItem-like objects. Paths are relative to module root.
-      // Example: { "path": "src/index.js", "type": "file", "content": "console.log('Hello {projectName}');" },
-      // Example: { "path": "src/components/", "type": "directory", "children": [] }
+      // Example: { "path": "src/index.js", "type": "file", "content": "console.log('Hello {projectName}');", "generationPrompt": null },
+      // Example: { "path": "src/components/", "type": "directory", "content": null, "children": [] }
     ],
     "dependencies": { // Optional
       "npm": {
@@ -107,16 +147,31 @@ JSON Structure to follow:
   }
 }
 
-IMPORTANT:
+CRITICAL SCHEMA REQUIREMENTS:
 - Generate ONLY the raw JSON object. Do NOT use Markdown, code blocks, or any surrounding text.
 - Ensure all paths in 'directoryStructure' are relative to the module's own root.
-- For 'directoryStructure', a 'file' type should not have a 'children' array. A 'directory' type should have 'content: null'.
+- For 'directoryStructure' items:
+  * Files (type: "file") MUST have "content" as a string OR "generationPrompt" as a string, but NOT both
+  * Directories (type: "directory") MUST have "content": null and MAY have "children" array
+  * ALL items MUST include the "content" field (string for files, null for directories)
 - If 'content' for a file is provided, 'generationPrompt' should be null/undefined, and vice-versa.
 - Use common placeholders like {projectName}, {backendPort}, {frontendPort}, {frontendPath}, {backendPath} where appropriate.
 - Be comprehensive but sensible for a starter module of type '${category}' using '${technology}'.
 - Example: "dependencies": { "npm": { "{frontendPath}": { "dependencies": {"react": "^18.0.0"} } } }
 - If the module is self-contained, dependencies might be under "root":
   "dependencies": { "npm": { "root": { "devDependencies": {"husky": "^8.0.0"} } } }
+
+VALIDATION CHECKLIST BEFORE RESPONDING:
+✓ JSON object starts with { and ends with }
+✓ All strings use double quotes
+✓ All special characters are properly escaped
+✓ No trailing commas
+✓ No markdown code blocks or surrounding text
+✓ All required fields present (moduleName, description, type, provides)
+✓ Directory items have content: null
+✓ File items have content as string OR generationPrompt as string
+✓ Paths use forward slashes
+✓ Multi-line content uses \\n separators
 
 Generate the JSON for '${modulePathSegment}':`;
 
@@ -133,11 +188,13 @@ Ensure the output is a single, raw JSON object without any other text or formatt
 
     try {
       logger.info(`Requesting LLM to generate template for: ${modulePathSegment}`);
-      const rawResponse = await performDirectLlmCall(
+      const rawResponse = await performFormatAwareLlmCall(
         userPrompt,
         systemPrompt,
         this.config,
         'fullstack_starter_kit_dynamic_yaml_module_generation',
+        'json', // Explicitly specify JSON format
+        undefined, // Schema will be inferred from task name
         0.2
       );
       logger.debug({ modulePathSegment, rawResponseFromLLM: rawResponse }, "Raw LLM response for dynamic template");
@@ -155,20 +212,26 @@ Ensure the output is a single, raw JSON object without any other text or formatt
     const category = parts.join('/') || 'general';
 
     const llmResponse = await this.generateTemplateWithLLM(category, technology, modulePathSegment);
-    const normalizedJson = normalizeJsonResponse(llmResponse, `dynamic-gen-${modulePathSegment}`);
 
     let parsedJson: Record<string, unknown>;
     try {
-      parsedJson = JSON.parse(normalizedJson) as Record<string, unknown>;
+      // Use intelligent parsing with validation-first approach
+      // This only applies preprocessing when needed, avoiding unnecessary data loss
+      const { intelligentJsonParse } = await import('../../utils/llmHelper.js');
+      parsedJson = intelligentJsonParse(llmResponse, `dynamic-gen-${modulePathSegment}`) as Record<string, unknown>;
+      logger.debug({ modulePathSegment, responseLength: llmResponse.length, parsedSize: JSON.stringify(parsedJson).length }, "Intelligent JSON parsing successful");
     } catch (error) {
-      logger.error({ err: error, modulePathSegment, normalizedJson }, `Failed to parse LLM JSON response for ${modulePathSegment}`);
-      throw new ParsingError(`Failed to parse dynamically generated template for ${modulePathSegment} as JSON. Normalized response: ${normalizedJson}`, { originalResponse: llmResponse }, error instanceof Error ? error : undefined);
+      logger.error({ err: error, modulePathSegment, responsePreview: llmResponse.substring(0, 200) }, `Failed to parse LLM JSON response for ${modulePathSegment} using intelligent parsing`);
+      throw new ParsingError(`Failed to parse dynamically generated template for ${modulePathSegment} as JSON using intelligent parsing. Response preview: ${llmResponse.substring(0, 200)}`, { originalResponse: llmResponse }, error instanceof Error ? error : undefined);
     }
 
-    const validationResult = parsedYamlModuleSchema.safeParse(parsedJson);
+    // Preprocess the parsed JSON to fix common schema issues
+    const preprocessedJson = this.preprocessTemplateForValidation(parsedJson, modulePathSegment);
+
+    const validationResult = parsedYamlModuleSchema.safeParse(preprocessedJson);
     if (!validationResult.success) {
-      logger.error({ err: validationResult.error.issues, modulePathSegment, parsedJson }, `Dynamically generated template for ${modulePathSegment} failed Zod validation.`);
-      throw new ParsingError(`Dynamically generated template for ${modulePathSegment} failed validation: ${validationResult.error.message}`, { issues: validationResult.error.issues, parsedJson });
+      logger.error({ err: validationResult.error.issues, modulePathSegment, parsedJson: preprocessedJson }, `Dynamically generated template for ${modulePathSegment} failed Zod validation after preprocessing.`);
+      throw new ParsingError(`Dynamically generated template for ${modulePathSegment} failed validation: ${validationResult.error.message}`, { issues: validationResult.error.issues, parsedJson: preprocessedJson });
     }
 
     const validatedModule = validationResult.data as ParsedYamlModule;
@@ -231,6 +294,159 @@ Ensure the output is a single, raw JSON object without any other text or formatt
         );
       }
     }
+  }
+
+  /**
+   * Preprocesses parsed JSON to fix common schema validation issues
+   * Specifically handles missing content fields in directory structures
+   */
+  private preprocessTemplateForValidation(parsedJson: Record<string, unknown>, modulePathSegment: string): Record<string, unknown> {
+    logger.debug({ modulePathSegment }, "Preprocessing template for schema validation");
+
+    // Deep clone to avoid mutating the original
+    const processed = JSON.parse(JSON.stringify(parsedJson));
+
+    // Fix directory structure items
+    if (processed.provides && processed.provides.directoryStructure && Array.isArray(processed.provides.directoryStructure)) {
+      this.fixDirectoryStructureItems(processed.provides.directoryStructure, modulePathSegment);
+    }
+
+    return processed;
+  }
+
+  /**
+   * Recursively fixes directory structure items to ensure schema compliance
+   */
+  private fixDirectoryStructureItems(items: any[], modulePathSegment: string): void {
+    for (const item of items) {
+      if (typeof item === 'object' && item !== null) {
+        // Ensure content field exists
+        if (!('content' in item)) {
+          if (item.type === 'directory') {
+            item.content = null;
+            logger.debug({ modulePathSegment, path: item.path }, "Added missing content: null for directory");
+          } else if (item.type === 'file') {
+            // If no content and no generationPrompt, add empty content
+            if (!('generationPrompt' in item) || item.generationPrompt === null || item.generationPrompt === undefined) {
+              item.content = '';
+              logger.debug({ modulePathSegment, path: item.path }, "Added missing empty content for file");
+            } else {
+              item.content = null;
+              logger.debug({ modulePathSegment, path: item.path }, "Added missing content: null for file with generationPrompt");
+            }
+          }
+        }
+
+        // Ensure generationPrompt field exists for files
+        if (item.type === 'file' && !('generationPrompt' in item)) {
+          item.generationPrompt = null;
+        }
+
+        // Recursively process children
+        if (item.children && Array.isArray(item.children)) {
+          this.fixDirectoryStructureItems(item.children, modulePathSegment);
+        }
+      }
+    }
+  }
+
+  /**
+   * Progressive JSON parsing with enhanced error recovery
+   * Implements fallback strategies for common LLM JSON output issues
+   */
+  private progressiveJsonParse(jsonString: string, context: string): any {
+    const strategies = [
+      // Strategy 1: Direct parse
+      () => {
+        logger.debug({ context, strategy: 'direct' }, "Attempting direct JSON parse");
+        return JSON.parse(jsonString);
+      },
+
+      // Strategy 2: Fix common position-specific errors
+      () => {
+        logger.debug({ context, strategy: 'position-fixes' }, "Attempting position-specific error fixes");
+        let fixed = jsonString;
+
+        // Fix position 2572 type errors (missing commas between properties)
+        fixed = fixed.replace(/(":\s*"[^"]*")\s+(")/g, '$1, $2');
+
+        // Fix position 1210 type errors (control characters in strings)
+        fixed = fixed.replace(/("content":\s*")([^"]*[\x00-\x1F][^"]*)(")/, (match, start, content, end) => {
+          const cleanContent = content.replace(/[\x00-\x1F]/g, (char: string) => {
+            const code = char.charCodeAt(0);
+            return `\\u${code.toString(16).padStart(4, '0')}`;
+          });
+          return start + cleanContent + end;
+        });
+
+        return JSON.parse(fixed);
+      },
+
+      // Strategy 3: Bracket completion
+      () => {
+        logger.debug({ context, strategy: 'bracket-completion' }, "Attempting bracket completion");
+        let completed = jsonString;
+        const openBraces = (completed.match(/{/g) || []).length;
+        const closeBraces = (completed.match(/}/g) || []).length;
+        const openBrackets = (completed.match(/\[/g) || []).length;
+        const closeBrackets = (completed.match(/\]/g) || []).length;
+
+        if (openBraces > closeBraces) {
+          completed += '}'.repeat(openBraces - closeBraces);
+        }
+        if (openBrackets > closeBrackets) {
+          completed += ']'.repeat(openBrackets - closeBrackets);
+        }
+
+        return JSON.parse(completed);
+      },
+
+      // Strategy 4: Extract largest valid JSON substring
+      () => {
+        logger.debug({ context, strategy: 'partial-extraction' }, "Attempting partial JSON extraction");
+        let maxValidJson = '';
+
+        for (let end = jsonString.length; end > 0; end--) {
+          for (let start = 0; start < end; start++) {
+            const substring = jsonString.substring(start, end);
+            try {
+              JSON.parse(substring);
+              if (substring.length > maxValidJson.length) {
+                maxValidJson = substring;
+              }
+            } catch {
+              continue;
+            }
+          }
+          if (maxValidJson) break;
+        }
+
+        if (!maxValidJson) {
+          throw new Error('No valid JSON substring found');
+        }
+
+        return JSON.parse(maxValidJson);
+      }
+    ];
+
+    let lastError: Error | null = null;
+
+    for (let i = 0; i < strategies.length; i++) {
+      try {
+        const result = strategies[i]();
+        logger.debug({ context, strategy: i + 1, success: true }, "Progressive JSON parsing successful");
+        return result;
+      } catch (error) {
+        lastError = error as Error;
+        logger.debug({ context, strategy: i + 1, error: error instanceof Error ? error.message : String(error) }, "Progressive JSON parsing strategy failed");
+      }
+    }
+
+    throw new ParsingError(
+      `All progressive JSON parsing strategies failed for ${context}. Last error: ${lastError?.message}`,
+      { jsonString: jsonString.substring(0, 500), strategiesAttempted: strategies.length },
+      lastError || undefined
+    );
   }
 
   private substitutePlaceholders<T extends object | string | null | undefined>(data: T, params: ModuleParameters): T {

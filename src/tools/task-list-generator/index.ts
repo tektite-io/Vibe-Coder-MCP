@@ -4,7 +4,7 @@ import path from 'path';
 import { z } from 'zod';
 import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
-import { performDirectLlmCall } from '../../utils/llmHelper.js';
+import { performFormatAwareLlmCall } from '../../utils/llmHelper.js';
 import { performResearchQuery } from '../../utils/researchHelper.js';
 import logger from '../../logger.js';
 import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js';
@@ -300,11 +300,14 @@ async function decomposeSingleTaskWithRetry(
       logger.debug({ taskId: task.id, attempt: attempts }, `Attempting decomposition (attempt ${attempts}/${maxRetries + 1})`);
       sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Decomposing task ${task.id} (attempt ${attempts})...`);
 
-      const subTasksMarkdown = await performDirectLlmCall(
+      const subTasksMarkdown = await performFormatAwareLlmCall(
         decompositionPrompt,
         TASK_DECOMPOSITION_SYSTEM_PROMPT,
         config,
-        'task_list_decomposition'
+        'task_list_decomposition',
+        'markdown', // Explicitly specify markdown format
+        undefined, // No schema for markdown
+        0.1 // Default temperature for structured output
       );
 
       // Basic validation
@@ -397,11 +400,14 @@ export const generateTaskList: ToolExecutor = async (
       }
 
       const initialGenerationPrompt = `Create a detailed task list for the following product:\n\n${productDescription}\n\nBased on these user stories:\n\n${userStories}\n\n${researchContext}`;
-      const highLevelTaskListMarkdown = await performDirectLlmCall(
+      const highLevelTaskListMarkdown = await performFormatAwareLlmCall(
         initialGenerationPrompt,
         INITIAL_TASK_LIST_SYSTEM_PROMPT,
         config,
-        'task_list_initial_generation'
+        'task_list_initial_generation',
+        'markdown', // Explicitly specify markdown format
+        undefined, // No schema for markdown
+        0.1 // Default temperature for structured output
       );
       logger.debug({ rawOutput: highLevelTaskListMarkdown }, "Raw output from Step 1 (High-Level Task Generation - Direct Call):");
       logger.info("Task List Generator: Step 1 - High-Level Task Generation completed.");
