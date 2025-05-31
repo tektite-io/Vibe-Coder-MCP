@@ -1,5 +1,7 @@
 import path from 'path';
+import { readFile } from 'fs/promises';
 import { FileUtils, FileOperationResult } from './file-utils.js';
+import { OpenRouterConfig } from '../../../types/workflow.js';
 import logger from '../../../logger.js';
 import { getProjectRoot } from '../../code-map-generator/utils/pathUtils.enhanced.js';
 
@@ -24,6 +26,38 @@ export interface MCPToolConfig {
  */
 export interface MCPConfig {
   tools: Record<string, MCPToolConfig>;
+}
+
+/**
+ * Vibe Task Manager security configuration interface
+ */
+export interface VibeTaskManagerSecurityConfig {
+  allowedReadDirectory: string;
+  allowedWriteDirectory: string;
+  securityMode: 'strict' | 'permissive';
+}
+
+/**
+ * Performance configuration for startup optimization
+ */
+export interface PerformanceConfig {
+  enableConfigCache: boolean;
+  configCacheTTL: number;
+  lazyLoadServices: boolean;
+  preloadCriticalServices: string[];
+  connectionPoolSize: number;
+  maxStartupTime: number;
+  asyncInitialization: boolean;
+  batchConfigLoading: boolean;
+}
+
+/**
+ * Configuration cache entry
+ */
+interface ConfigCacheEntry {
+  config: VibeTaskManagerConfig;
+  timestamp: number;
+  ttl: number;
 }
 
 /**
@@ -93,18 +127,38 @@ export interface VibeTaskManagerConfig {
 }
 
 /**
- * Configuration loader that uses existing llm_config.json and mcp-config.json
+ * Enhanced configuration loader with performance optimizations
+ * - Configuration caching with TTL
+ * - Async initialization
+ * - Batch loading
+ * - Connection pooling preparation
  */
 export class ConfigLoader {
   private static instance: ConfigLoader;
   private config: VibeTaskManagerConfig | null = null;
+  private configCache: Map<string, ConfigCacheEntry> = new Map();
   private llmConfigPath: string;
   private mcpConfigPath: string;
+  private performanceConfig: PerformanceConfig;
+  private initializationPromise: Promise<void> | null = null;
+  private loadingStartTime: number = 0;
 
   private constructor() {
     const projectRoot = getProjectRoot();
     this.llmConfigPath = path.join(projectRoot, 'llm_config.json');
     this.mcpConfigPath = path.join(projectRoot, 'mcp-config.json');
+
+    // Performance configuration with <50ms targets
+    this.performanceConfig = {
+      enableConfigCache: true,
+      configCacheTTL: 300000, // 5 minutes
+      lazyLoadServices: true,
+      preloadCriticalServices: ['execution-coordinator', 'agent-orchestrator'],
+      connectionPoolSize: 10,
+      maxStartupTime: 50, // <50ms target
+      asyncInitialization: true,
+      batchConfigLoading: true
+    };
   }
 
   /**
@@ -129,60 +183,135 @@ export class ConfigLoader {
   }
 
   /**
-   * Load configuration from existing files
+   * Check if cached configuration is valid
    */
-  async loadConfig(): Promise<FileOperationResult<VibeTaskManagerConfig>> {
-    try {
-      logger.debug('Loading Vibe Task Manager configuration from existing files');
-      logger.debug({
-        projectRoot: getProjectRoot(),
-        cwd: process.cwd(),
-        llmConfigPath: this.llmConfigPath,
-        mcpConfigPath: this.mcpConfigPath
-      }, 'Configuration file paths');
+  private isCacheValid(cacheKey: string): boolean {
+    if (!this.performanceConfig.enableConfigCache) {
+      return false;
+    }
 
-      // Load LLM configuration
+    const cached = this.configCache.get(cacheKey);
+    if (!cached) {
+      return false;
+    }
+
+    const now = Date.now();
+    return (now - cached.timestamp) < cached.ttl;
+  }
+
+  /**
+   * Get configuration from cache
+   */
+  private getCachedConfig(cacheKey: string): VibeTaskManagerConfig | null {
+    if (!this.isCacheValid(cacheKey)) {
+      this.configCache.delete(cacheKey);
+      return null;
+    }
+
+    const cached = this.configCache.get(cacheKey);
+    return cached ? { ...cached.config } : null;
+  }
+
+  /**
+   * Cache configuration
+   */
+  private cacheConfig(cacheKey: string, config: VibeTaskManagerConfig): void {
+    if (!this.performanceConfig.enableConfigCache) {
+      return;
+    }
+
+    this.configCache.set(cacheKey, {
+      config: { ...config },
+      timestamp: Date.now(),
+      ttl: this.performanceConfig.configCacheTTL
+    });
+  }
+
+  /**
+   * Load configuration files in batch for better performance
+   */
+  private async batchLoadConfigs(): Promise<{ llm: LLMConfig; mcp: MCPConfig }> {
+    if (this.performanceConfig.batchConfigLoading) {
+      // Load both files concurrently
+      const [llmResult, mcpResult] = await Promise.all([
+        FileUtils.readJsonFile<LLMConfig>(this.llmConfigPath),
+        FileUtils.readJsonFile<MCPConfig>(this.mcpConfigPath)
+      ]);
+
+      if (!llmResult.success) {
+        throw new Error(`Failed to load LLM config: ${llmResult.error}`);
+      }
+
+      if (!mcpResult.success) {
+        throw new Error(`Failed to load MCP config: ${mcpResult.error}`);
+      }
+
+      return {
+        llm: llmResult.data!,
+        mcp: mcpResult.data!
+      };
+    } else {
+      // Sequential loading (fallback)
       const llmResult = await FileUtils.readJsonFile<LLMConfig>(this.llmConfigPath);
       if (!llmResult.success) {
-        logger.error({
-          llmConfigPath: this.llmConfigPath,
-          error: llmResult.error
-        }, 'Failed to load LLM configuration file');
-        return {
-          success: false,
-          error: `Failed to load LLM config: ${llmResult.error}`,
-          metadata: {
-            filePath: this.llmConfigPath,
-            operation: 'load_llm_config',
-            timestamp: new Date()
-          }
-        };
+        throw new Error(`Failed to load LLM config: ${llmResult.error}`);
       }
 
-      // Load MCP configuration
       const mcpResult = await FileUtils.readJsonFile<MCPConfig>(this.mcpConfigPath);
       if (!mcpResult.success) {
+        throw new Error(`Failed to load MCP config: ${mcpResult.error}`);
+      }
+
+      return {
+        llm: llmResult.data!,
+        mcp: mcpResult.data!
+      };
+    }
+  }
+
+  /**
+   * Load configuration from existing files with performance optimizations
+   */
+  async loadConfig(): Promise<FileOperationResult<VibeTaskManagerConfig>> {
+    this.loadingStartTime = performance.now();
+
+    try {
+      const cacheKey = 'main-config';
+
+      // Check cache first
+      const cachedConfig = this.getCachedConfig(cacheKey);
+      if (cachedConfig) {
+        const loadTime = performance.now() - this.loadingStartTime;
+        logger.debug({ loadTime }, 'Configuration loaded from cache');
+
+        this.config = cachedConfig;
         return {
-          success: false,
-          error: `Failed to load MCP config: ${mcpResult.error}`,
+          success: true,
+          data: cachedConfig,
           metadata: {
-            filePath: this.mcpConfigPath,
-            operation: 'load_mcp_config',
-            timestamp: new Date()
+            filePath: 'cached-config',
+            operation: 'load_config_cached',
+            timestamp: new Date(),
+            loadTime
           }
         };
       }
 
-      // Combine configurations with task manager defaults
+      logger.debug('Loading Vibe Task Manager configuration from files');
+
+      // Batch load configuration files
+      const { llm, mcp } = await this.batchLoadConfigs();
+
+      // Combine configurations with optimized task manager defaults
       this.config = {
-        llm: llmResult.data!,
-        mcp: mcpResult.data!,
+        llm,
+        mcp,
         taskManager: {
           maxConcurrentTasks: 10,
           defaultTaskTemplate: 'development',
           dataDirectory: this.getVibeTaskManagerOutputDirectory(),
           performanceTargets: {
-            maxResponseTime: 500,
+            maxResponseTime: 50, // <50ms target for Epic 6.2
             maxMemoryUsage: 500,
             minTestCoverage: 90
           },
@@ -196,47 +325,62 @@ export class ConfigLoader {
             primaryMethod: 'hybrid',
             fallbackMethod: 'pattern',
             minConfidence: 0.7,
-            maxProcessingTime: 5000
+            maxProcessingTime: 50 // Reduced to 50ms for Epic 6.2
           },
-          // Performance optimization defaults
+          // Enhanced performance optimization for <50ms target
           performance: {
             memoryManagement: {
               enabled: true,
-              maxMemoryPercentage: 0.4, // 40% of available memory
-              monitorInterval: 30000, // 30 seconds
+              maxMemoryPercentage: 0.3, // Reduced to 30% for better performance
+              monitorInterval: 5000, // 5 seconds for faster response
               autoManage: true,
-              pruneThreshold: 0.7, // Prune when 70% full
-              prunePercentage: 0.3 // Prune 30% of entries
+              pruneThreshold: 0.6, // More aggressive pruning
+              prunePercentage: 0.4 // Prune 40% of entries
             },
             fileSystem: {
               enableLazyLoading: true,
-              batchSize: 100, // Process 100 files at a time
-              enableCompression: false, // Disabled by default for speed
+              batchSize: 50, // Smaller batches for faster processing
+              enableCompression: false, // Disabled for speed
               indexingEnabled: true,
-              concurrentOperations: 5
+              concurrentOperations: 10 // Increased concurrency
             },
             caching: {
               enabled: true,
-              strategy: 'hybrid', // Memory + disk caching
-              maxCacheSize: 100 * 1024 * 1024, // 100MB
-              defaultTTL: 300000, // 5 minutes
+              strategy: 'memory', // Memory-only for speed
+              maxCacheSize: 50 * 1024 * 1024, // 50MB for faster access
+              defaultTTL: 60000, // 1 minute for faster refresh
               enableWarmup: true
             },
             monitoring: {
               enabled: true,
-              metricsInterval: 10000, // 10 seconds
+              metricsInterval: 1000, // 1 second for real-time monitoring
               enableAlerts: true,
               performanceThresholds: {
-                maxResponseTime: 5000, // 5 seconds
-                maxMemoryUsage: 500, // 500MB
-                maxCpuUsage: 80 // 80%
+                maxResponseTime: 50, // <50ms target
+                maxMemoryUsage: 300, // 300MB
+                maxCpuUsage: 70 // 70%
               }
             }
           }
         }
       };
 
-      logger.info('Vibe Task Manager configuration loaded successfully');
+      // Cache the configuration
+      this.cacheConfig(cacheKey, this.config);
+
+      const loadTime = performance.now() - this.loadingStartTime;
+
+      // Check if we met the performance target
+      if (loadTime > this.performanceConfig.maxStartupTime) {
+        logger.warn({
+          loadTime,
+          target: this.performanceConfig.maxStartupTime
+        }, 'Configuration loading exceeded performance target');
+      } else {
+        logger.debug({ loadTime }, 'Configuration loaded within performance target');
+      }
+
+      logger.info({ loadTime }, 'Vibe Task Manager configuration loaded successfully');
 
       return {
         success: true,
@@ -244,12 +388,18 @@ export class ConfigLoader {
         metadata: {
           filePath: 'combined-config',
           operation: 'load_config',
-          timestamp: new Date()
+          timestamp: new Date(),
+          loadTime,
+          fromCache: false
         }
       };
 
     } catch (error) {
-      logger.error({ err: error }, 'Failed to load Vibe Task Manager configuration');
+      const loadTime = performance.now() - this.loadingStartTime;
+      logger.error({
+        err: error,
+        loadTime
+      }, 'Failed to load Vibe Task Manager configuration');
 
       return {
         success: false,
@@ -257,7 +407,8 @@ export class ConfigLoader {
         metadata: {
           filePath: 'combined-config',
           operation: 'load_config',
-          timestamp: new Date()
+          timestamp: new Date(),
+          loadTime
         }
       };
     }
@@ -401,6 +552,60 @@ export class ConfigLoader {
 
     return llmValidation.valid && mcpValidation.valid;
   }
+
+  /**
+   * Get performance configuration
+   */
+  getPerformanceConfig(): PerformanceConfig {
+    return { ...this.performanceConfig };
+  }
+
+  /**
+   * Update performance configuration
+   */
+  updatePerformanceConfig(updates: Partial<PerformanceConfig>): void {
+    this.performanceConfig = { ...this.performanceConfig, ...updates };
+    logger.debug({ updates }, 'Performance configuration updated');
+  }
+
+  /**
+   * Clear configuration cache
+   */
+  clearCache(): void {
+    this.configCache.clear();
+    logger.debug('Configuration cache cleared');
+  }
+
+  /**
+   * Get cache statistics
+   */
+  getCacheStats(): {
+    size: number;
+    entries: string[];
+    hitRate: number;
+  } {
+    const entries = Array.from(this.configCache.keys());
+    return {
+      size: this.configCache.size,
+      entries,
+      hitRate: 0 // TODO: Implement hit rate tracking
+    };
+  }
+
+  /**
+   * Warm up configuration cache
+   */
+  async warmupCache(): Promise<void> {
+    if (!this.performanceConfig.enableConfigCache) {
+      return;
+    }
+
+    const startTime = performance.now();
+    await this.loadConfig();
+    const warmupTime = performance.now() - startTime;
+
+    logger.debug({ warmupTime }, 'Configuration cache warmed up');
+  }
 }
 
 /**
@@ -448,4 +653,73 @@ export function getBaseOutputDir(): string {
 export function getVibeTaskManagerOutputDir(): string {
   const baseOutputDir = getBaseOutputDir();
   return path.join(baseOutputDir, 'vibe-task-manager');
+}
+
+/**
+ * Extracts and validates the Vibe Task Manager security configuration from the MCP client config.
+ * This follows the same pattern as the Code Map Generator's extractCodeMapConfig function.
+ * @param config The OpenRouter configuration object from MCP client
+ * @returns The validated Vibe Task Manager security configuration
+ * @throws Error if the configuration is invalid
+ */
+export function extractVibeTaskManagerSecurityConfig(config?: OpenRouterConfig): VibeTaskManagerSecurityConfig {
+  // Create a base security configuration object
+  let securityConfig: Partial<VibeTaskManagerSecurityConfig> = {};
+
+  if (config) {
+    // Try to extract from tools['vibe-task-manager'] first
+    const toolConfig = config.tools?.['vibe-task-manager'] as any;
+
+    // If not found, try config['vibe-task-manager']
+    const configSection = config.config?.['vibe-task-manager'] as any;
+
+    // Merge configurations if they exist
+    if (toolConfig || configSection) {
+      securityConfig = {
+        ...configSection,
+        ...toolConfig,
+      };
+    }
+  }
+
+  // Even if no config is provided, we'll try to use environment variables
+  logger.debug(`Extracted vibe-task-manager security config: ${JSON.stringify(securityConfig)}`);
+
+  // Validate and apply defaults with environment variable fallbacks
+  const allowedReadDirectory = securityConfig.allowedReadDirectory ||
+                               process.env.VIBE_TASK_MANAGER_READ_DIR ||
+                               process.cwd();
+
+  const allowedWriteDirectory = securityConfig.allowedWriteDirectory ||
+                                process.env.VIBE_CODER_OUTPUT_DIR ||
+                                path.join(process.cwd(), 'VibeCoderOutput');
+
+  const securityMode = (securityConfig.securityMode ||
+                       process.env.VIBE_TASK_MANAGER_SECURITY_MODE ||
+                       'strict') as 'strict' | 'permissive';
+
+  // Validate that directories are provided
+  if (!allowedReadDirectory) {
+    throw new Error('allowedReadDirectory is required in the configuration, VIBE_TASK_MANAGER_READ_DIR environment variable, or defaults to current working directory');
+  }
+
+  if (!allowedWriteDirectory) {
+    throw new Error('allowedWriteDirectory is required in the configuration, VIBE_CODER_OUTPUT_DIR environment variable, or defaults to VibeCoderOutput');
+  }
+
+  // Resolve paths to absolute paths
+  const resolvedReadDir = path.resolve(allowedReadDirectory);
+  const resolvedWriteDir = path.resolve(allowedWriteDirectory);
+
+  logger.info({
+    allowedReadDirectory: resolvedReadDir,
+    allowedWriteDirectory: resolvedWriteDir,
+    securityMode
+  }, 'Vibe Task Manager security configuration extracted from MCP client config');
+
+  return {
+    allowedReadDirectory: resolvedReadDir,
+    allowedWriteDirectory: resolvedWriteDir,
+    securityMode
+  };
 }

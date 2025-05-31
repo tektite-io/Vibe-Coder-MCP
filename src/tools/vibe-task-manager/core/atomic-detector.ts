@@ -1,4 +1,4 @@
-import { performDirectLlmCall } from '../../../utils/llmHelper.js';
+import { performFormatAwareLlmCall } from '../../../utils/llmHelper.js';
 import { OpenRouterConfig } from '../../../types/workflow.js';
 import { getLLMModelForOperation } from '../utils/config-loader.js';
 import { AtomicTask, TaskPriority, TaskType } from '../types/task.js';
@@ -77,11 +77,13 @@ export class AtomicTaskDetector {
       logger.debug({ model, taskId: task.id }, 'Using LLM model for atomic analysis');
 
       // Perform LLM analysis
-      const response = await performDirectLlmCall(
+      const response = await performFormatAwareLlmCall(
         analysisPrompt,
         systemPrompt,
         this.config,
         'task_decomposition',
+        'json', // Explicitly specify JSON format for atomic analysis
+        undefined, // Schema will be inferred from task name
         0.1 // Low temperature for consistent analysis
       );
 

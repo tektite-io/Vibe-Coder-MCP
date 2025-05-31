@@ -5,7 +5,7 @@
 /**
  * Represents the status of a task or project
  */
-export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'blocked' | 'cancelled';
+export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'blocked' | 'cancelled' | 'failed';
 
 /**
  * Represents the priority level of a task

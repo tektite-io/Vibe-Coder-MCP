@@ -17,6 +17,7 @@ import { AtomicTask } from '../types/task.js';
 import { FileUtils, FileOperationResult } from '../utils/file-utils.js';
 import { VibeTaskManagerConfig } from '../utils/config-loader.js';
 import { TaskManagerMemoryManager, MemoryCleanupResult } from '../utils/memory-manager-integration.js';
+import { validateSecurePath, PathValidationResult } from '../security/path-validator.js';
 import { AppError } from '../../../utils/errors.js';
 import logger from '../../../logger.js';
 
@@ -182,6 +183,28 @@ export class TaskFileManager {
   async saveTask(task: AtomicTask): Promise<FileOperationResult<void>> {
     try {
       const filePath = this.getTaskFilePath(task.id);
+
+      // Validate file path security
+      const pathValidation = await validateSecurePath(filePath, 'write');
+      if (!pathValidation.valid) {
+        logger.error({
+          taskId: task.id,
+          filePath,
+          violation: pathValidation.violationType,
+          error: pathValidation.error
+        }, 'Path security validation failed for task save');
+
+        return {
+          success: false,
+          error: `Path security validation failed: ${pathValidation.error}`,
+          metadata: {
+            filePath,
+            operation: 'save_task',
+            timestamp: new Date()
+          } as any
+        };
+      }
+
       let content = JSON.stringify(task, null, 2);
 
       // Ensure tasks directory exists
@@ -265,6 +288,27 @@ export class TaskFileManager {
             operation: 'load_task',
             timestamp: new Date()
           }
+        };
+      }
+
+      // Validate file path security
+      const pathValidation = await validateSecurePath(indexEntry.filePath, 'read');
+      if (!pathValidation.valid) {
+        logger.error({
+          taskId,
+          filePath: indexEntry.filePath,
+          violation: pathValidation.violationType,
+          error: pathValidation.error
+        }, 'Path security validation failed for task load');
+
+        return {
+          success: false,
+          error: `Path security validation failed: ${pathValidation.error}`,
+          metadata: {
+            filePath: indexEntry.filePath,
+            operation: 'load_task',
+            timestamp: new Date()
+          } as any
         };
       }
 

@@ -2702,7 +2702,7 @@ export class OptimizedDependencyGraph {
    */
   private async fileExists(filePath: string): Promise<boolean> {
     // This would be implemented with actual file system access
-    // For now, return false to simulate file operations
+    // For now, return false as file operations are not yet implemented
     return false;
   }
 

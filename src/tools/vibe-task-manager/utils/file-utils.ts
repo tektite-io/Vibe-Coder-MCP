@@ -17,6 +17,8 @@ export interface FileOperationResult<T = unknown> {
     operation: string;
     timestamp: Date;
     size?: number;
+    loadTime?: number;
+    fromCache?: boolean;
   };
 }
 

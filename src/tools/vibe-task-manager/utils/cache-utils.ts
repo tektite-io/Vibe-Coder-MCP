@@ -1,6 +1,6 @@
 /**
  * Cache Utils - Advanced Caching Strategies
- * 
+ *
  * Implements advanced caching strategies including:
  * - Multi-level caching (memory, disk, distributed)
  * - Cache warming strategies
@@ -140,81 +140,99 @@ export class MultiLevelCache<T> {
   }
 
   /**
-   * Get value from cache
+   * Get value from cache (optimized for <50ms performance)
    */
   async get(key: string): Promise<T | null> {
-    const startTime = Date.now();
+    const startTime = performance.now();
 
     try {
-      // Check memory cache first
+      // Fast path: Check memory cache first (should be <1ms)
       const memoryEntry = this.memoryCache.get(key);
-      if (memoryEntry && !this.isExpired(memoryEntry)) {
-        this.updateAccessMetrics(memoryEntry);
-        this.stats.totalHits++;
-        this.updateHitRate();
-        
-        logger.debug({ key, source: 'memory' }, 'Cache hit');
-        return memoryEntry.value;
+      if (memoryEntry) {
+        // Quick expiration check without function call overhead
+        const now = Date.now();
+        if (now - memoryEntry.timestamp.getTime() <= memoryEntry.ttl) {
+          // Fast access metrics update
+          memoryEntry.accessCount++;
+          memoryEntry.lastAccessed = new Date(now);
+          this.accessOrder.set(key, ++this.accessCounter);
+
+          this.stats.totalHits++;
+          this.stats.hitRate = this.stats.totalHits / (this.stats.totalHits + this.stats.totalMisses);
+
+          return memoryEntry.value;
+        } else {
+          // Remove expired entry immediately
+          this.memoryCache.delete(key);
+          this.accessOrder.delete(key);
+          this.accessFrequency.delete(key);
+        }
       }
 
-      // Check disk cache if enabled
-      if (this.config.diskConfig.enabled) {
+      // Disk cache check only if memory miss and disk enabled
+      if (this.config.diskConfig.enabled && this.config.strategy !== 'memory') {
         const diskEntry = await this.getDiskEntry(key);
         if (diskEntry && !this.isExpired(diskEntry)) {
-          // Promote to memory cache
+          // Promote to memory cache for future fast access
           this.memoryCache.set(key, diskEntry);
           this.updateAccessMetrics(diskEntry);
           this.stats.totalHits++;
           this.updateHitRate();
-          
-          logger.debug({ key, source: 'disk' }, 'Cache hit');
+
           return diskEntry.value;
         }
       }
 
       // Cache miss
       this.stats.totalMisses++;
-      this.updateHitRate();
-      
-      logger.debug({ key }, 'Cache miss');
+      this.stats.hitRate = this.stats.totalHits / (this.stats.totalHits + this.stats.totalMisses);
+
       return null;
 
     } finally {
-      const accessTime = Date.now() - startTime;
+      const accessTime = performance.now() - startTime;
       this.updateAverageAccessTime(accessTime);
     }
   }
 
   /**
-   * Set value in cache
+   * Set value in cache (optimized for <50ms performance)
    */
   async set(key: string, value: T, ttl?: number, tags: string[] = []): Promise<void> {
+    const now = Date.now();
     const entry: CacheEntry<T> = {
       key,
       value,
-      timestamp: new Date(),
+      timestamp: new Date(now),
       ttl: ttl || 300000, // 5 minutes default
       accessCount: 0,
-      lastAccessed: new Date(),
+      lastAccessed: new Date(now),
       size: this.estimateSize(value),
       tags
     };
 
-    // Check if eviction is needed
-    await this.evictIfNecessary();
+    // Fast eviction check - only if we're near limits
+    const currentSize = this.memoryCache.size;
+    if (currentSize >= this.config.memoryConfig.maxEntries * 0.9) {
+      await this.evictIfNecessary();
+    }
 
-    // Store in memory cache
+    // Store in memory cache (fast path)
     this.memoryCache.set(key, entry);
     this.accessOrder.set(key, ++this.accessCounter);
     this.accessFrequency.set(key, 0);
 
-    // Store in disk cache if enabled
-    if (this.config.diskConfig.enabled) {
-      await this.setDiskEntry(key, entry);
+    // Async disk storage (don't await for performance)
+    if (this.config.diskConfig.enabled && this.config.strategy !== 'memory') {
+      this.setDiskEntry(key, entry).catch(error => {
+        logger.warn({ err: error, key }, 'Async disk cache write failed');
+      });
     }
 
-    this.updateStats();
-    logger.debug({ key, size: entry.size, ttl: entry.ttl }, 'Cache entry stored');
+    // Fast stats update
+    this.stats.totalEntries = currentSize + 1;
+    this.stats.memoryEntries = this.stats.totalEntries;
+    this.stats.totalMemoryUsage += entry.size;
   }
 
   /**
@@ -288,7 +306,7 @@ export class MultiLevelCache<T> {
 
     if (entryCount >= this.config.memoryConfig.maxEntries ||
         memoryUsage >= this.config.memoryConfig.maxMemoryUsage) {
-      
+
       const evictCount = Math.max(1, Math.floor(entryCount * 0.1)); // Evict 10%
       await this.evictEntries(evictCount);
     }
@@ -325,9 +343,9 @@ export class MultiLevelCache<T> {
     }
 
     if (toEvict.length > 0) {
-      logger.debug({ 
-        evicted: toEvict.length, 
-        policy: this.config.memoryConfig.evictionPolicy 
+      logger.debug({
+        evicted: toEvict.length,
+        policy: this.config.memoryConfig.evictionPolicy
       }, 'Cache entries evicted');
     }
   }
@@ -394,10 +412,10 @@ export class MultiLevelCache<T> {
     const age = now - entry.timestamp.getTime();
     const timeSinceAccess = now - entry.lastAccessed.getTime();
     const frequency = this.accessFrequency.get(entry.key) || 0;
-    
+
     // Higher score = less likely to be evicted
-    return (frequency * 0.4) + 
-           ((entry.ttl - age) / entry.ttl * 0.3) + 
+    return (frequency * 0.4) +
+           ((entry.ttl - age) / entry.ttl * 0.3) +
            ((entry.ttl - timeSinceAccess) / entry.ttl * 0.2) +
            (1 / (entry.size / 1024) * 0.1); // Prefer keeping smaller items
   }
@@ -488,7 +506,7 @@ export class MultiLevelCache<T> {
    */
   private updateAverageAccessTime(accessTime: number): void {
     const total = this.stats.totalHits + this.stats.totalMisses;
-    this.stats.averageAccessTime = total > 1 
+    this.stats.averageAccessTime = total > 1
       ? (this.stats.averageAccessTime * (total - 1) + accessTime) / total
       : accessTime;
   }
@@ -549,7 +567,7 @@ export class MultiLevelCache<T> {
       // Evict additional entries if still over threshold
       const currentUsage = this.calculateMemoryUsage();
       const threshold = this.config.memoryConfig.maxMemoryUsage * 0.7;
-      
+
       if (currentUsage > threshold) {
         const evictCount = Math.floor(this.memoryCache.size * 0.2); // Evict 20%
         await this.evictEntries(evictCount);
@@ -622,7 +640,7 @@ export class MultiLevelCache<T> {
     }
 
     this.memoryManager?.unregisterCleanupCallback('multi-level-cache');
-    
+
     await this.clear();
     logger.info('Multi-level cache shutdown');
   }

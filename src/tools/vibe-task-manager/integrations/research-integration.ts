@@ -1,5 +1,5 @@
 import { performResearchQuery } from '../../../utils/researchHelper.js';
-import { performDirectLlmCall } from '../../../utils/llmHelper.js';
+import { performFormatAwareLlmCall } from '../../../utils/llmHelper.js';
 import { getVibeTaskManagerConfig } from '../utils/config-loader.js';
 import type { OpenRouterConfig } from '../../../types/workflow.js';
 import type { AtomicTask } from '../types/task.js';
@@ -427,11 +427,13 @@ Return only the queries, one per line, without numbering or formatting.
 
       const systemPrompt = `You are an expert software development researcher. Generate focused, actionable research queries that will provide practical insights for software development tasks. Focus on technical implementation, best practices, and real-world considerations.`;
 
-      const response = await performDirectLlmCall(
+      const response = await performFormatAwareLlmCall(
         queryGenerationPrompt,
         systemPrompt,
         this.openRouterConfig,
         'research_query_generation',
+        'text', // Explicitly specify text format for query generation
+        undefined, // No schema for text
         0.3
       );
 
@@ -812,11 +814,13 @@ Return only the queries, one per line, without numbering or formatting.
         const enhanceStartTime = Date.now();
         const enhancementPrompt = this.buildEnhancementPrompt(request, researchContent);
 
-        enhancedContent = await performDirectLlmCall(
+        enhancedContent = await performFormatAwareLlmCall(
           enhancementPrompt,
           this.getResearchSystemPrompt(request),
           this.openRouterConfig,
           'research_enhancement',
+          'markdown', // Explicitly specify markdown format
+          undefined, // No schema for markdown
           0.3
         );
 
