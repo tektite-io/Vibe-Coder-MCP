@@ -3,6 +3,8 @@ import { getStorageManager } from '../storage/storage-manager.js';
 import { getVibeTaskManagerConfig } from '../../utils/config-loader.js';
 import { getIdGenerator } from '../../utils/id-generator.js';
 import { FileOperationResult } from '../../utils/file-utils.js';
+import { DataSanitizer, SanitizationResult } from '../../security/data-sanitizer.js';
+import { ConcurrentAccessManager, LockAcquisitionResult } from '../../security/concurrent-access.js';
 import logger from '../../../../logger.js';
 
 /**
@@ -73,8 +75,17 @@ export interface CreateEpicParams {
  */
 export class TaskOperations {
   private static instance: TaskOperations;
+  private accessManager: ConcurrentAccessManager;
 
-  private constructor() {}
+  private constructor() {
+    this.accessManager = ConcurrentAccessManager.getInstance({
+      enableLockAuditTrail: true,
+      enableDeadlockDetection: true,
+      defaultLockTimeout: 30000, // 30 seconds
+      maxLockTimeout: 300000, // 5 minutes
+      lockCleanupInterval: 60000 // 1 minute
+    });
+  }
 
   /**
    * Get singleton instance
@@ -90,11 +101,94 @@ export class TaskOperations {
    * Create a new atomic task
    */
   async createTask(params: CreateTaskParams, createdBy: string = 'system'): Promise<FileOperationResult<AtomicTask>> {
+    // Acquire resource locks for task creation
+    const lockIds: string[] = [];
+
     try {
       logger.info({ taskTitle: params.title, projectId: params.projectId, createdBy }, 'Creating new task');
 
+      // Acquire project lock to prevent concurrent modifications
+      const projectLockResult = await this.accessManager.acquireLock(
+        `project:${params.projectId}`,
+        createdBy,
+        'write',
+        {
+          timeout: 30000,
+          metadata: {
+            operation: 'create_task',
+            taskTitle: params.title
+          }
+        }
+      );
+
+      if (!projectLockResult.success) {
+        return {
+          success: false,
+          error: `Failed to acquire project lock: ${projectLockResult.error}`,
+          metadata: {
+            filePath: 'task-operations',
+            operation: 'create_task',
+            timestamp: new Date()
+          }
+        };
+      }
+      lockIds.push(projectLockResult.lock!.id);
+
+      // Acquire epic lock to prevent concurrent modifications
+      const epicLockResult = await this.accessManager.acquireLock(
+        `epic:${params.epicId}`,
+        createdBy,
+        'write',
+        {
+          timeout: 30000,
+          metadata: {
+            operation: 'create_task',
+            taskTitle: params.title
+          }
+        }
+      );
+
+      if (!epicLockResult.success) {
+        // Release project lock
+        await this.accessManager.releaseLock(lockIds[0]);
+        return {
+          success: false,
+          error: `Failed to acquire epic lock: ${epicLockResult.error}`,
+          metadata: {
+            filePath: 'task-operations',
+            operation: 'create_task',
+            timestamp: new Date()
+          }
+        };
+      }
+      lockIds.push(epicLockResult.lock!.id);
+
+      // Sanitize input parameters
+      const dataSanitizer = DataSanitizer.getInstance();
+      const sanitizationResult = await dataSanitizer.sanitizeInput(params);
+
+      if (!sanitizationResult.success) {
+        logger.error({
+          violations: sanitizationResult.violations,
+          taskTitle: params.title
+        }, 'Task creation input sanitization failed');
+
+        return {
+          success: false,
+          error: `Input sanitization failed: ${sanitizationResult.violations.map((v: any) => v.description).join(', ')}`,
+          metadata: {
+            filePath: 'task-operations',
+            operation: 'create_task',
+            timestamp: new Date()
+          } as any
+        };
+      }
+
+      // Use sanitized parameters
+      const sanitizedParams = sanitizationResult.sanitizedData as CreateTaskParams;
+
       // Validate input parameters
-      const validationResult = this.validateCreateTaskParams(params);
+      const validationResult = this.validateCreateTaskParams(sanitizedParams);
       if (!validationResult.valid) {
         return {
           success: false,
@@ -110,11 +204,11 @@ export class TaskOperations {
       // Verify project and epic exist
       const storageManager = await getStorageManager();
 
-      const projectExists = await storageManager.projectExists(params.projectId);
+      const projectExists = await storageManager.projectExists(sanitizedParams.projectId);
       if (!projectExists) {
         return {
           success: false,
-          error: `Project ${params.projectId} not found`,
+          error: `Project ${sanitizedParams.projectId} not found`,
           metadata: {
             filePath: 'task-operations',
             operation: 'create_task',
@@ -123,11 +217,11 @@ export class TaskOperations {
         };
       }
 
-      const epicExists = await storageManager.epicExists(params.epicId);
+      const epicExists = await storageManager.epicExists(sanitizedParams.epicId);
       if (!epicExists) {
         return {
           success: false,
-          error: `Epic ${params.epicId} not found`,
+          error: `Epic ${sanitizedParams.epicId} not found`,
           metadata: {
             filePath: 'task-operations',
             operation: 'create_task',
@@ -138,7 +232,7 @@ export class TaskOperations {
 
       // Generate unique task ID
       const idGenerator = getIdGenerator();
-      const idResult = await idGenerator.generateTaskId(params.projectId, params.epicId);
+      const idResult = await idGenerator.generateTaskId(sanitizedParams.projectId, sanitizedParams.epicId);
 
       if (!idResult.success) {
         return {
@@ -168,21 +262,21 @@ export class TaskOperations {
         };
       }
 
-      // Create task object with defaults
+      // Create task object with defaults using sanitized parameters
       const task: AtomicTask = {
         id: taskId,
-        title: params.title,
-        description: params.description,
+        title: sanitizedParams.title,
+        description: sanitizedParams.description,
         status: 'pending',
-        priority: params.priority || 'medium',
-        type: params.type || 'development',
-        estimatedHours: params.estimatedHours || 4,
-        epicId: params.epicId,
-        projectId: params.projectId,
+        priority: sanitizedParams.priority || 'medium',
+        type: sanitizedParams.type || 'development',
+        estimatedHours: sanitizedParams.estimatedHours || 4,
+        epicId: sanitizedParams.epicId,
+        projectId: sanitizedParams.projectId,
         dependencies: [],
         dependents: [],
-        filePaths: params.filePaths || [],
-        acceptanceCriteria: params.acceptanceCriteria || [],
+        filePaths: sanitizedParams.filePaths || [],
+        acceptanceCriteria: sanitizedParams.acceptanceCriteria || [],
         testingRequirements: {
           unitTests: [],
           integrationTests: [],
@@ -207,16 +301,16 @@ export class TaskOperations {
           automated: ['Unit tests', 'Integration tests'],
           manual: ['Code review']
         },
-        assignedAgent: params.assignedAgent,
+        assignedAgent: sanitizedParams.assignedAgent,
         createdAt: new Date(),
         updatedAt: new Date(),
         createdBy,
-        tags: params.tags || [],
+        tags: sanitizedParams.tags || [],
         metadata: {
           createdAt: new Date(),
           updatedAt: new Date(),
           createdBy,
-          tags: params.tags || []
+          tags: sanitizedParams.tags || []
         }
       };
 
@@ -255,6 +349,15 @@ export class TaskOperations {
           timestamp: new Date()
         }
       };
+    } finally {
+      // Release all acquired locks
+      for (const lockId of lockIds) {
+        try {
+          await this.accessManager.releaseLock(lockId);
+        } catch (error) {
+          logger.error({ err: error, lockId }, 'Failed to release lock during task creation cleanup');
+        }
+      }
     }
   }
 
@@ -669,6 +772,283 @@ export class TaskOperations {
     }
 
     return filtered;
+  }
+
+  /**
+   * Update task status only
+   */
+  async updateTaskStatus(taskId: string, status: TaskStatus, updatedBy: string = 'system'): Promise<FileOperationResult<AtomicTask>> {
+    try {
+      logger.info({ taskId, status, updatedBy }, 'Updating task status');
+
+      // Validate status
+      const validStatuses: TaskStatus[] = ['pending', 'in_progress', 'completed', 'failed', 'blocked'];
+      if (!validStatuses.includes(status)) {
+        return {
+          success: false,
+          error: `Invalid task status: ${status}. Valid statuses are: ${validStatuses.join(', ')}`,
+          metadata: {
+            filePath: 'task-operations',
+            operation: 'update_task_status',
+            timestamp: new Date()
+          }
+        };
+      }
+
+      // Use the existing updateTask method with just status
+      const updateParams: UpdateTaskParams = { status };
+      return await this.updateTask(taskId, updateParams, updatedBy);
+
+    } catch (error) {
+      logger.error({ err: error, taskId, status }, 'Failed to update task status');
+
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        metadata: {
+          filePath: 'task-operations',
+          operation: 'update_task_status',
+          timestamp: new Date()
+        }
+      };
+    }
+  }
+
+  /**
+   * Update task metadata
+   */
+  async updateTaskMetadata(taskId: string, metadata: Record<string, any>, updatedBy: string = 'system'): Promise<FileOperationResult<AtomicTask>> {
+    try {
+      logger.info({ taskId, metadataKeys: Object.keys(metadata), updatedBy }, 'Updating task metadata');
+
+      // Get existing task to merge metadata
+      const storageManager = await getStorageManager();
+      const existingResult = await storageManager.getTask(taskId);
+      if (!existingResult.success) {
+        return {
+          success: false,
+          error: `Task not found: ${existingResult.error}`,
+          metadata: existingResult.metadata
+        };
+      }
+
+      const existingTask = existingResult.data!;
+
+      // Merge new metadata with existing metadata
+      const mergedMetadata = {
+        ...existingTask.metadata,
+        ...metadata,
+        updatedAt: new Date(),
+        updatedBy
+      };
+
+      // Prepare update object with merged metadata
+      const updates: any = {
+        metadata: mergedMetadata
+      };
+
+      // Update task in storage
+      const updateResult = await storageManager.updateTask(taskId, updates);
+
+      if (!updateResult.success) {
+        return {
+          success: false,
+          error: `Failed to update task metadata: ${updateResult.error}`,
+          metadata: updateResult.metadata
+        };
+      }
+
+      logger.info({ taskId }, 'Task metadata updated successfully');
+
+      return {
+        success: true,
+        data: updateResult.data!,
+        metadata: {
+          filePath: 'task-operations',
+          operation: 'update_task_metadata',
+          timestamp: new Date()
+        }
+      };
+
+    } catch (error) {
+      logger.error({ err: error, taskId }, 'Failed to update task metadata');
+
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        metadata: {
+          filePath: 'task-operations',
+          operation: 'update_task_metadata',
+          timestamp: new Date()
+        }
+      };
+    }
+  }
+
+  /**
+   * Get task status
+   */
+  async getTaskStatus(taskId: string): Promise<FileOperationResult<TaskStatus>> {
+    try {
+      logger.debug({ taskId }, 'Getting task status');
+
+      const taskResult = await this.getTask(taskId);
+      if (!taskResult.success) {
+        return {
+          success: false,
+          error: taskResult.error,
+          metadata: taskResult.metadata
+        };
+      }
+
+      return {
+        success: true,
+        data: taskResult.data!.status,
+        metadata: {
+          filePath: 'task-operations',
+          operation: 'get_task_status',
+          timestamp: new Date()
+        }
+      };
+
+    } catch (error) {
+      logger.error({ err: error, taskId }, 'Failed to get task status');
+
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        metadata: {
+          filePath: 'task-operations',
+          operation: 'get_task_status',
+          timestamp: new Date()
+        }
+      };
+    }
+  }
+
+  /**
+   * Get task metadata
+   */
+  async getTaskMetadata(taskId: string): Promise<FileOperationResult<Record<string, any>>> {
+    try {
+      logger.debug({ taskId }, 'Getting task metadata');
+
+      const taskResult = await this.getTask(taskId);
+      if (!taskResult.success) {
+        return {
+          success: false,
+          error: taskResult.error,
+          metadata: taskResult.metadata
+        };
+      }
+
+      return {
+        success: true,
+        data: taskResult.data!.metadata || {},
+        metadata: {
+          filePath: 'task-operations',
+          operation: 'get_task_metadata',
+          timestamp: new Date()
+        }
+      };
+
+    } catch (error) {
+      logger.error({ err: error, taskId }, 'Failed to get task metadata');
+
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        metadata: {
+          filePath: 'task-operations',
+          operation: 'get_task_metadata',
+          timestamp: new Date()
+        }
+      };
+    }
+  }
+
+  /**
+   * Add task tags
+   */
+  async addTaskTags(taskId: string, tags: string[], updatedBy: string = 'system'): Promise<FileOperationResult<AtomicTask>> {
+    try {
+      logger.info({ taskId, tags, updatedBy }, 'Adding task tags');
+
+      // Get existing task
+      const taskResult = await this.getTask(taskId);
+      if (!taskResult.success) {
+        return {
+          success: false,
+          error: taskResult.error,
+          metadata: taskResult.metadata
+        };
+      }
+
+      const existingTask = taskResult.data!;
+      const existingTags = existingTask.tags || [];
+
+      // Merge tags (remove duplicates)
+      const mergedTags = [...new Set([...existingTags, ...tags])];
+
+      // Update task with new tags
+      const updateParams: UpdateTaskParams = { tags: mergedTags };
+      return await this.updateTask(taskId, updateParams, updatedBy);
+
+    } catch (error) {
+      logger.error({ err: error, taskId, tags }, 'Failed to add task tags');
+
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        metadata: {
+          filePath: 'task-operations',
+          operation: 'add_task_tags',
+          timestamp: new Date()
+        }
+      };
+    }
+  }
+
+  /**
+   * Remove task tags
+   */
+  async removeTaskTags(taskId: string, tags: string[], updatedBy: string = 'system'): Promise<FileOperationResult<AtomicTask>> {
+    try {
+      logger.info({ taskId, tags, updatedBy }, 'Removing task tags');
+
+      // Get existing task
+      const taskResult = await this.getTask(taskId);
+      if (!taskResult.success) {
+        return {
+          success: false,
+          error: taskResult.error,
+          metadata: taskResult.metadata
+        };
+      }
+
+      const existingTask = taskResult.data!;
+      const existingTags = existingTask.tags || [];
+
+      // Remove specified tags
+      const filteredTags = existingTags.filter(tag => !tags.includes(tag));
+
+      // Update task with filtered tags
+      const updateParams: UpdateTaskParams = { tags: filteredTags };
+      return await this.updateTask(taskId, updateParams, updatedBy);
+
+    } catch (error) {
+      logger.error({ err: error, taskId, tags }, 'Failed to remove task tags');
+
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        metadata: {
+          filePath: 'task-operations',
+          operation: 'remove_task_tags',
+          timestamp: new Date()
+        }
+      };
+    }
   }
 }
 

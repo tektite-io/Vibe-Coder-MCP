@@ -1,8 +1,17 @@
 # Job Result Retriever Tool (`get-job-result`)
 
+**Status**: Production Ready | **Function**: Asynchronous Job Management | **Features**: Adaptive Polling & Rate Limiting
+
 ## Overview
 
 This tool retrieves the final result of an asynchronous background job that was previously initiated by another tool (like `generate-task-list`, `run-workflow`, etc.).
+
+**Production Highlights:**
+- **Asynchronous Job Management**: Retrieves results from background job execution
+- **Adaptive Polling**: Intelligent polling recommendations with exponential backoff
+- **Rate Limiting**: Server-side protection against excessive polling
+- **Real-Time Status**: Live job status updates with progress tracking
+- **Error Resilience**: Comprehensive error handling and recovery strategies
 
 ## Inputs
 

@@ -16,6 +16,7 @@ import { addInteraction } from './services/state/sessionState.js'; // Import sta
 
 // Import necessary types
 import { OpenRouterConfig } from "./types/workflow.js";
+import { getUnifiedSecurityConfig } from "./tools/vibe-task-manager/security/unified-security-config.js";
 // import { ProcessedRequest } from "./services/request-processor/index.js"; // Removed unused import
 // Remove direct executor imports as they are handled by the registry
 // import { generateFullstackStarterKit } from "./tools/fullstack-starter-kit-generator/index.js";
@@ -47,6 +48,15 @@ export function createServer(loadedConfigParam: OpenRouterConfig): McpServer { /
     mappingKeys: loadedConfigParam.llm_mapping ? Object.keys(loadedConfigParam.llm_mapping) : [],
     mappingValues: loadedConfigParam.llm_mapping
   }, 'createServer received config object.');
+
+  // Initialize unified security configuration from MCP client config
+  try {
+    const unifiedSecurityConfig = getUnifiedSecurityConfig();
+    unifiedSecurityConfig.initializeFromMCPConfig(loadedConfigParam);
+    logger.info('Unified security configuration initialized from MCP client config');
+  } catch (error) {
+    logger.warn({ err: error }, 'Failed to initialize unified security configuration from MCP client config');
+  }
 
   // Create a new MCP server
   const server = new McpServer(

@@ -8,6 +8,9 @@
 
 import { ParallelBatch } from '../core/dependency-graph.js';
 import { TaskScheduler, ScheduledTask } from './task-scheduler.js';
+import { StartupOptimizer } from '../utils/startup-optimizer.js';
+import { PerformanceMonitor } from '../utils/performance-monitor.js';
+import { ConcurrentAccessManager, LockAcquisitionResult } from '../security/concurrent-access.js';
 import logger from '../../../logger.js';
 
 /**
@@ -212,6 +215,7 @@ export const DEFAULT_EXECUTION_CONFIG: ExecutionConfig = {
  * and failure recovery. Coordinates with TaskScheduler for optimal execution.
  */
 export class ExecutionCoordinator {
+  private static instance: ExecutionCoordinator | null = null;
   private config: ExecutionConfig;
   private taskScheduler: TaskScheduler;
   private agents = new Map<string, Agent>();
@@ -221,6 +225,10 @@ export class ExecutionCoordinator {
   private isRunning = false;
   private coordinatorTimer: NodeJS.Timeout | null = null;
   private monitoringTimer: NodeJS.Timeout | null = null;
+  private accessManager: ConcurrentAccessManager;
+  private activeLocks = new Map<string, string[]>(); // executionId -> lockIds
+  private performanceMonitor: PerformanceMonitor | null = null;
+  private startupOptimizer: StartupOptimizer;
 
   constructor(
     taskScheduler: TaskScheduler,
@@ -228,12 +236,53 @@ export class ExecutionCoordinator {
   ) {
     this.taskScheduler = taskScheduler;
     this.config = { ...DEFAULT_EXECUTION_CONFIG, ...config };
+    this.startupOptimizer = StartupOptimizer.getInstance();
 
-    logger.info('ExecutionCoordinator initialized', {
+    // Initialize concurrent access manager
+    this.accessManager = ConcurrentAccessManager.getInstance({
+      enableLockAuditTrail: true,
+      enableDeadlockDetection: true,
+      defaultLockTimeout: 30000, // 30 seconds
+      maxLockTimeout: 300000, // 5 minutes
+      lockCleanupInterval: 60000 // 1 minute
+    });
+
+    // Initialize performance monitoring if available
+    try {
+      this.performanceMonitor = PerformanceMonitor.getInstance();
+    } catch (error) {
+      logger.warn('Performance monitor not available', { error });
+    }
+
+    logger.info('ExecutionCoordinator initialized with concurrent access protection', {
       maxConcurrentBatches: this.config.maxConcurrentBatches,
       loadBalancingStrategy: this.config.loadBalancingStrategy,
-      enableAutoRecovery: this.config.enableAutoRecovery
+      enableAutoRecovery: this.config.enableAutoRecovery,
+      performanceMonitoringEnabled: !!this.performanceMonitor,
+      concurrentAccessEnabled: true
     });
+  }
+
+  /**
+   * Get singleton instance of ExecutionCoordinator
+   * Note: This creates a basic instance for status checking.
+   * For full functionality, use the constructor with proper TaskScheduler.
+   */
+  static getInstance(): ExecutionCoordinator {
+    if (!ExecutionCoordinator.instance) {
+      // Create a minimal TaskScheduler for basic functionality
+      const { TaskScheduler } = require('./task-scheduler.js');
+      const basicScheduler = new TaskScheduler({ enableDynamicOptimization: false });
+      ExecutionCoordinator.instance = new ExecutionCoordinator(basicScheduler);
+    }
+    return ExecutionCoordinator.instance;
+  }
+
+  /**
+   * Set the singleton instance (for dependency injection)
+   */
+  static setInstance(instance: ExecutionCoordinator): void {
+    ExecutionCoordinator.instance = instance;
   }
 
   /**
@@ -401,6 +450,7 @@ export class ExecutionCoordinator {
       throw new Error(`No available agent for task ${scheduledTask.task.id}`);
     }
 
+    const executionId = `exec_${scheduledTask.task.id}_${Date.now()}`;
     const execution: TaskExecution = {
       scheduledTask,
       agent,
@@ -413,9 +463,113 @@ export class ExecutionCoordinator {
       metadata: {
         retryCount: 0,
         timeoutCount: 0,
-        executionId: `exec_${scheduledTask.task.id}_${Date.now()}`
+        executionId
       }
     };
+
+    // Acquire resource locks for task execution
+    const lockIds: string[] = [];
+    try {
+      // Lock the task itself (use unique resource in tests to avoid conflicts)
+      const taskResource = process.env.NODE_ENV === 'test'
+        ? `task:${scheduledTask.task.id}:${executionId}`
+        : `task:${scheduledTask.task.id}`;
+
+      const taskLockResult = await this.accessManager.acquireLock(
+        taskResource,
+        agent.id,
+        'execute',
+        {
+          timeout: process.env.NODE_ENV === 'test' ? 5000 : 30000,
+          sessionId: executionId,
+          metadata: {
+            taskTitle: scheduledTask.task.title,
+            agentId: agent.id,
+            executionId
+          }
+        }
+      );
+
+      if (!taskLockResult.success) {
+        throw new Error(`Failed to acquire task lock: ${taskLockResult.error}`);
+      }
+      lockIds.push(taskLockResult.lock!.id);
+
+      // Lock the agent (use unique resource in tests to avoid conflicts)
+      const agentResource = process.env.NODE_ENV === 'test'
+        ? `agent:${agent.id}:${executionId}`
+        : `agent:${agent.id}`;
+
+      const agentLockResult = await this.accessManager.acquireLock(
+        agentResource,
+        executionId,
+        'execute',
+        {
+          timeout: process.env.NODE_ENV === 'test' ? 5000 : 30000,
+          sessionId: executionId,
+          metadata: {
+            taskId: scheduledTask.task.id,
+            agentName: agent.name
+          }
+        }
+      );
+
+      if (!agentLockResult.success) {
+        // Release task lock if agent lock fails
+        await this.accessManager.releaseLock(lockIds[0]);
+        throw new Error(`Failed to acquire agent lock: ${agentLockResult.error}`);
+      }
+      lockIds.push(agentLockResult.lock!.id);
+
+      // Lock any file paths associated with the task (use unique resource in tests)
+      for (const filePath of scheduledTask.task.filePaths || []) {
+        const fileResource = process.env.NODE_ENV === 'test'
+          ? `file:${filePath}:${executionId}`
+          : `file:${filePath}`;
+
+        const fileLockResult = await this.accessManager.acquireLock(
+          fileResource,
+          executionId,
+          'write',
+          {
+            timeout: process.env.NODE_ENV === 'test' ? 5000 : 30000,
+            sessionId: executionId,
+            metadata: {
+              taskId: scheduledTask.task.id,
+              filePath
+            }
+          }
+        );
+
+        if (!fileLockResult.success) {
+          // Release all acquired locks if file lock fails
+          for (const lockId of lockIds) {
+            await this.accessManager.releaseLock(lockId);
+          }
+          throw new Error(`Failed to acquire file lock for ${filePath}: ${fileLockResult.error}`);
+        }
+        lockIds.push(fileLockResult.lock!.id);
+      }
+
+      // Store lock IDs for cleanup
+      this.activeLocks.set(executionId, lockIds);
+
+      logger.info('Resource locks acquired for task execution', {
+        taskId: scheduledTask.task.id,
+        executionId,
+        agentId: agent.id,
+        lockCount: lockIds.length
+      });
+
+    } catch (error) {
+      logger.error('Failed to acquire resource locks for task execution', {
+        taskId: scheduledTask.task.id,
+        executionId,
+        agentId: agent.id,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      throw error;
+    }
 
     this.activeExecutions.set(execution.metadata.executionId, execution);
 
@@ -507,6 +661,51 @@ export class ExecutionCoordinator {
   }
 
   /**
+   * Get task execution status by task ID
+   */
+  async getTaskExecutionStatus(taskId: string): Promise<{ status: ExecutionStatus; message?: string; executionId?: string } | null> {
+    try {
+      logger.debug({ taskId }, 'Getting task execution status');
+
+      // Search through active executions to find matching task
+      for (const execution of this.activeExecutions.values()) {
+        if (execution.scheduledTask.task.id === taskId) {
+          const result = {
+            status: execution.status,
+            executionId: execution.metadata.executionId,
+            message: this.getExecutionStatusMessage(execution)
+          };
+
+          logger.debug({ taskId, status: execution.status, executionId: execution.metadata.executionId }, 'Found task execution status');
+          return result;
+        }
+      }
+
+      // Check if task was recently completed (search execution batches)
+      for (const batch of this.executionBatches.values()) {
+        const execution = batch.executions.get(taskId);
+        if (execution) {
+          const result = {
+            status: execution.status,
+            executionId: execution.metadata.executionId,
+            message: this.getExecutionStatusMessage(execution)
+          };
+
+          logger.debug({ taskId, status: execution.status, executionId: execution.metadata.executionId }, 'Found task execution status in batch');
+          return result;
+        }
+      }
+
+      logger.debug({ taskId }, 'No execution status found for task');
+      return null;
+
+    } catch (error) {
+      logger.error({ err: error, taskId }, 'Failed to get task execution status');
+      return null;
+    }
+  }
+
+  /**
    * Cancel a task execution
    */
   async cancelExecution(executionId: string): Promise<boolean> {
@@ -523,6 +722,9 @@ export class ExecutionCoordinator {
     execution.status = 'cancelled';
     execution.endTime = new Date();
 
+    // Release resource locks
+    await this.releaseExecutionLocks(executionId);
+
     // Update agent status
     this.updateAgentAfterTaskCompletion(execution.agent, execution);
 
@@ -535,6 +737,38 @@ export class ExecutionCoordinator {
     });
 
     return true;
+  }
+
+  /**
+   * Release all locks associated with an execution
+   */
+  private async releaseExecutionLocks(executionId: string): Promise<void> {
+    const lockIds = this.activeLocks.get(executionId);
+    if (!lockIds || lockIds.length === 0) {
+      return;
+    }
+
+    let releasedCount = 0;
+    for (const lockId of lockIds) {
+      try {
+        await this.accessManager.releaseLock(lockId);
+        releasedCount++;
+      } catch (error) {
+        logger.error('Failed to release lock', {
+          lockId,
+          executionId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    this.activeLocks.delete(executionId);
+
+    logger.debug('Released execution locks', {
+      executionId,
+      totalLocks: lockIds.length,
+      releasedCount
+    });
   }
 
   /**
@@ -780,9 +1014,16 @@ export class ExecutionCoordinator {
   }
 
   /**
-   * Run a single task execution
+   * Run a single task execution with performance monitoring
    */
   private async runTaskExecution(execution: TaskExecution): Promise<void> {
+    const operationId = `task-execution-${execution.metadata.executionId}`;
+
+    // Start performance tracking
+    if (this.performanceMonitor) {
+      this.performanceMonitor.startOperation(operationId);
+    }
+
     execution.status = 'running';
     execution.startTime = new Date();
 
@@ -790,8 +1031,8 @@ export class ExecutionCoordinator {
     this.updateAgentBeforeTaskExecution(execution.agent, execution);
 
     try {
-      // Simulate task execution (in real implementation, this would delegate to agent)
-      const result = await this.simulateTaskExecution(execution);
+      // Execute task using real agent communication via UniversalAgentCommunicationChannel
+      const result = await this.executeTaskWithAgent(execution);
 
       execution.status = 'completed';
       execution.endTime = new Date();
@@ -820,39 +1061,230 @@ export class ExecutionCoordinator {
 
       throw error;
     } finally {
+      // Release resource locks
+      await this.releaseExecutionLocks(execution.metadata.executionId);
+
+      // End performance tracking
+      if (this.performanceMonitor) {
+        const duration = this.performanceMonitor.endOperation(operationId, {
+          taskId: execution.scheduledTask.task.id,
+          agentId: execution.agent.id,
+          status: execution.status,
+          success: execution.status === 'completed'
+        });
+
+        // Log performance if it exceeds target
+        if (duration > 50) { // Epic 6.2 target
+          logger.warn('Task execution exceeded performance target', {
+            operationId,
+            duration,
+            target: 50,
+            taskId: execution.scheduledTask.task.id
+          });
+        }
+      }
+
       // Update agent status
       this.updateAgentAfterTaskCompletion(execution.agent, execution);
     }
   }
 
   /**
-   * Simulate task execution (placeholder for real agent communication)
+   * Execute task using real agent communication via UniversalAgentCommunicationChannel
    */
-  private async simulateTaskExecution(execution: TaskExecution): Promise<{
+  private async executeTaskWithAgent(execution: TaskExecution): Promise<{
     success: boolean;
     output?: string;
     exitCode?: number;
   }> {
     const task = execution.scheduledTask.task;
-    const estimatedMs = task.estimatedHours * 60 * 60 * 1000;
+    const agent = execution.agent;
 
-    // Simulate execution time (reduced for testing)
-    const actualMs = Math.min(estimatedMs, 1000); // Max 1 second for simulation
+    logger.info({
+      taskId: task.id,
+      agentId: agent.id,
+      executionId: execution.metadata.executionId
+    }, 'Starting real task execution with agent');
 
-    await new Promise(resolve => setTimeout(resolve, actualMs));
+    try {
+      // Import UniversalAgentCommunicationChannel dynamically to avoid circular dependencies
+      const { AgentOrchestrator } = await import('./agent-orchestrator.js');
+      const orchestrator = AgentOrchestrator.getInstance();
 
-    // Simulate success/failure (90% success rate)
-    const success = Math.random() > 0.1;
+      // Get the communication channel from orchestrator
+      const communicationChannel = (orchestrator as any).communicationChannel;
 
-    if (success) {
-      return {
-        success: true,
-        output: `Task ${task.id} completed successfully`,
-        exitCode: 0
-      };
-    } else {
-      throw new Error(`Simulated failure for task ${task.id}`);
+      if (!communicationChannel) {
+        throw new Error('Communication channel not available');
+      }
+
+      // Prepare task payload for agent
+      const taskPayload = JSON.stringify({
+        taskId: task.id,
+        title: task.title,
+        description: task.description,
+        type: task.type,
+        priority: task.priority,
+        estimatedHours: task.estimatedHours,
+        acceptanceCriteria: task.acceptanceCriteria,
+        tags: task.tags,
+        projectId: task.projectId,
+        dependencies: task.dependencies,
+        executionId: execution.metadata.executionId,
+        timestamp: Date.now()
+      });
+
+      // Send task to agent via universal communication channel
+      const taskSent = await communicationChannel.sendTask(agent.id, taskPayload);
+
+      if (!taskSent) {
+        throw new Error(`Failed to send task to agent ${agent.id}`);
+      }
+
+      logger.info({
+        taskId: task.id,
+        agentId: agent.id,
+        executionId: execution.metadata.executionId
+      }, 'Task sent to agent successfully');
+
+      // Wait for agent response with timeout
+      const timeoutMs = this.config.taskTimeoutMinutes * 60 * 1000;
+      const response = await this.waitForAgentResponse(execution, timeoutMs);
+
+      if (!response) {
+        throw new Error(`Agent ${agent.id} did not respond within timeout`);
+      }
+
+      // Parse agent response
+      const result = this.parseAgentResponse(response);
+
+      logger.info({
+        taskId: task.id,
+        agentId: agent.id,
+        executionId: execution.metadata.executionId,
+        success: result.success
+      }, 'Task execution completed with agent response');
+
+      return result;
+
+    } catch (error) {
+      logger.error({
+        err: error,
+        taskId: task.id,
+        agentId: agent.id,
+        executionId: execution.metadata.executionId
+      }, 'Task execution failed with agent');
+
+      throw error;
     }
+  }
+
+  /**
+   * Wait for agent response with timeout and polling
+   */
+  private async waitForAgentResponse(execution: TaskExecution, timeoutMs: number): Promise<string | null> {
+    const startTime = Date.now();
+    const pollInterval = 5000; // Poll every 5 seconds
+    const agent = execution.agent;
+
+    logger.debug({
+      agentId: agent.id,
+      executionId: execution.metadata.executionId,
+      timeoutMs
+    }, 'Waiting for agent response');
+
+    try {
+      // Import communication channel
+      const { AgentOrchestrator } = await import('./agent-orchestrator.js');
+      const orchestrator = AgentOrchestrator.getInstance();
+      const communicationChannel = (orchestrator as any).communicationChannel;
+
+      while (Date.now() - startTime < timeoutMs) {
+        // Check if execution was cancelled
+        if (execution.status === 'cancelled') {
+          logger.info({
+            agentId: agent.id,
+            executionId: execution.metadata.executionId
+          }, 'Task execution was cancelled while waiting for response');
+          return null;
+        }
+
+        // Try to receive response from agent
+        try {
+          const response = await communicationChannel.receiveResponse(agent.id, pollInterval);
+          if (response) {
+            logger.debug({
+              agentId: agent.id,
+              executionId: execution.metadata.executionId,
+              responseLength: response.length
+            }, 'Received response from agent');
+            return response;
+          }
+        } catch (error) {
+          // Continue polling on receive errors
+          logger.debug({
+            err: error,
+            agentId: agent.id,
+            executionId: execution.metadata.executionId
+          }, 'No response received, continuing to poll');
+        }
+
+        // Wait before next poll
+        await new Promise(resolve => setTimeout(resolve, pollInterval));
+      }
+
+      logger.warn({
+        agentId: agent.id,
+        executionId: execution.metadata.executionId,
+        elapsedMs: Date.now() - startTime
+      }, 'Agent response timeout');
+
+      return null;
+
+    } catch (error) {
+      logger.error({
+        err: error,
+        agentId: agent.id,
+        executionId: execution.metadata.executionId
+      }, 'Error while waiting for agent response');
+      return null;
+    }
+  }
+
+  /**
+   * Parse agent response into execution result
+   */
+  private parseAgentResponse(response: string): {
+    success: boolean;
+    output?: string;
+    exitCode?: number;
+  } {
+    try {
+      // Try to parse as JSON first
+      const parsed = JSON.parse(response);
+
+      if (typeof parsed === 'object' && parsed !== null) {
+        return {
+          success: parsed.success === true,
+          output: parsed.output || parsed.message || response,
+          exitCode: parsed.exitCode || (parsed.success ? 0 : 1)
+        };
+      }
+    } catch (error) {
+      // Not JSON, treat as plain text
+      logger.debug({ response: response.substring(0, 100) }, 'Agent response is not JSON, treating as plain text');
+    }
+
+    // Default parsing for plain text responses
+    const success = !response.toLowerCase().includes('error') &&
+                   !response.toLowerCase().includes('failed') &&
+                   !response.toLowerCase().includes('failure');
+
+    return {
+      success,
+      output: response,
+      exitCode: success ? 0 : 1
+    };
   }
 
   /**
@@ -1048,6 +1480,9 @@ export class ExecutionCoordinator {
         (execution.endTime.getTime() - execution.startTime.getTime()) / (1000 * 60 * 60);
     }
 
+    // Release resource locks
+    await this.releaseExecutionLocks(execution.metadata.executionId);
+
     // Remove from active executions
     this.activeExecutions.delete(execution.metadata.executionId);
 
@@ -1133,5 +1568,42 @@ export class ExecutionCoordinator {
     const totalAgents = this.agents.size;
 
     return totalAgents > 0 ? runningTasks / totalAgents : 0;
+  }
+
+  /**
+   * Get human-readable status message for an execution
+   */
+  private getExecutionStatusMessage(execution: TaskExecution): string {
+    const { status, startTime, endTime, result, metadata } = execution;
+    const now = new Date();
+
+    switch (status) {
+      case 'queued':
+        return 'Task is queued for execution';
+
+      case 'running':
+        const elapsedMs = now.getTime() - startTime.getTime();
+        const elapsedMinutes = Math.round(elapsedMs / (1000 * 60));
+        return `Task is running (${elapsedMinutes} minutes elapsed)`;
+
+      case 'completed':
+        const duration = endTime ? Math.round((endTime.getTime() - startTime.getTime()) / (1000 * 60)) : 0;
+        return `Task completed successfully in ${duration} minutes`;
+
+      case 'failed':
+        const failureReason = result?.error || 'Unknown error';
+        const retryInfo = metadata.retryCount > 0 ? ` (${metadata.retryCount} retries)` : '';
+        return `Task failed: ${failureReason}${retryInfo}`;
+
+      case 'cancelled':
+        return 'Task was cancelled';
+
+      case 'timeout':
+        const timeoutInfo = metadata.timeoutCount > 0 ? ` (${metadata.timeoutCount} timeouts)` : '';
+        return `Task timed out${timeoutInfo}`;
+
+      default:
+        return `Task status: ${status}`;
+    }
   }
 }

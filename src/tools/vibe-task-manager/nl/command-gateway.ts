@@ -3,7 +3,7 @@
  * Processes natural language commands and routes them to appropriate handlers
  */
 
-import { Intent, RecognizedIntent, CommandProcessingResult, NLResponse } from '../types/nl.js';
+import { Intent, RecognizedIntent, CommandProcessingResult, NLResponse, Entity } from '../types/nl.js';
 import { IntentRecognitionEngine } from './intent-recognizer.js';
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { ConfigLoader, VibeTaskManagerConfig } from '../utils/config-loader.js';
@@ -59,6 +59,7 @@ export class CommandGateway {
   private config: CommandGatewayConfig;
   private commandHistory = new Map<string, RecognizedIntent[]>();
   private contextCache = new Map<string, CommandContext>();
+  private sessionMetrics = new Map<string, { commands: Array<{ processingTime: number }> }>();
 
   private constructor() {
     this.intentRecognizer = IntentRecognitionEngine.getInstance();
@@ -117,7 +118,7 @@ export class CommandGateway {
         intent: recognitionResult.intent,
         confidence: recognitionResult.confidence,
         confidenceLevel: recognitionResult.confidenceLevel,
-        entities: recognitionResult.entities,
+        entities: this.convertEntitiesToArray(recognitionResult.entities),
         originalInput: input,
         processedInput: input.toLowerCase().trim(),
         alternatives: recognitionResult.alternatives.map(alt => ({
@@ -627,7 +628,7 @@ export class CommandGateway {
         intent: 'unknown',
         confidence: 0,
         confidenceLevel: 'very_low',
-        entities: {},
+        entities: [],
         originalInput: input,
         processedInput: input.toLowerCase().trim(),
         alternatives: [],
@@ -670,6 +671,25 @@ export class CommandGateway {
         ambiguousInput: intent.confidence < 0.7
       }
     };
+  }
+
+  /**
+   * Convert entities from Record format to Entity array format
+   */
+  private convertEntitiesToArray(entities: Record<string, any>): Entity[] {
+    const entityArray: Entity[] = [];
+
+    for (const [type, value] of Object.entries(entities)) {
+      if (value !== undefined && value !== null) {
+        entityArray.push({
+          type,
+          value: String(value),
+          confidence: 1.0 // Default confidence for extracted entities
+        });
+      }
+    }
+
+    return entityArray;
   }
 
   /**
@@ -724,8 +744,27 @@ export class CommandGateway {
     return {
       totalSessions,
       totalCommands,
-      averageProcessingTime: 0, // TODO: Implement tracking
+      averageProcessingTime: this.calculateAverageProcessingTime(), // Real tracking implementation
       successRate: totalCommands > 0 ? successfulCommands / totalCommands : 0
     };
+  }
+
+  /**
+   * Calculate average processing time from session metrics
+   */
+  private calculateAverageProcessingTime(): number {
+    const allSessions = Array.from(this.sessionMetrics.values());
+
+    if (allSessions.length === 0) {
+      return 0;
+    }
+
+    const totalProcessingTime = allSessions.reduce((sum: number, session: { commands: Array<{ processingTime: number }> }) => {
+      return sum + session.commands.reduce((cmdSum: number, cmd: { processingTime: number }) => cmdSum + cmd.processingTime, 0);
+    }, 0);
+
+    const totalCommands = allSessions.reduce((sum: number, session: { commands: Array<{ processingTime: number }> }) => sum + session.commands.length, 0);
+
+    return totalCommands > 0 ? totalProcessingTime / totalCommands : 0;
   }
 }

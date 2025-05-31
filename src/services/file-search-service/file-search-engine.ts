@@ -363,7 +363,7 @@ export class FileSearchService {
   }
 
   /**
-   * Recursively scan directory for files
+   * Recursively scan directory for files with security checks
    */
   private async scanDirectory(
     dirPath: string,
@@ -376,7 +376,24 @@ export class FileSearchService {
     if (depth > 25) return;
 
     try {
-      const entries = await fs.readdir(dirPath, { withFileTypes: true });
+      // Import and use filesystem security
+      const { FilesystemSecurity } = await import('../../tools/vibe-task-manager/security/filesystem-security.js');
+      const fsecurity = FilesystemSecurity.getInstance();
+
+      // Check if directory is safe to access
+      const securityCheck = await fsecurity.checkPathSecurity(dirPath, 'read');
+      if (!securityCheck.allowed) {
+        if (securityCheck.securityViolation) {
+          logger.warn({
+            dirPath,
+            reason: securityCheck.reason
+          }, 'Directory access blocked by security policy');
+        }
+        return;
+      }
+
+      // Use secure directory reading
+      const entries = await fsecurity.readDirSecure(dirPath);
 
       for (const entry of entries) {
         const fullPath = path.join(dirPath, entry.name);
@@ -387,6 +404,12 @@ export class FileSearchService {
             await this.scanDirectory(fullPath, files, excludeDirs, fileTypes, depth + 1);
           }
         } else if (entry.isFile()) {
+          // Additional security check for files
+          const fileSecurityCheck = await fsecurity.checkPathSecurity(fullPath, 'read');
+          if (!fileSecurityCheck.allowed) {
+            continue; // Skip files that fail security check
+          }
+
           // Filter by file types if specified
           if (fileTypes) {
             const ext = path.extname(entry.name).toLowerCase();
@@ -397,8 +420,18 @@ export class FileSearchService {
         }
       }
     } catch (error) {
-      // Skip directories that can't be read
-      logger.debug({ err: error, dirPath }, 'Could not read directory');
+      // Handle specific error types
+      if (error instanceof Error) {
+        if (error.message.includes('Permission denied') || error.message.includes('EACCES')) {
+          logger.debug({ dirPath }, 'Directory access denied - skipping');
+        } else if (error.message.includes('blacklist')) {
+          logger.debug({ dirPath }, 'Directory in security blacklist - skipping');
+        } else {
+          logger.debug({ err: error, dirPath }, 'Could not read directory');
+        }
+      } else {
+        logger.debug({ err: error, dirPath }, 'Could not read directory');
+      }
     }
   }
 
@@ -432,13 +465,29 @@ export class FileSearchService {
   }
 
   /**
-   * Validate if path exists and is accessible
+   * Validate if path exists and is accessible with security checks
    */
   private async isValidPath(projectPath: string): Promise<boolean> {
     try {
-      const stats = await fs.stat(projectPath);
+      // Import and use filesystem security
+      const { FilesystemSecurity } = await import('../../tools/vibe-task-manager/security/filesystem-security.js');
+      const fsecurity = FilesystemSecurity.getInstance();
+
+      // Check security first
+      const securityCheck = await fsecurity.checkPathSecurity(projectPath, 'read');
+      if (!securityCheck.allowed) {
+        logger.debug({
+          projectPath,
+          reason: securityCheck.reason
+        }, 'Path validation failed security check');
+        return false;
+      }
+
+      // Use secure stat to check if it's a directory
+      const stats = await fsecurity.statSecure(projectPath);
       return stats.isDirectory();
-    } catch {
+    } catch (error) {
+      logger.debug({ err: error, projectPath }, 'Path validation failed');
       return false;
     }
   }

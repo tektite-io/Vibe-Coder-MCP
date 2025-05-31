@@ -7,7 +7,8 @@ import { createMockConfig } from '../utils/test-setup.js';
 
 // Mock the LLM helper
 vi.mock('../../../../utils/llmHelper.js', () => ({
-  performDirectLlmCall: vi.fn()
+  performDirectLlmCall: vi.fn(),
+  performFormatAwareLlmCall: vi.fn()
 }));
 
 // Mock the config loader
@@ -136,7 +137,7 @@ describe('RDDEngine', () => {
           recommendations: []
         });
 
-      const { performDirectLlmCall } = await import('../../../../utils/llmHelper.js');
+      const { performFormatAwareLlmCall } = await import('../../../../utils/llmHelper.js');
       const mockSplitResponse = JSON.stringify({
         subTasks: [
           {
@@ -164,7 +165,7 @@ describe('RDDEngine', () => {
         ]
       });
 
-      vi.mocked(performDirectLlmCall).mockResolvedValue(mockSplitResponse);
+      vi.mocked(performFormatAwareLlmCall).mockResolvedValue(mockSplitResponse);
 
       const result = await engine.decomposeTask(mockTask, mockContext);
 
@@ -205,8 +206,8 @@ describe('RDDEngine', () => {
         recommendations: []
       });
 
-      const { performDirectLlmCall } = await import('../../../../utils/llmHelper.js');
-      vi.mocked(performDirectLlmCall).mockRejectedValue(new Error('LLM API failed'));
+      const { performFormatAwareLlmCall } = await import('../../../../utils/llmHelper.js');
+      vi.mocked(performFormatAwareLlmCall).mockRejectedValue(new Error('LLM API failed'));
 
       const result = await engine.decomposeTask(mockTask, mockContext);
 
@@ -225,8 +226,8 @@ describe('RDDEngine', () => {
         recommendations: []
       });
 
-      const { performDirectLlmCall } = await import('../../../../utils/llmHelper.js');
-      vi.mocked(performDirectLlmCall).mockResolvedValue('Invalid JSON response');
+      const { performFormatAwareLlmCall } = await import('../../../../utils/llmHelper.js');
+      vi.mocked(performFormatAwareLlmCall).mockResolvedValue('Invalid JSON response');
 
       const result = await engine.decomposeTask(mockTask, mockContext);
 
@@ -254,7 +255,7 @@ describe('RDDEngine', () => {
           recommendations: []
         });
 
-      const { performDirectLlmCall } = await import('../../../../utils/llmHelper.js');
+      const { performFormatAwareLlmCall } = await import('../../../../utils/llmHelper.js');
       const mockSplitResponse = JSON.stringify({
         subTasks: [
           {
@@ -293,7 +294,7 @@ describe('RDDEngine', () => {
         ]
       });
 
-      vi.mocked(performDirectLlmCall).mockResolvedValue(mockSplitResponse);
+      vi.mocked(performFormatAwareLlmCall).mockResolvedValue(mockSplitResponse);
 
       const result = await engine.decomposeTask(mockTask, mockContext);
 
@@ -347,7 +348,7 @@ describe('RDDEngine', () => {
           recommendations: []
         });
 
-      const { performDirectLlmCall } = await import('../../../../utils/llmHelper.js');
+      const { performFormatAwareLlmCall } = await import('../../../../utils/llmHelper.js');
 
       // First decomposition response - 2 sub-tasks
       const firstSplitResponse = JSON.stringify({
@@ -406,7 +407,7 @@ describe('RDDEngine', () => {
       });
 
       // Set up LLM call mocks in order
-      vi.mocked(performDirectLlmCall)
+      vi.mocked(performFormatAwareLlmCall)
         .mockResolvedValueOnce(firstSplitResponse)   // First decomposition
         .mockResolvedValueOnce(secondSplitResponse); // Second decomposition (recursive)
 
@@ -447,7 +448,7 @@ describe('RDDEngine', () => {
           recommendations: []
         });
 
-      const { performDirectLlmCall } = await import('../../../../utils/llmHelper.js');
+      const { performFormatAwareLlmCall } = await import('../../../../utils/llmHelper.js');
 
       // Create exactly 8 valid sub-tasks
       const mockSplitResponse = JSON.stringify({
@@ -463,7 +464,7 @@ describe('RDDEngine', () => {
         ]
       });
 
-      vi.mocked(performDirectLlmCall).mockResolvedValue(mockSplitResponse);
+      vi.mocked(performFormatAwareLlmCall).mockResolvedValue(mockSplitResponse);
 
       const result = await engine.decomposeTask(mockTask, mockContext);
 
@@ -510,7 +511,7 @@ describe('RDDEngine', () => {
           recommendations: []
         });
 
-      const { performDirectLlmCall } = await import('../../../../utils/llmHelper.js');
+      const { performFormatAwareLlmCall } = await import('../../../../utils/llmHelper.js');
       const mockSplitResponse = JSON.stringify({
         subTasks: [
           {
@@ -527,7 +528,7 @@ describe('RDDEngine', () => {
         ]
       });
 
-      vi.mocked(performDirectLlmCall).mockResolvedValue(mockSplitResponse);
+      vi.mocked(performFormatAwareLlmCall).mockResolvedValue(mockSplitResponse);
 
       const result = await engine.decomposeTask(mockTask, mockContext);
 

@@ -17,9 +17,9 @@ describe('Vibe Task Manager - Performance Tests', () => {
   });
 
   describe('Tool Registration Performance', () => {
-    it('should register tool within 50ms', async () => {
+    it('should register tool within 50ms (Epic 6.2 target)', async () => {
       const startTime = performance.now();
-      
+
       // Simulate tool registration (the actual registration happens during module import)
       // We'll measure a basic tool operation instead
       await vibeTaskManagerExecutor(
@@ -27,33 +27,34 @@ describe('Vibe Task Manager - Performance Tests', () => {
         mockConfig,
         mockContext
       );
-      
+
       const endTime = performance.now();
       const duration = endTime - startTime;
-      
+
+      // Epic 6.2 target: <50ms for all operations
       expect(duration).toBeLessThan(50);
     });
 
     it('should use less than 10MB initial memory', async () => {
       const initialMemory = process.memoryUsage().heapUsed;
-      
+
       // Execute a basic command
       await vibeTaskManagerExecutor(
         { command: 'list' },
         mockConfig,
         mockContext
       );
-      
+
       const finalMemory = process.memoryUsage().heapUsed;
       const memoryUsed = finalMemory - initialMemory;
-      
+
       // Should use less than 10MB (10 * 1024 * 1024 bytes)
       expect(memoryUsed).toBeLessThan(10 * 1024 * 1024);
     });
   });
 
   describe('Command Execution Performance', () => {
-    it('should execute list command within 100ms', async () => {
+    it('should execute list command within 50ms (Epic 6.2 target)', async () => {
       const { duration } = await PerformanceTestUtils.measureExecutionTime(async () => {
         return await vibeTaskManagerExecutor(
           { command: 'list' },
@@ -62,10 +63,10 @@ describe('Vibe Task Manager - Performance Tests', () => {
         );
       });
 
-      expect(duration).toBeLessThan(100);
+      expect(duration).toBeLessThan(50);
     });
 
-    it('should execute create command within 100ms', async () => {
+    it('should execute create command within 50ms (Epic 6.2 target)', async () => {
       const { duration } = await PerformanceTestUtils.measureExecutionTime(async () => {
         return await vibeTaskManagerExecutor(
           { command: 'create', projectName: 'test-project' },
@@ -74,10 +75,10 @@ describe('Vibe Task Manager - Performance Tests', () => {
         );
       });
 
-      expect(duration).toBeLessThan(100);
+      expect(duration).toBeLessThan(50);
     });
 
-    it('should execute status command within 100ms', async () => {
+    it('should execute status command within 50ms (Epic 6.2 target)', async () => {
       const { duration } = await PerformanceTestUtils.measureExecutionTime(async () => {
         return await vibeTaskManagerExecutor(
           { command: 'status', projectName: 'test-project' },
@@ -86,7 +87,7 @@ describe('Vibe Task Manager - Performance Tests', () => {
         );
       });
 
-      expect(duration).toBeLessThan(100);
+      expect(duration).toBeLessThan(50);
     });
 
     it('should handle multiple concurrent commands efficiently', async () => {
@@ -99,29 +100,29 @@ describe('Vibe Task Manager - Performance Tests', () => {
       ];
 
       const startTime = performance.now();
-      
-      const promises = commands.map(cmd => 
+
+      const promises = commands.map(cmd =>
         vibeTaskManagerExecutor(cmd, mockConfig, createMockContext())
       );
-      
+
       await Promise.all(promises);
-      
+
       const endTime = performance.now();
       const totalDuration = endTime - startTime;
-      
-      // All commands should complete within 500ms total
-      expect(totalDuration).toBeLessThan(500);
-      
-      // Average per command should be less than 100ms
+
+      // All commands should complete within 250ms total (Epic 6.2 target)
+      expect(totalDuration).toBeLessThan(250);
+
+      // Average per command should be less than 50ms (Epic 6.2 target)
       const averageDuration = totalDuration / commands.length;
-      expect(averageDuration).toBeLessThan(100);
+      expect(averageDuration).toBeLessThan(50);
     });
   });
 
   describe('Memory Usage Performance', () => {
     it('should not leak memory during repeated operations', async () => {
       const initialMemory = process.memoryUsage().heapUsed;
-      
+
       // Execute multiple operations
       for (let i = 0; i < 10; i++) {
         await vibeTaskManagerExecutor(
@@ -129,22 +130,22 @@ describe('Vibe Task Manager - Performance Tests', () => {
           mockConfig,
           createMockContext()
         );
-        
+
         await vibeTaskManagerExecutor(
           { command: 'create', projectName: `test-${i}` },
           mockConfig,
           createMockContext()
         );
       }
-      
+
       // Force garbage collection if available
       if (global.gc) {
         global.gc();
       }
-      
+
       const finalMemory = process.memoryUsage().heapUsed;
       const memoryGrowth = finalMemory - initialMemory;
-      
+
       // Memory growth should be minimal (less than 5MB)
       expect(memoryGrowth).toBeLessThan(5 * 1024 * 1024);
     });
@@ -158,8 +159,8 @@ describe('Vibe Task Manager - Performance Tests', () => {
 
       const { memoryUsed } = await PerformanceTestUtils.measureMemoryUsage(async () => {
         return await vibeTaskManagerExecutor(
-          { 
-            command: 'create', 
+          {
+            command: 'create',
             projectName: 'large-project',
             options: largeOptions
           },
@@ -189,8 +190,8 @@ describe('Vibe Task Manager - Performance Tests', () => {
           return await vibeTaskManagerExecutor(testCase, mockConfig, mockContext);
         });
 
-        // Each validation should complete within 50ms
-        expect(duration).toBeLessThan(50);
+        // Each validation should complete within 25ms (Epic 6.2 target)
+        expect(duration).toBeLessThan(25);
       }
     });
 
@@ -209,8 +210,8 @@ describe('Vibe Task Manager - Performance Tests', () => {
           return await vibeTaskManagerExecutor(invalidCase, mockConfig, mockContext);
         });
 
-        // Error handling should be fast
-        expect(duration).toBeLessThan(25);
+        // Error handling should be very fast (Epic 6.2 target)
+        expect(duration).toBeLessThan(10);
       }
     });
   });
@@ -218,31 +219,31 @@ describe('Vibe Task Manager - Performance Tests', () => {
   describe('Scalability Performance', () => {
     it('should maintain performance with increasing session count', async () => {
       const sessionCount = 50;
-      const sessions = Array(sessionCount).fill(0).map((_, i) => 
+      const sessions = Array(sessionCount).fill(0).map((_, i) =>
         createMockContext({ sessionId: `session-${i}` })
       );
 
       const startTime = performance.now();
-      
-      const promises = sessions.map(session => 
+
+      const promises = sessions.map(session =>
         vibeTaskManagerExecutor(
           { command: 'list' },
           mockConfig,
           session
         )
       );
-      
+
       await Promise.all(promises);
-      
+
       const endTime = performance.now();
       const totalDuration = endTime - startTime;
       const averageDuration = totalDuration / sessionCount;
-      
-      // Average duration per session should remain low
-      expect(averageDuration).toBeLessThan(50);
-      
-      // Total duration should scale reasonably
-      expect(totalDuration).toBeLessThan(2000); // 2 seconds for 50 sessions
+
+      // Average duration per session should remain low (Epic 6.2 target)
+      expect(averageDuration).toBeLessThan(25);
+
+      // Total duration should scale reasonably (Epic 6.2 target)
+      expect(totalDuration).toBeLessThan(1250); // 1.25 seconds for 50 sessions
     });
   });
 });

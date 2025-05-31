@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
 import { performResearchQuery } from '../../utils/researchHelper.js';
-import { performDirectLlmCall } from '../../utils/llmHelper.js'; // Import the new helper
+import { performFormatAwareLlmCall } from '../../utils/llmHelper.js'; // Import the format-aware helper
 import logger from '../../logger.js';
 import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js'; // Import ToolExecutionContext
 import { AppError, ToolExecutionError } from '../../utils/errors.js'; // Import necessary errors
@@ -175,11 +175,13 @@ export const performResearch: ToolExecutor = async (
 
       const enhancementPrompt = `Synthesize and structure the following initial research findings based on the original query.\n\nOriginal Query: ${query}\n\nInitial Research Findings:\n${researchResult}`;
 
-    const enhancedResearch = await performDirectLlmCall(
+    const enhancedResearch = await performFormatAwareLlmCall(
       enhancementPrompt,
       RESEARCH_SYSTEM_PROMPT, // System prompt guides the structuring
       config,
       'research_enhancement', // Define a logical task name for potential mapping
+      'markdown', // Explicitly specify markdown format
+      undefined, // No schema for markdown
       0.4 // Slightly higher temp for synthesis might be okay
     );
 

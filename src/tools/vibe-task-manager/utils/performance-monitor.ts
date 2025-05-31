@@ -1,6 +1,6 @@
 /**
  * Performance Monitoring System
- * 
+ *
  * Implements comprehensive performance monitoring including:
  * - Real-time performance metrics collection
  * - Performance bottleneck identification
@@ -15,13 +15,37 @@ import { AppError } from '../../../utils/errors.js';
 import logger from '../../../logger.js';
 
 /**
+ * Real-time performance tracking for <50ms optimization
+ */
+export interface RealTimeMetrics {
+  responseTime: number;
+  memoryUsage: number;
+  cpuUsage: number;
+  cacheHitRate: number;
+  activeConnections: number;
+  queueLength: number;
+  timestamp: number;
+}
+
+/**
+ * Performance optimization suggestions
+ */
+export interface OptimizationSuggestion {
+  category: 'memory' | 'cpu' | 'cache' | 'io' | 'network';
+  priority: 'low' | 'medium' | 'high' | 'critical';
+  description: string;
+  implementation: string;
+  estimatedImpact: string;
+}
+
+/**
  * Performance metric types
  */
-export type MetricType = 
-  | 'response_time' 
-  | 'memory_usage' 
-  | 'cpu_usage' 
-  | 'disk_io' 
+export type MetricType =
+  | 'response_time'
+  | 'memory_usage'
+  | 'cpu_usage'
+  | 'disk_io'
   | 'cache_hit_rate'
   | 'task_throughput'
   | 'error_rate'
@@ -125,6 +149,12 @@ export class PerformanceMonitor {
   private analysisInterval: NodeJS.Timeout | null = null;
   private memoryManager: TaskManagerMemoryManager | null = null;
   private metricCounter = 0;
+
+  // Enhanced real-time tracking
+  private realTimeMetrics: RealTimeMetrics[] = [];
+  private operationTimings: Map<string, number> = new Map();
+  private activeOperations: Set<string> = new Set();
+  private optimizationSuggestions: OptimizationSuggestion[] = [];
 
   private constructor(config: PerformanceMonitorConfig) {
     this.config = config;
@@ -325,9 +355,9 @@ export class PerformanceMonitor {
    */
   private generateAlert(metric: PerformanceMetric, type: 'warning' | 'critical', threshold: number): void {
     const alertId = `alert_${metric.type}_${metric.name}_${Date.now()}`;
-    
+
     // Check if similar alert already exists and is not resolved
-    const existingAlert = Array.from(this.alerts.values()).find(alert => 
+    const existingAlert = Array.from(this.alerts.values()).find(alert =>
       alert.metricId === metric.id && !alert.resolved
     );
 
@@ -392,7 +422,7 @@ export class PerformanceMonitor {
     // Simple bottleneck detection logic
     if (latestMetric.threshold) {
       const { warning, critical } = latestMetric.threshold;
-      
+
       if (avgValue > critical * 0.9) {
         return {
           id: `bottleneck_${key}_${Date.now()}`,
@@ -514,9 +544,9 @@ export class PerformanceMonitor {
   }
 
   /**
-   * Get performance summary
+   * Get comprehensive performance summary
    */
-  getPerformanceSummary(): {
+  getComprehensivePerformanceSummary(): {
     metrics: { [key: string]: PerformanceMetric };
     activeAlerts: PerformanceAlert[];
     bottlenecks: PerformanceBottleneck[];
@@ -537,7 +567,7 @@ export class PerformanceMonitor {
 
     // Determine overall health
     let overallHealth: 'good' | 'warning' | 'critical' = 'good';
-    if (activeAlerts.some(alert => alert.type === 'critical') || 
+    if (activeAlerts.some(alert => alert.type === 'critical') ||
         bottlenecks.some(b => b.severity === 'critical')) {
       overallHealth = 'critical';
     } else if (activeAlerts.length > 0 || bottlenecks.length > 0 || regressions.length > 0) {
@@ -575,16 +605,16 @@ export class PerformanceMonitor {
 
     for (const [key, metricArray] of this.metrics) {
       const [metricType, metricName] = key.split('_', 2);
-      
+
       if (metricType === type && (!name || metricName === name)) {
         let filteredMetrics = metricArray;
-        
+
         if (timeRange) {
           filteredMetrics = metricArray.filter(
             metric => metric.timestamp >= timeRange.start && metric.timestamp <= timeRange.end
           );
         }
-        
+
         results.push(...filteredMetrics);
       }
     }
@@ -593,17 +623,215 @@ export class PerformanceMonitor {
   }
 
   /**
+   * Start tracking an operation for performance measurement
+   */
+  startOperation(operationId: string): void {
+    this.operationTimings.set(operationId, performance.now());
+    this.activeOperations.add(operationId);
+  }
+
+  /**
+   * End tracking an operation and record performance
+   */
+  endOperation(operationId: string, metadata?: Record<string, any>): number {
+    const startTime = this.operationTimings.get(operationId);
+    if (!startTime) {
+      logger.warn({ operationId }, 'Operation timing not found');
+      return 0;
+    }
+
+    const duration = performance.now() - startTime;
+    this.operationTimings.delete(operationId);
+    this.activeOperations.delete(operationId);
+
+    // Record as response time metric
+    this.recordMetric({
+      type: 'response_time',
+      name: operationId,
+      value: duration,
+      unit: 'ms',
+      timestamp: new Date(),
+      tags: {
+        operation: operationId,
+        ...metadata
+      },
+      threshold: {
+        warning: this.config.performanceThresholds.maxResponseTime * 0.8,
+        critical: this.config.performanceThresholds.maxResponseTime
+      }
+    });
+
+    // Check if operation exceeded target
+    if (duration > this.config.performanceThresholds.maxResponseTime) {
+      this.generateOptimizationSuggestion({
+        category: 'cpu',
+        priority: duration > this.config.performanceThresholds.maxResponseTime * 2 ? 'critical' : 'high',
+        description: `Operation ${operationId} took ${duration.toFixed(2)}ms, exceeding target of ${this.config.performanceThresholds.maxResponseTime}ms`,
+        implementation: 'Consider caching, batching, or algorithm optimization',
+        estimatedImpact: `Potential ${((duration - this.config.performanceThresholds.maxResponseTime) / duration * 100).toFixed(1)}% improvement`
+      });
+    }
+
+    return duration;
+  }
+
+  /**
+   * Get current real-time metrics
+   */
+  getCurrentRealTimeMetrics(): RealTimeMetrics {
+    const memoryUsage = process.memoryUsage();
+    const now = performance.now();
+
+    const metrics: RealTimeMetrics = {
+      responseTime: this.getAverageResponseTime(),
+      memoryUsage: memoryUsage.heapUsed / 1024 / 1024, // MB
+      cpuUsage: this.getEstimatedCpuUsage(),
+      cacheHitRate: this.getCacheHitRate(),
+      activeConnections: this.getActiveConnectionCount(),
+      queueLength: this.activeOperations.size,
+      timestamp: now
+    };
+
+    // Keep last 100 real-time metrics
+    this.realTimeMetrics.push(metrics);
+    if (this.realTimeMetrics.length > 100) {
+      this.realTimeMetrics.shift();
+    }
+
+    return metrics;
+  }
+
+  /**
+   * Get average response time from recent operations
+   */
+  private getAverageResponseTime(): number {
+    const recentMetrics = this.getMetrics('response_time', undefined, {
+      start: new Date(Date.now() - 60000), // Last minute
+      end: new Date()
+    });
+
+    if (recentMetrics.length === 0) return 0;
+
+    const total = recentMetrics.reduce((sum, metric) => sum + metric.value, 0);
+    return total / recentMetrics.length;
+  }
+
+  /**
+   * Estimate CPU usage based on event loop delay
+   */
+  private getEstimatedCpuUsage(): number {
+    const recentCpuMetrics = this.getMetrics('cpu_usage', 'event_loop_delay', {
+      start: new Date(Date.now() - 10000), // Last 10 seconds
+      end: new Date()
+    });
+
+    if (recentCpuMetrics.length === 0) return 0;
+
+    const avgDelay = recentCpuMetrics.reduce((sum, metric) => sum + metric.value, 0) / recentCpuMetrics.length;
+
+    // Convert delay to estimated CPU usage percentage (rough approximation)
+    return Math.min(100, (avgDelay / 100) * 100);
+  }
+
+  /**
+   * Get cache hit rate
+   */
+  private getCacheHitRate(): number {
+    // This would be implemented based on actual cache metrics
+    // For now, return a placeholder
+    return 0;
+  }
+
+  /**
+   * Get active connection count
+   */
+  private getActiveConnectionCount(): number {
+    // This would be implemented based on actual connection pool metrics
+    // For now, return a placeholder
+    return 0;
+  }
+
+  /**
+   * Generate optimization suggestion
+   */
+  private generateOptimizationSuggestion(suggestion: OptimizationSuggestion): void {
+    this.optimizationSuggestions.push(suggestion);
+
+    // Keep only last 50 suggestions
+    if (this.optimizationSuggestions.length > 50) {
+      this.optimizationSuggestions.shift();
+    }
+
+    logger.info({ suggestion }, 'Performance optimization suggestion generated');
+  }
+
+  /**
+   * Get optimization suggestions
+   */
+  getOptimizationSuggestions(category?: OptimizationSuggestion['category']): OptimizationSuggestion[] {
+    if (category) {
+      return this.optimizationSuggestions.filter(s => s.category === category);
+    }
+    return [...this.optimizationSuggestions];
+  }
+
+  /**
+   * Get performance summary for the last period
+   */
+  getPerformanceSummary(periodMinutes: number = 5): {
+    averageResponseTime: number;
+    maxResponseTime: number;
+    memoryUsage: number;
+    alertCount: number;
+    bottleneckCount: number;
+    targetsMet: boolean;
+  } {
+    const since = new Date(Date.now() - periodMinutes * 60 * 1000);
+    const responseMetrics = this.getMetrics('response_time', undefined, {
+      start: since,
+      end: new Date()
+    });
+
+    const averageResponseTime = responseMetrics.length > 0
+      ? responseMetrics.reduce((sum, m) => sum + m.value, 0) / responseMetrics.length
+      : 0;
+
+    const maxResponseTime = responseMetrics.length > 0
+      ? Math.max(...responseMetrics.map(m => m.value))
+      : 0;
+
+    const recentAlerts = Array.from(this.alerts.values())
+      .filter(alert => alert.timestamp.getTime() > since.getTime());
+
+    const recentBottlenecks = Array.from(this.bottlenecks.values())
+      .filter(bottleneck => bottleneck.detectedAt.getTime() > since.getTime());
+
+    return {
+      averageResponseTime,
+      maxResponseTime,
+      memoryUsage: process.memoryUsage().heapUsed / 1024 / 1024,
+      alertCount: recentAlerts.length,
+      bottleneckCount: recentBottlenecks.length,
+      targetsMet: averageResponseTime <= this.config.performanceThresholds.maxResponseTime
+    };
+  }
+
+  /**
    * Shutdown performance monitor
    */
   shutdown(): void {
     this.stopMonitoring();
     this.stopBottleneckAnalysis();
-    
+
     this.metrics.clear();
     this.alerts.clear();
     this.bottlenecks.clear();
     this.regressions.clear();
-    
+    this.realTimeMetrics.length = 0;
+    this.operationTimings.clear();
+    this.activeOperations.clear();
+    this.optimizationSuggestions.length = 0;
+
     logger.info('Performance Monitor shutdown');
   }
 }

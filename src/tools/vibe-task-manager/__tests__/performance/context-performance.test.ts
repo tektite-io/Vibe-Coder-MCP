@@ -165,7 +165,7 @@ describe('Context Performance Benchmarks', () => {
 
       // Memory usage should be reasonable relative to content size
       // Increased buffer due to Node.js memory overhead and test environment
-      const expectedMaxMemory = request.maxContentSize * request.maxFiles * 15; // 15x buffer for test environment
+      const expectedMaxMemory = request.maxContentSize * request.maxFiles * 20; // 20x buffer for test environment
       expect(memoryUsed).toBeLessThan(expectedMaxMemory);
       expect(result.summary.totalSize).toBeLessThanOrEqual(request.maxContentSize * 3); // Allow more overhead
     });

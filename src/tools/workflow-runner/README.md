@@ -1,8 +1,17 @@
 # Workflow Runner Tool (`run-workflow`)
 
+**Status**: Production Ready | **Orchestration**: Multi-Tool Workflows | **Configuration**: workflows.json
+
 ## Overview
 
 This tool executes a predefined sequence of tool calls, known as a workflow, based on definitions stored in the `workflows.json` file. It allows automating complex, multi-step tasks by orchestrating other tools within the Vibe Coder MCP server.
+
+**Production Highlights:**
+- **Multi-Tool Orchestration**: Seamlessly chains multiple tools in predefined sequences
+- **Asynchronous Processing**: Job-based execution with real-time status tracking
+- **Template Resolution**: Dynamic parameter resolution using workflow inputs and step outputs
+- **Error Resilience**: Comprehensive error handling with step-level failure reporting
+- **Configuration-Driven**: Flexible workflow definitions via JSON configuration
 
 ## Inputs
 

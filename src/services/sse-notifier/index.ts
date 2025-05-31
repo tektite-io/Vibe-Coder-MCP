@@ -203,6 +203,34 @@ class SseNotifier {
   }
 
   /**
+   * Sends an event to a specific session
+   * @param sessionId The session ID to send to
+   * @param event The event name
+   * @param data The event data
+   */
+  async sendEvent(sessionId: string, event: string, data: Record<string, unknown>): Promise<void> {
+    this.sendMessage(sessionId, event, data);
+  }
+
+  /**
+   * Broadcasts an event to all connected sessions
+   * @param event The event name
+   * @param data The event data
+   */
+  async broadcastEvent(event: string, data: Record<string, unknown>): Promise<void> {
+    for (const sessionId of this.connections.keys()) {
+      this.sendMessage(sessionId, event, data);
+    }
+  }
+
+  /**
+   * Get the number of active SSE connections
+   */
+  getConnectionCount(): number {
+    return this.connections.size;
+  }
+
+  /**
    * Closes all active SSE connections. Useful on server shutdown.
    */
   closeAllConnections(): void {

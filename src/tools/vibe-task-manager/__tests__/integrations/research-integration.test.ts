@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ResearchIntegration, ResearchRequest, EnhancedResearchResult } from '../../integrations/research-integration.js';
 import { performResearchQuery } from '../../../../utils/researchHelper.js';
-import { performDirectLlmCall } from '../../../../utils/llmHelper.js';
+import { performDirectLlmCall, performFormatAwareLlmCall } from '../../../../utils/llmHelper.js';
 import { getVibeTaskManagerConfig } from '../../utils/config-loader.js';
 
 // Mock the dependencies
@@ -10,7 +10,8 @@ vi.mock('../../../../utils/researchHelper.js', () => ({
 }));
 
 vi.mock('../../../../utils/llmHelper.js', () => ({
-  performDirectLlmCall: vi.fn()
+  performDirectLlmCall: vi.fn(),
+  performFormatAwareLlmCall: vi.fn()
 }));
 
 vi.mock('../../utils/config-loader.js', () => ({
@@ -31,6 +32,7 @@ describe('ResearchIntegration', () => {
   let service: ResearchIntegration;
   let mockPerformResearchQuery: any;
   let mockPerformDirectLlmCall: any;
+  let mockPerformFormatAwareLlmCall: any;
   let mockGetConfig: any;
 
   beforeEach(() => {
@@ -42,6 +44,7 @@ describe('ResearchIntegration', () => {
     // Setup mocks
     mockPerformResearchQuery = performResearchQuery as any;
     mockPerformDirectLlmCall = performDirectLlmCall as any;
+    mockPerformFormatAwareLlmCall = performFormatAwareLlmCall as any;
     mockGetConfig = getVibeTaskManagerConfig as any;
 
     // Mock config
@@ -157,7 +160,7 @@ This research provides comprehensive guidance for implementing secure authentica
 `;
 
       mockPerformResearchQuery.mockResolvedValue(mockResearchContent);
-      mockPerformDirectLlmCall.mockResolvedValue(mockEnhancedContent);
+      mockPerformFormatAwareLlmCall.mockResolvedValue(mockEnhancedContent);
 
       const result = await service.performEnhancedResearch(request);
 
@@ -177,7 +180,7 @@ This research provides comprehensive guidance for implementing secure authentica
           perplexityModel: 'perplexity/sonar-deep-research'
         })
       );
-      expect(mockPerformDirectLlmCall).toHaveBeenCalled();
+      expect(mockPerformFormatAwareLlmCall).toHaveBeenCalled();
     });
 
     it('should use cache when available', async () => {
@@ -246,7 +249,7 @@ This research provides comprehensive guidance for implementing secure authentica
 
       expect(result.content).toBe(mockContent);
       expect(result.performance.apiCalls).toBe(1); // Only research, no enhancement
-      expect(mockPerformDirectLlmCall).not.toHaveBeenCalled();
+      expect(mockPerformFormatAwareLlmCall).not.toHaveBeenCalled();
     });
 
     it('should handle errors gracefully', async () => {
@@ -389,18 +392,20 @@ GraphQL rate limiting and query complexity analysis
 TypeScript GraphQL schema design patterns
 `;
 
-      mockPerformDirectLlmCall.mockResolvedValue(mockResponse);
+      mockPerformFormatAwareLlmCall.mockResolvedValue(mockResponse);
 
       const queries = await service.generateIntelligentResearchQueries(taskDescription, context);
 
       expect(queries).toHaveLength(4);
       expect(queries[0]).toContain('GraphQL authentication');
       expect(queries[1]).toContain('Securing GraphQL endpoints');
-      expect(mockPerformDirectLlmCall).toHaveBeenCalledWith(
+      expect(mockPerformFormatAwareLlmCall).toHaveBeenCalledWith(
         expect.stringContaining(taskDescription),
         expect.stringContaining('expert software development researcher'),
         expect.any(Object),
         'research_query_generation',
+        'text',
+        undefined,
         0.3
       );
     });
@@ -408,7 +413,7 @@ TypeScript GraphQL schema design patterns
     it('should fallback to basic queries on error', async () => {
       const taskDescription = 'Test task';
 
-      mockPerformDirectLlmCall.mockRejectedValue(new Error('LLM call failed'));
+      mockPerformFormatAwareLlmCall.mockRejectedValue(new Error('LLM call failed'));
 
       const queries = await service.generateIntelligentResearchQueries(taskDescription);
 

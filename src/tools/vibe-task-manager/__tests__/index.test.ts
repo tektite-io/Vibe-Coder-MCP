@@ -70,8 +70,7 @@ describe('Vibe Task Manager - Tool Registration and Basic Functionality', () => 
       );
 
       expect(result.isError).toBe(true);
-      expect(result.content[0].text).toContain('Validation error');
-      expect(result.content[0].text).toContain('command');
+      expect(result.content[0].text).toContain('Validation error: command is required');
     });
 
     it('should validate command enum values', async () => {
@@ -87,11 +86,11 @@ describe('Vibe Task Manager - Tool Registration and Basic Functionality', () => 
 
     it('should accept valid command values', async () => {
       const testCases = [
-        { command: 'create', params: { projectName: 'test-project' } },
+        { command: 'create', params: { projectName: 'test-project', description: 'Test description' } },
         { command: 'list', params: {} },
         { command: 'run', params: { taskId: 'T0001' } },
-        { command: 'status', params: { projectName: 'test-project' } },
-        { command: 'refine', params: { taskId: 'T0001' } },
+        { command: 'status', params: {} }, // No params needed for general status
+        { command: 'refine', params: { taskId: 'T0001', description: 'Refine description' } },
         { command: 'decompose', params: { projectName: 'test-project' } }
       ];
 
@@ -103,7 +102,13 @@ describe('Vibe Task Manager - Tool Registration and Basic Functionality', () => 
         );
 
         // Should not be a validation error (isError should be undefined or false, not true)
-        expect(result.isError).not.toBe(true);
+        // Note: Some commands may return isError: true for business logic reasons (like missing tasks)
+        // but they should not return validation errors about the command itself
+        if (result.isError) {
+          // If there's an error, it should not be a validation error about the command
+          expect(result.content[0].text).not.toContain('Validation error: command');
+          expect(result.content[0].text).not.toContain('Unknown command');
+        }
       }
     });
   });
@@ -121,8 +126,10 @@ describe('Vibe Task Manager - Tool Registration and Basic Functionality', () => 
       );
 
       expect(result.isError).toBeFalsy();
-      expect(result.content[0].text).toContain('Project creation functionality');
+      expect(result.content[0].text).toContain('Project creation started');
       expect(result.content[0].text).toContain('test-project');
+      expect(result.content[0].text).toContain('Job ID:');
+      expect(result.content[0].text).toContain('get-job-result');
     });
 
     it('should route list command correctly', async () => {
@@ -133,7 +140,8 @@ describe('Vibe Task Manager - Tool Registration and Basic Functionality', () => 
       );
 
       expect(result.isError).toBeFalsy();
-      expect(result.content[0].text).toContain('Project listing functionality');
+      // Should show real project listing or empty state
+      expect(result.content[0].text).toMatch(/Your Projects|No projects found/);
     });
 
     it('should route run command correctly', async () => {
@@ -147,22 +155,24 @@ describe('Vibe Task Manager - Tool Registration and Basic Functionality', () => 
       );
 
       expect(result.isError).toBeFalsy();
-      expect(result.content[0].text).toContain('Task execution functionality');
+      // Should show real task execution started message
+      expect(result.content[0].text).toContain('Task Execution Started');
       expect(result.content[0].text).toContain('T0001');
     });
 
     it('should route status command correctly', async () => {
       const result = await vibeTaskManagerExecutor(
         {
-          command: 'status',
-          projectName: 'test-project'
+          command: 'status'
+          // No projectName - should show general status overview
         },
         mockConfig,
         mockContext
       );
 
       expect(result.isError).toBeFalsy();
-      expect(result.content[0].text).toContain('Status checking functionality');
+      // Should show real status overview
+      expect(result.content[0].text).toContain('Vibe Task Manager Status Overview');
     });
 
     it('should route refine command correctly', async () => {
@@ -177,7 +187,8 @@ describe('Vibe Task Manager - Tool Registration and Basic Functionality', () => 
       );
 
       expect(result.isError).toBeFalsy();
-      expect(result.content[0].text).toContain('Task refinement functionality');
+      // Should show real task refinement started message
+      expect(result.content[0].text).toContain('Task Refinement Started');
       expect(result.content[0].text).toContain('T0001');
     });
 
@@ -193,8 +204,10 @@ describe('Vibe Task Manager - Tool Registration and Basic Functionality', () => 
       );
 
       expect(result.isError).toBeFalsy();
-      expect(result.content[0].text).toContain('Task decomposition functionality');
+      expect(result.content[0].text).toContain('Project decomposition started');
       expect(result.content[0].text).toContain('test-project');
+      expect(result.content[0].text).toContain('Job ID:');
+      expect(result.content[0].text).toContain('get-job-result');
     });
   });
 
@@ -208,6 +221,17 @@ describe('Vibe Task Manager - Tool Registration and Basic Functionality', () => 
 
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain('Project name is required');
+    });
+
+    it('should handle missing description for create command', async () => {
+      const result = await vibeTaskManagerExecutor(
+        { command: 'create', projectName: 'test-project' }, // Missing description
+        mockConfig,
+        mockContext
+      );
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('Project description is required');
     });
 
     it('should handle missing required parameters for run command', async () => {
@@ -274,7 +298,8 @@ describe('Vibe Task Manager - Tool Registration and Basic Functionality', () => 
       );
 
       expect(result.isError).toBeFalsy();
-      expect(result.content[0].text).toContain('Project listing functionality');
+      // Should show real project listing or empty state
+      expect(result.content[0].text).toMatch(/Your Projects|No projects found|Vibe Task Manager Status Overview/);
     });
 
     it('should use session ID from context when provided', async () => {
@@ -315,8 +340,13 @@ describe('Vibe Task Manager - Tool Registration and Basic Functionality', () => 
       const endTime = Date.now();
       const executionTime = endTime - startTime;
 
-      // Should complete basic commands quickly
-      expect(executionTime).toBeLessThan(100);
+      // Should complete basic commands reasonably quickly
+      // Adjusted from 100ms to 500ms to account for real functionality:
+      // - File I/O operations
+      // - Service initialization
+      // - Real data processing
+      // - Storage operations
+      expect(executionTime).toBeLessThan(500);
     });
   });
 

@@ -1,0 +1,187 @@
+# Prompt Optimization Configuration
+# Controls how LLM prompts are optimized for better JSON generation
+
+# Global optimization settings
+optimization:
+  enabled: true
+  max_prompt_length: 4000
+  
+  # JSON-specific optimizations
+  json_optimization:
+    enabled: true
+    include_schema_hints: true
+    use_error_pattern_learning: true
+    
+    # Task-specific optimization rules
+    task_patterns:
+      - pattern: "module_selection"
+        optimizations:
+          - "json-system-enhancement"
+          - "schema-hints"
+          - "error-prevention-rules"
+          - "large-number-handling"
+      
+      - pattern: "yaml_generation"
+        optimizations:
+          - "json-system-enhancement"
+          - "schema-hints"
+          - "error-prevention-rules"
+          - "bracket-completion-hints"
+      
+      - pattern: "template_generation"
+        optimizations:
+          - "json-system-enhancement"
+          - "error-prevention-rules"
+          - "control-character-handling"
+      
+      - pattern: "intent_recognition"
+        optimizations:
+          - "json-system-enhancement"
+          - "schema-hints"
+          - "confidence-scoring-hints"
+
+# Error pattern learning configuration
+error_learning:
+  enabled: true
+  min_frequency_threshold: 2  # Only learn from errors that occur at least this many times
+  max_patterns: 50  # Maximum number of error patterns to track
+  
+  # Known error patterns and their prevention rules
+  known_patterns:
+    missing_comma:
+      frequency: 0
+      prevention_rule: "Always include commas between object properties"
+      examples:
+        - 'Use: {"key1": "value1", "key2": "value2"}'
+        - 'Not: {"key1": "value1" "key2": "value2"}'
+    
+    control_character:
+      frequency: 0
+      prevention_rule: "Escape control characters in strings (\\n, \\t, etc.)"
+      examples:
+        - 'Use: {"content": "line1\\nline2"}'
+        - 'Not: {"content": "line1\nline2"}'
+    
+    trailing_comma:
+      frequency: 0
+      prevention_rule: "Never include trailing commas after the last property"
+      examples:
+        - 'Use: {"key": "value"}'
+        - 'Not: {"key": "value",}'
+    
+    single_quotes:
+      frequency: 0
+      prevention_rule: "Always use double quotes, never single quotes"
+      examples:
+        - 'Use: {"key": "value"}'
+        - 'Not: {\'key\': \'value\'}'
+    
+    large_numbers:
+      frequency: 0
+      prevention_rule: "Use strings for numbers with more than 15 digits"
+      examples:
+        - 'Use: {"id": "12345678901234567890"}'
+        - 'Not: {"id": 12345678901234567890}'
+
+# Prompt templates for different optimization types
+templates:
+  json_system_enhancement: |
+    CRITICAL JSON OUTPUT REQUIREMENTS:
+    - You MUST respond with valid, parseable JSON only
+    - Do NOT include markdown code blocks, backticks, or any formatting
+    - Do NOT add explanatory text before or after the JSON
+    - Start your response with { and end with }
+    - Ensure all strings are properly quoted with double quotes
+    - Ensure all object keys are strings in double quotes
+    - Do NOT use trailing commas
+    - Do NOT use single quotes
+    - Escape special characters properly (\\n, \\t, \\", \\\\)
+
+  json_user_enhancement: |
+    OUTPUT FORMAT: Respond with a single, valid JSON object. No additional text, formatting, or explanations.
+
+  output_format_instructions: |
+    Your response must be a single JSON object that can be parsed by JSON.parse() without any modifications.
+
+  schema_hints_template: |
+    EXPECTED JSON STRUCTURE EXAMPLE:
+    {schema}
+    
+    Ensure your response matches this structure exactly.
+
+  error_prevention_rules: |
+    JSON GENERATION RULES:
+    - Never use single quotes - always use double quotes for strings and keys
+    - Never include trailing commas after the last property
+    - Always escape special characters in strings (\\n, \\t, \\", \\\\)
+    - Never include comments in JSON output
+    - Ensure all brackets and braces are properly matched
+    - Use null instead of undefined for missing values
+    - For large numbers (>15 digits), use strings to prevent precision loss
+    - Ensure nested objects have proper comma separation
+    - Validate that all required schema fields are included
+
+# Task-specific schema hints
+schemas:
+  module_selection:
+    type: "object"
+    required: ["globalParams", "moduleSelections"]
+    properties:
+      globalParams:
+        type: "object"
+        properties:
+          projectName: { type: "string" }
+          projectDescription: { type: "string" }
+      moduleSelections:
+        type: "array"
+        items:
+          type: "object"
+          properties:
+            modulePath: { type: "string" }
+            params: { type: "object" }
+            moduleKey: { type: "string" }
+
+  yaml_module:
+    type: "object"
+    required: ["moduleName", "description", "type"]
+    properties:
+      moduleName: { type: "string" }
+      description: { type: "string" }
+      type: { type: "string" }
+      placeholders: 
+        type: "array"
+        items: { type: "string" }
+      provides:
+        type: "object"
+        properties:
+          techStack: { type: "object" }
+          directoryStructure: { type: "array" }
+          dependencies: { type: "object" }
+          setupCommands: { type: "array" }
+
+  intent_recognition:
+    type: "object"
+    required: ["intent", "confidence", "parameters"]
+    properties:
+      intent: { type: "string" }
+      confidence: { type: "number", minimum: 0, maximum: 1 }
+      parameters: { type: "object" }
+      context: { type: "object" }
+      alternatives: { type: "array" }
+      clarifications_needed: { type: "array" }
+
+# Performance monitoring
+monitoring:
+  enabled: true
+  log_optimization_stats: true
+  track_success_rates: true
+  alert_on_low_success_rate: true
+  success_rate_threshold: 0.8  # Alert if success rate drops below 80%
+
+# Feature flags for gradual rollout
+feature_flags:
+  enable_for_new_tasks: true
+  enable_for_existing_tasks: true
+  enable_schema_hints: true
+  enable_error_learning: true
+  enable_performance_monitoring: true

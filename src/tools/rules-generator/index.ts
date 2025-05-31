@@ -4,7 +4,7 @@ import path from 'path';
 import { z } from 'zod';
 import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
-import { performDirectLlmCall } from '../../utils/llmHelper.js'; // Import the new helper
+import { performFormatAwareLlmCall } from '../../utils/llmHelper.js'; // Import the new helper
 import { performResearchQuery } from '../../utils/researchHelper.js';
 import logger from '../../logger.js';
 import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js'; // Import ToolExecutionContext
@@ -276,11 +276,13 @@ export const generateRules: ToolExecutor = async (
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating rules content via LLM...');
     logs.push(`[${new Date().toISOString()}] Calling LLM for main rules generation.`);
 
-    const rulesMarkdown = await performDirectLlmCall(
+    const rulesMarkdown = await performFormatAwareLlmCall(
       mainGenerationPrompt,
       RULES_SYSTEM_PROMPT, // Pass the system prompt
       config,
       'rules_generation', // Logical task name
+      'markdown', // Explicitly specify markdown format
+      undefined, // No schema for markdown
       0.2 // Low temperature for structured rules
     );
 

@@ -7,6 +7,8 @@ import { Intent, RecognizedIntent, CommandProcessingResult, NLResponse } from '.
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { OpenRouterConfig } from '../../../types/workflow.js';
 import { ConfigLoader, VibeTaskManagerConfig } from '../utils/config-loader.js';
+import { DecomposeTaskHandler, DecomposeProjectHandler } from './handlers/decomposition-handlers.js';
+import { SearchFilesHandler, SearchContentHandler } from './handlers/search-handlers.js';
 import logger from '../../../logger.js';
 
 /**
@@ -76,6 +78,14 @@ export class CommandHandlers {
     this.registerHandler(new ListTasksHandler());
     this.registerHandler(new RunTaskHandler());
     this.registerHandler(new CheckStatusHandler());
+
+    // Register new decomposition handlers
+    this.registerHandler(new DecomposeTaskHandler());
+    this.registerHandler(new DecomposeProjectHandler());
+
+    // Register new search handlers
+    this.registerHandler(new SearchFilesHandler());
+    this.registerHandler(new SearchContentHandler());
 
     logger.info({ handlerCount: this.handlers.size }, 'Command handlers initialized');
   }
@@ -167,32 +177,77 @@ export class CreateProjectHandler implements CommandHandler {
       sessionId: context.sessionId
     }, 'Creating new project via natural language');
 
-    // TODO: Implement actual project creation logic
-    // This will integrate with the project management system when implemented
+    try {
+      // Import ProjectOperations dynamically to avoid circular dependencies
+      const { getProjectOperations } = await import('../core/operations/project-operations.js');
+      const projectOps = getProjectOperations();
 
-    const result: CallToolResult = {
-      content: [{
-        type: "text",
-        text: `✅ Project "${projectName}" created successfully!\n\n` +
-              `Description: ${description}\n` +
-              `Priority: ${options.priority || 'medium'}\n` +
-              `Type: ${options.type || 'development'}\n\n` +
-              `You can now add tasks to this project or check its status.`
-      }]
-    };
+      // Create project using real ProjectOperations
+      const createResult = await projectOps.createProject({
+        name: projectName,
+        description: description,
+        tags: (options.tags as string[]) || [],
+        techStack: {
+          languages: (options.languages as string[]) || [],
+          frameworks: (options.frameworks as string[]) || [],
+          tools: (options.tools as string[]) || []
+        }
+      });
 
-    return {
-      success: true,
-      result,
-      updatedContext: {
-        currentProject: projectName
-      },
-      followUpSuggestions: [
-        `Add a task to ${projectName}`,
-        `Check the status of ${projectName}`,
-        `List all projects`
-      ]
-    };
+      if (!createResult.success) {
+        return {
+          success: false,
+          result: {
+            content: [{
+              type: "text",
+              text: `❌ Failed to create project "${projectName}": ${createResult.error}`
+            }],
+            isError: true
+          }
+        };
+      }
+
+      const project = createResult.data!;
+      const result: CallToolResult = {
+        content: [{
+          type: "text",
+          text: `✅ Project "${projectName}" created successfully!\n\n` +
+                `ID: ${project.id}\n` +
+                `Description: ${description}\n` +
+                `Priority: ${options.priority || 'medium'}\n` +
+                `Status: ${project.status}\n` +
+                `Created: ${project.metadata.createdAt.toISOString()}\n\n` +
+                `You can now add tasks to this project or check its status.`
+        }]
+      };
+
+      return {
+        success: true,
+        result,
+        updatedContext: {
+          currentProject: projectName
+        },
+        followUpSuggestions: [
+          `Add a task to ${projectName}`,
+          `Check the status of ${projectName}`,
+          `List all projects`
+        ]
+      };
+
+    } catch (error) {
+      logger.error({ err: error, projectName, sessionId: context.sessionId }, 'Failed to create project via natural language');
+
+      return {
+        success: false,
+        result: {
+          content: [{
+            type: "text",
+            text: `❌ Error creating project "${projectName}": ${error instanceof Error ? error.message : 'Unknown error'}`
+          }],
+          isError: true
+        }
+      };
+    }
   }
 }
 
@@ -217,10 +272,75 @@ export class CreateTaskHandler implements CommandHandler {
       sessionId: context.sessionId
     }, 'Creating new task via natural language');
 
-    // TODO: Implement actual task creation logic
-    // This will integrate with the task management system when implemented
+    // Implement actual task creation logic using TaskOperations
+    let taskId: string;
 
-    const taskId = `task-${Date.now()}`; // Temporary ID generation
+    try {
+      const { getTaskOperations } = await import('../core/operations/task-operations.js');
+      const taskOps = getTaskOperations();
+
+      // Create task using real TaskOperations
+      const createResult = await taskOps.createTask({
+        title: taskTitle,
+        description: `Task created via natural language: "${recognizedIntent.originalInput}"`,
+        type: 'development',
+        priority: 'medium',
+        projectId: 'default-project', // TODO: Extract from context or user input
+        epicId: 'default-epic', // TODO: Extract from context or user input
+        estimatedHours: 2, // Default estimation
+        acceptanceCriteria: [`Task "${taskTitle}" should be completed successfully`],
+        tags: ['natural-language', 'user-created']
+      }, context.sessionId);
+
+      if (!createResult.success) {
+        logger.error({
+          error: createResult.error,
+          taskTitle,
+          sessionId: context.sessionId
+        }, 'Failed to create task via TaskOperations');
+
+        return {
+          success: false,
+          result: {
+            content: [{
+              type: "text",
+              text: `❌ **Task Creation Failed**\n\n` +
+                    `**Error**: ${createResult.error}\n\n` +
+                    `Please try again or contact support if the issue persists.`
+            }],
+            isError: true
+          }
+        };
+      }
+
+      taskId = createResult.data!.id;
+
+      logger.info({
+        taskId,
+        taskTitle,
+        sessionId: context.sessionId
+      }, 'Task created successfully via natural language');
+
+    } catch (error) {
+      logger.error({
+        err: error,
+        taskTitle,
+        sessionId: context.sessionId
+      }, 'Error creating task via TaskOperations');
+
+      return {
+        success: false,
+        result: {
+          content: [{
+            type: "text",
+            text: `❌ **Task Creation Error**\n\n` +
+                  `**Error**: ${error instanceof Error ? error.message : 'Unknown error'}\n\n` +
+                  `Please try again or contact support if the issue persists.`
+          }],
+          isError: true
+        }
+      };
+    }
 
     const result: CallToolResult = {
       content: [{
@@ -270,43 +390,92 @@ export class ListProjectsHandler implements CommandHandler {
       sessionId: context.sessionId
     }, 'Listing projects via natural language');
 
-    // TODO: Implement actual project listing logic
-    // This will integrate with the project management system when implemented
+    try {
+      // Import ProjectOperations dynamically to avoid circular dependencies
+      const { getProjectOperations } = await import('../core/operations/project-operations.js');
+      const projectOps = getProjectOperations();
 
-    const mockProjects = [
-      { name: 'Web App', status: 'in_progress', tasks: 5 },
-      { name: 'Mobile App', status: 'pending', tasks: 3 },
-      { name: 'API Service', status: 'completed', tasks: 8 }
-    ];
+      // Build query parameters from options
+      const queryParams: any = {};
+      if (options.status) queryParams.status = options.status as string;
+      if (options.tags) queryParams.tags = options.tags as string[];
+      if (options.limit) queryParams.limit = options.limit as number;
 
-    let filteredProjects = mockProjects;
+      // Get projects using real ProjectOperations
+      const listResult = await projectOps.listProjects(queryParams);
 
-    // Apply status filter if provided
-    if (options.status) {
-      filteredProjects = mockProjects.filter(p => p.status === options.status);
+      if (!listResult.success) {
+        return {
+          success: false,
+          result: {
+            content: [{
+              type: "text",
+              text: `❌ Failed to list projects: ${listResult.error}`
+            }],
+            isError: true
+          }
+        };
+      }
+
+      const projects = listResult.data!;
+
+      if (projects.length === 0) {
+        const result: CallToolResult = {
+          content: [{
+            type: "text",
+            text: `📋 **No projects found.**\n\n` +
+                  `You haven't created any projects yet.\n\n` +
+                  `Use "create project" to get started!`
+          }]
+        };
+
+        return {
+          success: true,
+          result,
+          followUpSuggestions: [
+            'Create a new project',
+            'Help with project creation'
+          ]
+        };
+      }
+
+      const projectList = projects
+        .map((p: any) => `• **${p.name}** (${p.status}) - ID: ${p.id}\n  ${p.description || 'No description'}\n  Created: ${p.metadata.createdAt.toLocaleDateString()}`)
+        .join('\n\n');
+
+      const result: CallToolResult = {
+        content: [{
+          type: "text",
+          text: `📋 **Your Projects:**\n\n${projectList}\n\n` +
+                `Total: ${projects.length} project${projects.length !== 1 ? 's' : ''}\n\n` +
+                `Use "create project" to add a new project or "check status of [project]" for details.`
+        }]
+      };
+
+      return {
+        success: true,
+        result,
+        followUpSuggestions: [
+          'Create a new project',
+          projects.length > 0 ? `Check status of ${projects[0].name}` : 'Help with project creation',
+          'Show project details'
+        ]
+      };
+
+    } catch (error) {
+      logger.error({ err: error, sessionId: context.sessionId }, 'Failed to list projects via natural language');
+
+      return {
+        success: false,
+        result: {
+          content: [{
+            type: "text",
+            text: `❌ Error listing projects: ${error instanceof Error ? error.message : 'Unknown error'}`
+          }],
+          isError: true
+        }
+      };
     }
-
-    const projectList = filteredProjects
-      .map(p => `• ${p.name} (${p.status}) - ${p.tasks} tasks`)
-      .join('\n');
-
-    const result: CallToolResult = {
-      content: [{
-        type: "text",
-        text: `📋 Projects${options.status ? ` (${options.status})` : ''}:\n\n${projectList}\n\n` +
-              `Total: ${filteredProjects.length} project${filteredProjects.length !== 1 ? 's' : ''}`
-      }]
-    };
-
-    return {
-      success: true,
-      result,
-      followUpSuggestions: [
-        'Create a new project',
-        'Check status of a specific project',
-        'List tasks for a project'
-      ]
-    };
   }
 }
 
@@ -328,50 +497,117 @@ export class ListTasksHandler implements CommandHandler {
       sessionId: context.sessionId
     }, 'Listing tasks via natural language');
 
-    // TODO: Implement actual task listing logic
-    // This will integrate with the task management system when implemented
+    try {
+      // Import TaskOperations dynamically to avoid circular dependencies
+      const { getTaskOperations } = await import('../core/operations/task-operations.js');
+      const taskOps = getTaskOperations();
 
-    const mockTasks = [
-      { id: 'task-1', title: 'Implement authentication', project: 'Web App', status: 'in_progress', priority: 'high' },
-      { id: 'task-2', title: 'Design user interface', project: 'Web App', status: 'pending', priority: 'medium' },
-      { id: 'task-3', title: 'Setup database', project: 'API Service', status: 'completed', priority: 'high' },
-      { id: 'task-4', title: 'Write tests', project: 'Mobile App', status: 'pending', priority: 'low' }
-    ];
+      // Build query parameters from options
+      const queryParams: any = {};
+      if (options.status) queryParams.status = options.status as string;
+      if (options.project) queryParams.projectId = options.project as string;
+      if (options.priority) queryParams.priority = options.priority as string;
+      if (options.limit) queryParams.limit = options.limit as number;
 
-    let filteredTasks = mockTasks;
+      // Get tasks using real TaskOperations
+      const listResult = await taskOps.listTasks(queryParams);
 
-    // Apply filters
-    if (options.status) {
-      filteredTasks = filteredTasks.filter(t => t.status === options.status);
+      if (!listResult.success) {
+        return {
+          success: false,
+          result: {
+            content: [{
+              type: "text",
+              text: `❌ Failed to list tasks: ${listResult.error}`
+            }],
+            isError: true
+          }
+        };
+      }
+
+      const tasks = listResult.data!;
+
+      if (tasks.length === 0) {
+        const result: CallToolResult = {
+          content: [{
+            type: "text",
+            text: `📝 **No tasks found.**\n\n` +
+                  `${options.status ? `No tasks with status "${options.status}".` : 'You haven\'t created any tasks yet.'}\n\n` +
+                  `Use "create task" to get started!`
+          }]
+        };
+
+        return {
+          success: true,
+          result,
+          followUpSuggestions: [
+            'Create a new task',
+            'List projects',
+            'Help with task creation'
+          ]
+        };
+      }
+
+      // Apply additional client-side filters if needed
+      let filteredTasks = tasks;
+
+      // Filter by project name if it's a string search (not exact projectId)
+      if (options.project && typeof options.project === 'string' && !queryParams.projectId) {
+        const projectSearch = String(options.project).toLowerCase();
+        filteredTasks = filteredTasks.filter(t =>
+          t.projectId.toLowerCase().includes(projectSearch)
+        );
+      }
+
+      // Filter by assignee if specified
+      if (options.assignee) {
+        filteredTasks = filteredTasks.filter(t =>
+          t.assignedAgent && t.assignedAgent.toLowerCase().includes(String(options.assignee).toLowerCase())
+        );
+      }
+
+      // Format task list for display
+      const taskList = filteredTasks
+        .map(t => {
+          const projectDisplay = t.projectId;
+          const assigneeDisplay = t.assignedAgent || 'Unassigned';
+          return `• **${t.id}**: ${t.title}\n  Project: ${projectDisplay} | Status: ${t.status} | Priority: ${t.priority}\n  Assignee: ${assigneeDisplay}${t.estimatedHours ? ` | Est: ${t.estimatedHours}h` : ''}`;
+        })
+        .join('\n\n');
+
+      const result: CallToolResult = {
+        content: [{
+          type: "text",
+          text: `📝 **Tasks**${options.status ? ` (${options.status})` : ''}:\n\n${taskList}\n\n` +
+                `**Total**: ${filteredTasks.length} task${filteredTasks.length !== 1 ? 's' : ''}`
+        }]
+      };
+
+      return {
+        success: true,
+        result,
+        followUpSuggestions: [
+          'Create a new task',
+          'Run a specific task',
+          'Check task status',
+          'List projects'
+        ]
+      };
+
+    } catch (error) {
+      logger.error({ err: error, sessionId: context.sessionId }, 'Failed to list tasks via natural language');
+
+      return {
+        success: false,
+        result: {
+          content: [{
+            type: "text",
+            text: `❌ Error listing tasks: ${error instanceof Error ? error.message : String(error)}`
+          }],
+          isError: true
+        }
+      };
     }
-    if (options.project) {
-      filteredTasks = filteredTasks.filter(t => t.project.toLowerCase().includes(String(options.project).toLowerCase()));
-    }
-    if (options.assignee) {
-      // TODO: Filter by assignee when implemented
-    }
-
-    const taskList = filteredTasks
-      .map(t => `• ${t.id}: ${t.title} (${t.project}) - ${t.status} [${t.priority}]`)
-      .join('\n');
-
-    const result: CallToolResult = {
-      content: [{
-        type: "text",
-        text: `📝 Tasks${options.status ? ` (${options.status})` : ''}:\n\n${taskList}\n\n` +
-              `Total: ${filteredTasks.length} task${filteredTasks.length !== 1 ? 's' : ''}`
-      }]
-    };
-
-    return {
-      success: true,
-      result,
-      followUpSuggestions: [
-        'Create a new task',
-        'Run a specific task',
-        'Check task status'
-      ]
-    };
   }
 }
 
@@ -394,32 +630,155 @@ export class RunTaskHandler implements CommandHandler {
       sessionId: context.sessionId
     }, 'Running task via natural language');
 
-    // TODO: Implement actual task execution logic
-    // This will integrate with the agent orchestration system when implemented
+    try {
+      // Import AgentOrchestrator dynamically to avoid circular dependencies
+      const { AgentOrchestrator } = await import('../services/agent-orchestrator.js');
+      const orchestrator = AgentOrchestrator.getInstance();
 
-    const result: CallToolResult = {
-      content: [{
-        type: "text",
-        text: `🚀 Task execution initiated!\n\n` +
-              `Task ID: ${taskId}\n` +
-              `Status: Starting execution...\n` +
-              `Force execution: ${options.force ? 'Yes' : 'No'}\n\n` +
-              `The task has been queued for execution. You'll receive updates as it progresses.`
-      }]
-    };
+      // Check if task exists first
+      const { getTaskOperations } = await import('../core/operations/task-operations.js');
+      const taskOps = getTaskOperations();
+      const taskResult = await taskOps.getTask(taskId);
 
-    return {
-      success: true,
-      result,
-      updatedContext: {
-        currentTask: taskId
-      },
-      followUpSuggestions: [
-        `Check status of task ${taskId}`,
-        'List all running tasks',
-        'View task execution logs'
-      ]
-    };
+      if (!taskResult.success) {
+        return {
+          success: false,
+          result: {
+            content: [{
+              type: "text",
+              text: `❌ Task not found: ${taskId}\n\nPlease check the task ID and try again.`
+            }],
+            isError: true
+          }
+        };
+      }
+
+      const task = taskResult.data!;
+
+      // Create a basic project context for task assignment
+      const projectContext = {
+        projectPath: process.cwd(),
+        projectName: task.projectId || 'unknown',
+        description: 'Task execution context',
+        languages: ['typescript'],
+        frameworks: ['node.js'],
+        buildTools: ['npm'],
+        configFiles: ['package.json'],
+        entryPoints: ['src/index.ts'],
+        architecturalPatterns: ['mvc'],
+        structure: {
+          sourceDirectories: ['src'],
+          testDirectories: ['tests'],
+          docDirectories: ['docs'],
+          buildDirectories: ['dist']
+        },
+        dependencies: {
+          production: [],
+          development: [],
+          external: []
+        },
+        metadata: {
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          version: '1.0.0',
+          source: 'manual' as const
+        }
+      };
+
+      // Execute task using AgentOrchestrator with complete execution flow
+      const executionResult = await orchestrator.executeTask(task, projectContext, {
+        force: options.force as boolean || false,
+        priority: (options.priority as 'low' | 'medium' | 'high' | 'critical') || 'medium',
+        sessionId: context.sessionId,
+        timeout: 300000, // 5 minutes for natural language execution
+        enableMonitoring: true
+      });
+
+      if (!executionResult.success) {
+        if (executionResult.queued) {
+          return {
+            success: true,
+            result: {
+              content: [{
+                type: "text",
+                text: `⏳ Task queued for execution!\n\n` +
+                      `Task ID: ${taskId}\n` +
+                      `Title: ${task.title}\n` +
+                      `Status: ${executionResult.status}\n` +
+                      `Message: ${executionResult.message}\n\n` +
+                      `The task has been queued and will be executed when an agent becomes available.`
+              }]
+            },
+            followUpSuggestions: [
+              `Check status of task ${taskId}`,
+              'List all queued tasks',
+              'View agent availability'
+            ]
+          };
+        }
+
+        return {
+          success: false,
+          result: {
+            content: [{
+              type: "text",
+              text: `❌ Failed to execute task "${taskId}": ${executionResult.message}\n\n` +
+                    `Error: ${executionResult.error || 'Unknown error'}\n` +
+                    `Status: ${executionResult.status}`
+            }],
+            isError: true
+          }
+        };
+      }
+
+      const result: CallToolResult = {
+        content: [{
+          type: "text",
+          text: `🚀 Task execution completed!\n\n` +
+                `Task ID: ${taskId}\n` +
+                `Title: ${task.title}\n` +
+                `Status: ${executionResult.status}\n` +
+                `Agent: ${executionResult.metadata?.agentId || 'Auto-assigned'}\n` +
+                `Duration: ${executionResult.metadata?.totalDuration ? Math.round(executionResult.metadata.totalDuration / 1000) + 's' : 'N/A'}\n` +
+                `Attempts: ${executionResult.metadata?.attempts || 1}\n\n` +
+                `${executionResult.message}\n\n` +
+                `${executionResult.agentResponse?.completion_details ?
+                  `**Completion Details:**\n` +
+                  `- Files modified: ${executionResult.agentResponse.completion_details.files_modified?.join(', ') || 'None specified'}\n` +
+                  `- Tests passed: ${executionResult.agentResponse.completion_details.tests_passed ? 'Yes' : 'No'}\n` +
+                  `- Build successful: ${executionResult.agentResponse.completion_details.build_successful ? 'Yes' : 'No'}\n` +
+                  `- Notes: ${executionResult.agentResponse.completion_details.notes || 'None'}`
+                  : ''}`
+        }]
+      };
+
+      return {
+        success: true,
+        result,
+        updatedContext: {
+          currentTask: taskId
+        },
+        followUpSuggestions: [
+          `Check status of task ${taskId}`,
+          'List all running tasks',
+          'View task execution logs'
+        ]
+      };
+
+    } catch (error) {
+      logger.error({ err: error, taskId, sessionId: context.sessionId }, 'Failed to run task via natural language');
+
+      return {
+        success: false,
+        result: {
+          content: [{
+            type: "text",
+            text: `❌ Error running task "${taskId}": ${error instanceof Error ? error.message : 'Unknown error'}`
+          }],
+          isError: true
+        }
+      };
+    }
   }
 }
 
@@ -444,78 +803,214 @@ export class CheckStatusHandler implements CommandHandler {
       sessionId: context.sessionId
     }, 'Checking status via natural language');
 
-    // TODO: Implement actual status checking logic
-    // This will integrate with the project and task management systems when implemented
+    try {
+      let statusText = '';
 
-    let statusText = '';
+      if (taskId) {
+        // Task-specific status - get real task data
+        const { getTaskOperations } = await import('../core/operations/task-operations.js');
+        const taskOps = getTaskOperations();
 
-    if (taskId) {
-      // Task-specific status
-      statusText = `📊 Task Status: ${taskId}\n\n` +
-                  `Title: Implement authentication\n` +
-                  `Project: Web App\n` +
-                  `Status: In Progress\n` +
-                  `Priority: High\n` +
-                  `Progress: 65%\n` +
-                  `Assignee: AI Agent\n` +
-                  `Started: 2 hours ago\n` +
-                  `Estimated completion: 1 hour\n\n` +
-                  `Recent activity:\n` +
-                  `• Setup authentication middleware\n` +
-                  `• Configured JWT tokens\n` +
-                  `• Working on password validation`;
-    } else if (projectName) {
-      // Project-specific status
-      statusText = `📊 Project Status: ${projectName}\n\n` +
-                  `Status: In Progress\n` +
-                  `Total tasks: 8\n` +
-                  `Completed: 3 (37.5%)\n` +
-                  `In progress: 2 (25%)\n` +
-                  `Pending: 3 (37.5%)\n` +
-                  `Blocked: 0\n\n` +
-                  `Active tasks:\n` +
-                  `• task-1: Implement authentication (65%)\n` +
-                  `• task-2: Design user interface (30%)\n\n` +
-                  `Next up:\n` +
-                  `• Setup database connection\n` +
-                  `• Create user registration`;
-    } else {
-      // General status
-      statusText = `📊 General Status\n\n` +
-                  `Active projects: 3\n` +
-                  `Total tasks: 16\n` +
-                  `Completed today: 2\n` +
-                  `In progress: 4\n` +
-                  `Agents active: 2\n\n` +
-                  `Recent completions:\n` +
-                  `• Setup database (API Service)\n` +
-                  `• Configure CI/CD (Web App)\n\n` +
-                  `Current focus:\n` +
-                  `• Authentication implementation\n` +
-                  `• UI design improvements`;
+        const taskResult = await taskOps.getTask(taskId);
+
+        if (!taskResult.success) {
+          return {
+            success: false,
+            result: {
+              content: [{
+                type: "text",
+                text: `❌ Task not found: ${taskId}\n\nPlease check the task ID and try again.`
+              }],
+              isError: true
+            }
+          };
+        }
+
+        const task = taskResult.data!;
+
+        // Get execution status from ExecutionCoordinator
+        const { ExecutionCoordinator } = await import('../services/execution-coordinator.js');
+        const coordinator = ExecutionCoordinator.getInstance();
+
+        // Get execution status for the task
+        const executionStatus = await coordinator.getTaskExecutionStatus(taskId);
+
+        const createdDate = task.metadata.createdAt ? new Date(task.metadata.createdAt).toLocaleDateString() : 'Unknown';
+        const updatedDate = task.metadata.updatedAt ? new Date(task.metadata.updatedAt).toLocaleDateString() : 'Unknown';
+
+        statusText = `📊 **Task Status**: ${taskId}\n\n` +
+                    `**Title**: ${task.title}\n` +
+                    `**Project**: ${task.projectId}\n` +
+                    `**Status**: ${task.status}\n` +
+                    `**Priority**: ${task.priority}\n` +
+                    `**Type**: ${task.type}\n` +
+                    `**Assignee**: ${task.assignedAgent || 'Unassigned'}\n` +
+                    `**Estimated Hours**: ${task.estimatedHours || 'Not specified'}\n` +
+                    `**Created**: ${createdDate}\n` +
+                    `**Last Updated**: ${updatedDate}\n\n` +
+                    `**Description**:\n${task.description}\n\n` +
+                    `**Execution Status**: ${executionStatus?.status || 'Not started'}\n` +
+                    `${executionStatus?.message ? `**Execution Details**: ${executionStatus.message}\n` : ''}` +
+                    `${executionStatus?.executionId ? `**Execution ID**: ${executionStatus.executionId}\n` : ''}` +
+                    `${task.acceptanceCriteria && task.acceptanceCriteria.length > 0 ?
+                      `\n**Acceptance Criteria**:\n${task.acceptanceCriteria.map(c => `• ${c}`).join('\n')}` : ''}` +
+                    `${task.tags && task.tags.length > 0 ?
+                      `\n\n**Tags**: ${task.tags.join(', ')}` : ''}`;
+
+      } else if (projectName) {
+        // Project-specific status - get real project data
+        const { getProjectOperations } = await import('../core/operations/project-operations.js');
+        const { getTaskOperations } = await import('../core/operations/task-operations.js');
+        const projectOps = getProjectOperations();
+        const taskOps = getTaskOperations();
+
+        // Find project by name
+        const projectsResult = await projectOps.listProjects();
+        if (!projectsResult.success) {
+          return {
+            success: false,
+            result: {
+              content: [{
+                type: "text",
+                text: `❌ Failed to load projects: ${projectsResult.error}`
+              }],
+              isError: true
+            }
+          };
+        }
+
+        const project = projectsResult.data!.find(p =>
+          p.name.toLowerCase() === projectName.toLowerCase() ||
+          p.id.toLowerCase().includes(projectName.toLowerCase())
+        );
+
+        if (!project) {
+          return {
+            success: false,
+            result: {
+              content: [{
+                type: "text",
+                text: `❌ Project not found: ${projectName}\n\nPlease check the project name and try again.`
+              }],
+              isError: true
+            }
+          };
+        }
+
+        // Get tasks for this project
+        const tasksResult = await taskOps.listTasks({ projectId: project.id });
+        const tasks = tasksResult.success ? tasksResult.data! : [];
+
+        // Calculate task statistics
+        const totalTasks = tasks.length;
+        const completedTasks = tasks.filter(t => t.status === 'completed').length;
+        const inProgressTasks = tasks.filter(t => t.status === 'in_progress').length;
+        const pendingTasks = tasks.filter(t => t.status === 'pending').length;
+        const blockedTasks = tasks.filter(t => t.status === 'blocked').length;
+
+        const completionPercentage = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+
+        statusText = `📊 **Project Status**: ${project.name}\n\n` +
+                    `**Status**: ${project.status}\n` +
+                    `**Description**: ${project.description}\n` +
+                    `**Total Tasks**: ${totalTasks}\n` +
+                    `**Completed**: ${completedTasks} (${completionPercentage}%)\n` +
+                    `**In Progress**: ${inProgressTasks}\n` +
+                    `**Pending**: ${pendingTasks}\n` +
+                    `**Blocked**: ${blockedTasks}\n\n` +
+                    `${inProgressTasks > 0 ?
+                      `**Active Tasks**:\n${tasks.filter(t => t.status === 'in_progress')
+                        .slice(0, 3)
+                        .map(t => `• ${t.id}: ${t.title}`)
+                        .join('\n')}\n\n` : ''}` +
+                    `${pendingTasks > 0 ?
+                      `**Next Up**:\n${tasks.filter(t => t.status === 'pending')
+                        .slice(0, 3)
+                        .map(t => `• ${t.title}`)
+                        .join('\n')}` : ''}`;
+
+      } else {
+        // General status - get system-wide statistics
+        const { getProjectOperations } = await import('../core/operations/project-operations.js');
+        const { getTaskOperations } = await import('../core/operations/task-operations.js');
+        const projectOps = getProjectOperations();
+        const taskOps = getTaskOperations();
+
+        // Get all projects and tasks
+        const projectsResult = await projectOps.listProjects();
+        const tasksResult = await taskOps.listTasks();
+
+        const projects = projectsResult.success ? projectsResult.data! : [];
+        const tasks = tasksResult.success ? tasksResult.data! : [];
+
+        const activeProjects = projects.filter(p => p.status === 'in_progress').length;
+        const totalTasks = tasks.length;
+        const completedToday = tasks.filter(t => {
+          if (!t.metadata.updatedAt) return false;
+          const today = new Date();
+          const taskDate = new Date(t.metadata.updatedAt);
+          return taskDate.toDateString() === today.toDateString() && t.status === 'completed';
+        }).length;
+        const inProgressTasks = tasks.filter(t => t.status === 'in_progress').length;
+
+        // Get recent completions (last 5)
+        const recentCompletions = tasks
+          .filter(t => t.status === 'completed')
+          .sort((a, b) => new Date(b.metadata.updatedAt).getTime() - new Date(a.metadata.updatedAt).getTime())
+          .slice(0, 3);
+
+        statusText = `📊 **General Status**\n\n` +
+                    `**Active Projects**: ${activeProjects}\n` +
+                    `**Total Tasks**: ${totalTasks}\n` +
+                    `**Completed Today**: ${completedToday}\n` +
+                    `**In Progress**: ${inProgressTasks}\n\n` +
+                    `${recentCompletions.length > 0 ?
+                      `**Recent Completions**:\n${recentCompletions
+                        .map(t => `• ${t.title} (${t.projectId})`)
+                        .join('\n')}\n\n` : ''}` +
+                    `${inProgressTasks > 0 ?
+                      `**Current Focus**:\n${tasks.filter(t => t.status === 'in_progress')
+                        .slice(0, 3)
+                        .map(t => `• ${t.title}`)
+                        .join('\n')}` : ''}`;
+      }
+
+      const result: CallToolResult = {
+        content: [{
+          type: "text",
+          text: statusText
+        }]
+      };
+
+      const suggestions = [];
+      if (taskId) {
+        suggestions.push(`Run task ${taskId}`, 'View task details', 'List related tasks');
+      } else if (projectName) {
+        suggestions.push(`List tasks in ${projectName}`, `Create task for ${projectName}`, 'View project details');
+      } else {
+        suggestions.push('Check specific project status', 'List all projects', 'Create new project');
+      }
+
+      return {
+        success: true,
+        result,
+        followUpSuggestions: suggestions
+      };
+
+    } catch (error) {
+      logger.error({ err: error, taskId, projectName, sessionId: context.sessionId }, 'Failed to check status via natural language');
+
+      return {
+        success: false,
+        result: {
+          content: [{
+            type: "text",
+            text: `❌ Error checking status: ${error instanceof Error ? error.message : String(error)}`
+          }],
+          isError: true
+        }
+      };
     }
-
-    const result: CallToolResult = {
-      content: [{
-        type: "text",
-        text: statusText
-      }]
-    };
-
-    const suggestions = [];
-    if (taskId) {
-      suggestions.push(`Run task ${taskId}`, 'View task details', 'List related tasks');
-    } else if (projectName) {
-      suggestions.push(`List tasks in ${projectName}`, `Create task for ${projectName}`, 'View project details');
-    } else {
-      suggestions.push('Check specific project status', 'List all projects', 'Create new project');
-    }
-
-    return {
-      success: true,
-      result,
-      followUpSuggestions: suggestions
-    };
   }
 }
 

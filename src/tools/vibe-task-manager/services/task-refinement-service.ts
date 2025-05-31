@@ -542,13 +542,13 @@ export class TaskRefinementService {
       // Build project context
       const context: ProjectContext = {
         projectId: task.projectId,
-        languages: ['typescript', 'javascript'], // TODO: Get from project config
-        frameworks: ['node.js'], // TODO: Get from project config
-        tools: ['vitest'], // TODO: Get from project config
+        languages: this.getProjectLanguages(task.projectId), // Get from project config
+        frameworks: this.getProjectFrameworks(task.projectId), // Get from project config
+        tools: this.getProjectTools(task.projectId), // Get from project config
         existingTasks: [],
-        codebaseSize: 'medium', // TODO: Determine from project
-        teamSize: 3, // TODO: Get from project config
-        complexity: 'medium' // TODO: Determine from task analysis
+        codebaseSize: this.determineCodebaseSize(task.projectId), // Determine from project
+        teamSize: this.getTeamSize(task.projectId), // Get from project config
+        complexity: this.determineTaskComplexity(task) // Determine from task analysis
       };
 
       // Create decomposition request
@@ -749,6 +749,63 @@ export class TaskRefinementService {
       shouldDecompose,
       estimatedSubTasks
     };
+  }
+
+  /**
+   * Helper methods for project context building
+   */
+
+  /**
+   * Get project languages from project configuration
+   */
+  private getProjectLanguages(projectId: string): string[] {
+    // TODO: In a real implementation, this would fetch from project storage
+    // For now, return sensible defaults based on common project types
+    return ['typescript', 'javascript'];
+  }
+
+  /**
+   * Get project frameworks from project configuration
+   */
+  private getProjectFrameworks(projectId: string): string[] {
+    // TODO: In a real implementation, this would fetch from project storage
+    // For now, return sensible defaults
+    return ['node.js'];
+  }
+
+  /**
+   * Get project tools from project configuration
+   */
+  private getProjectTools(projectId: string): string[] {
+    // TODO: In a real implementation, this would fetch from project storage
+    // For now, return sensible defaults
+    return ['vitest', 'npm'];
+  }
+
+  /**
+   * Determine codebase size from project analysis
+   */
+  private determineCodebaseSize(projectId: string): 'small' | 'medium' | 'large' {
+    // TODO: In a real implementation, this would analyze the project structure
+    // For now, return medium as a sensible default
+    return 'medium';
+  }
+
+  /**
+   * Get team size from project configuration
+   */
+  private getTeamSize(projectId: string): number {
+    // TODO: In a real implementation, this would fetch from project storage
+    // For now, return a sensible default
+    return 3;
+  }
+
+  /**
+   * Determine task complexity from task analysis
+   */
+  private determineTaskComplexity(task: AtomicTask): 'low' | 'medium' | 'high' {
+    const analysis = this.performComplexityAnalysis(task);
+    return analysis.complexity;
   }
 }
 

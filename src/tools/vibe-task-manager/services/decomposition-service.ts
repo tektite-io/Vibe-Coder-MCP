@@ -207,7 +207,7 @@ export class DecompositionService {
       }
 
       // Determine project path from context or use current working directory
-      const projectPath = process.cwd(); // TODO: Get from project configuration
+      const projectPath = this.getProjectPath(context); // Get from project configuration
 
       // Create context request based on task information
       const contextRequest: ContextRequest = {
@@ -414,6 +414,19 @@ export class DecompositionService {
   /**
    * Helper methods for context enrichment
    */
+
+  /**
+   * Get project path from context or use current working directory
+   */
+  private getProjectPath(context: any): string {
+    // Try to get path from context first (if it's the full ProjectContext from project-context.ts)
+    if (context.projectPath && context.projectPath !== '/unknown') {
+      return context.projectPath;
+    }
+
+    // Fallback to current working directory
+    return process.cwd();
+  }
 
   /**
    * Determine maximum number of files to gather based on task complexity

@@ -4,7 +4,7 @@ import path from 'path';
 import { z } from 'zod';
 import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
-import { performDirectLlmCall } from '../../utils/llmHelper.js'; // Import the new helper
+import { performFormatAwareLlmCall } from '../../utils/llmHelper.js'; // Import the format-aware helper
 import { performResearchQuery } from '../../utils/researchHelper.js';
 import logger from '../../logger.js';
 import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js'; // Import ToolExecutionContext
@@ -241,11 +241,13 @@ export const generatePRD: ToolExecutor = async (
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating PRD content via LLM...');
     logs.push(`[${new Date().toISOString()}] Calling LLM for main PRD generation.`);
 
-    const prdMarkdown = await performDirectLlmCall(
+    const prdMarkdown = await performFormatAwareLlmCall(
       mainGenerationPrompt,
       PRD_SYSTEM_PROMPT, // Pass the system prompt
       config,
       'prd_generation', // Logical task name
+      'markdown', // Explicitly specify markdown format
+      undefined, // No schema for markdown
       0.3 // Slightly higher temp might be okay for PRD text
     );
 

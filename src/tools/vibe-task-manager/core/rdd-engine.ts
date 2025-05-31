@@ -1,4 +1,4 @@
-import { performDirectLlmCall } from '../../../utils/llmHelper.js';
+import { performFormatAwareLlmCall } from '../../../utils/llmHelper.js';
 import { OpenRouterConfig } from '../../../types/workflow.js';
 import { getLLMModelForOperation } from '../utils/config-loader.js';
 import { AtomicTask, TaskType, TaskPriority } from '../types/task.js';
@@ -162,11 +162,13 @@ export class RDDEngine {
       const splitPrompt = this.buildSplitPrompt(task, context, analysis);
       const systemPrompt = await getPrompt('decomposition');
 
-      const response = await performDirectLlmCall(
+      const response = await performFormatAwareLlmCall(
         splitPrompt,
         systemPrompt,
         this.config,
         'task_decomposition',
+        'json', // Explicitly specify JSON format for task decomposition
+        undefined, // Schema will be inferred from task name
         0.2 // Slightly higher temperature for creativity
       );
 

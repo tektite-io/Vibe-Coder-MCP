@@ -171,6 +171,106 @@ export class EntityExtractors {
   }
 
   /**
+   * Extract description information from text
+   */
+  static descriptionInfo(text: string, match: RegExpMatchArray): Record<string, any> {
+    const entities: Record<string, any> = {};
+
+    // Extract description from various patterns
+    const descriptionPatterns = [
+      /with\s+focus\s+on\s+(.+)/i,
+      /considering\s+(.+)/i,
+      /taking\s+into\s+account\s+(.+)/i,
+      /for\s+(.+)/i,
+      /description\s+["']([^"']+)["']/i,
+      /context\s+["']([^"']+)["']/i
+    ];
+
+    for (const pattern of descriptionPatterns) {
+      const descMatch = text.match(pattern);
+      if (descMatch) {
+        entities.description = descMatch[1].trim();
+        break;
+      }
+    }
+
+    return entities;
+  }
+
+  /**
+   * Extract search information from text
+   */
+  static searchInfo(text: string, match: RegExpMatchArray): Record<string, any> {
+    const entities: Record<string, any> = {};
+
+    // Extract search pattern from various formats
+    const searchPatterns = [
+      /(?:find|search\s+for|locate)\s+(.+?)\s+files?/i,
+      /(?:find|search\s+for|locate)\s+(.+)/i,
+      /files?\s+(?:named|called|matching)\s+(.+)/i,
+      /(.+?)\s+files?/i,
+      /"([^"]+)"/,
+      /'([^']+)'/
+    ];
+
+    for (const pattern of searchPatterns) {
+      const searchMatch = text.match(pattern);
+      if (searchMatch) {
+        entities.searchPattern = searchMatch[1].trim();
+        break;
+      }
+    }
+
+    // Extract file extensions
+    const extMatch = text.match(/\.(\w+)\s+files?|(\w+)\s+files?/);
+    if (extMatch) {
+      const ext = extMatch[1] || extMatch[2];
+      if (['js', 'ts', 'tsx', 'jsx', 'py', 'java', 'cpp', 'css', 'html'].includes(ext)) {
+        entities.extensions = [`.${ext}`];
+      }
+    }
+
+    return entities;
+  }
+
+  /**
+   * Extract content search information from text
+   */
+  static contentInfo(text: string, match: RegExpMatchArray): Record<string, any> {
+    const entities: Record<string, any> = {};
+
+    // Extract search query from various patterns
+    const contentPatterns = [
+      /(?:find|search\s+for|locate)\s+(.+?)\s+(?:in\s+files?|in\s+code)/i,
+      /(?:find|search\s+for|locate)\s+"(.+?)"/i,
+      /(?:find|search\s+for|locate)\s+'(.+?)'/i,
+      /(?:find|search\s+for|locate)\s+(.+)/i,
+      /content\s+(?:containing|with)\s+(.+)/i
+    ];
+
+    for (const pattern of contentPatterns) {
+      const contentMatch = text.match(pattern);
+      if (contentMatch) {
+        entities.searchQuery = contentMatch[1].trim();
+        entities.content = contentMatch[1].trim();
+        break;
+      }
+    }
+
+    // Check for case sensitivity
+    if (text.toLowerCase().includes('case sensitive') || text.toLowerCase().includes('exact case')) {
+      entities.caseSensitive = true;
+    }
+
+    // Check for regex
+    if (text.toLowerCase().includes('regex') || text.toLowerCase().includes('regular expression')) {
+      entities.useRegex = true;
+    }
+
+    return entities;
+  }
+
+  /**
    * Extract general entities from text
    */
   static general(text: string, match: RegExpMatchArray): Record<string, any> {
@@ -372,6 +472,111 @@ export class IntentPatternEngine {
       ]
     });
 
+    // Task decomposition patterns
+    this.addPattern('decompose_task', {
+      id: 'decompose_task_basic',
+      intent: 'decompose_task',
+      patterns: [
+        'decompose\\s+(?:the\\s+)?(?:\\w+\\s+)?task',
+        'break\\s+down\\s+(?:the\\s+)?(?:\\w+\\s+)?task',
+        'split\\s+(?:up\\s+)?(?:the\\s+)?(?:\\w+\\s+)?task',
+        'divide\\s+(?:the\\s+)?(?:\\w+\\s+)?task',
+        'breakdown\\s+(?:the\\s+)?(?:\\w+\\s+)?task',
+        'decompose\\s+task\\s+\\w+',
+        'break\\s+down\\s+task\\s+\\w+',
+        'split\\s+task\\s+\\w+'
+      ],
+      keywords: ['decompose', 'break down', 'split', 'divide', 'breakdown', 'task'],
+      requiredEntities: [],
+      optionalEntities: ['taskId', 'description'],
+      priority: 10,
+      active: true,
+      examples: [
+        'Decompose task T001',
+        'Break down the authentication task',
+        'Split up this task',
+        'Decompose the login feature task'
+      ]
+    });
+
+    // Project decomposition patterns
+    this.addPattern('decompose_project', {
+      id: 'decompose_project_basic',
+      intent: 'decompose_project',
+      patterns: [
+        'decompose\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'break\\s+down\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'split\\s+(?:up\\s+)?(?:the\\s+)?(?:\\w+\\s+)?project',
+        'divide\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'breakdown\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'decompose\\s+project\\s+\\w+',
+        'break\\s+down\\s+project\\s+\\w+'
+      ],
+      keywords: ['decompose', 'break down', 'split', 'divide', 'breakdown', 'project'],
+      requiredEntities: [],
+      optionalEntities: ['projectId', 'projectName', 'description'],
+      priority: 10,
+      active: true,
+      examples: [
+        'Decompose project PID-WEBAPP-001',
+        'Break down the web app project',
+        'Split up this project',
+        'Decompose the entire project'
+      ]
+    });
+
+    // File search patterns
+    this.addPattern('search_files', {
+      id: 'search_files_basic',
+      intent: 'search_files',
+      patterns: [
+        'find\\s+(?:all\\s+)?(?:\\w+\\s+)?files?',
+        'search\\s+(?:for\\s+)?(?:all\\s+)?(?:\\w+\\s+)?files?',
+        'locate\\s+(?:all\\s+)?(?:\\w+\\s+)?files?',
+        'show\\s+(?:me\\s+)?(?:all\\s+)?(?:\\w+\\s+)?files?',
+        'list\\s+(?:all\\s+)?(?:\\w+\\s+)?files?',
+        'find\\s+files?\\s+(?:named|called|matching)\\s+\\w+',
+        'search\\s+files?\\s+(?:named|called|matching)\\s+\\w+'
+      ],
+      keywords: ['find', 'search', 'locate', 'show', 'list', 'files', 'file'],
+      requiredEntities: [],
+      optionalEntities: ['searchPattern', 'fileName', 'extensions'],
+      priority: 10,
+      active: true,
+      examples: [
+        'Find auth files',
+        'Search for component files',
+        'Locate all .ts files',
+        'Show me test files'
+      ]
+    });
+
+    // Content search patterns
+    this.addPattern('search_content', {
+      id: 'search_content_basic',
+      intent: 'search_content',
+      patterns: [
+        'find\\s+(?:all\\s+)?(?:instances\\s+of\\s+)?\\w+\\s+(?:in\\s+)?(?:files?|code)',
+        'search\\s+(?:for\\s+)?(?:all\\s+)?(?:instances\\s+of\\s+)?\\w+\\s+(?:in\\s+)?(?:files?|code)',
+        'locate\\s+(?:all\\s+)?(?:instances\\s+of\\s+)?\\w+\\s+(?:in\\s+)?(?:files?|code)',
+        'find\\s+content\\s+(?:containing|with)\\s+\\w+',
+        'search\\s+content\\s+(?:containing|with)\\s+\\w+',
+        'find\\s+"[^"]+"\\s+(?:in\\s+)?(?:files?|code)',
+        'search\\s+"[^"]+"\\s+(?:in\\s+)?(?:files?|code)'
+      ],
+      keywords: ['find', 'search', 'locate', 'content', 'code', 'in files', 'instances'],
+      requiredEntities: [],
+      optionalEntities: ['searchQuery', 'content', 'extensions'],
+      priority: 10,
+      active: true,
+      examples: [
+        'Find useState in files',
+        'Search for authentication code',
+        'Locate all instances of "login"',
+        'Find content containing API'
+      ]
+    });
+
     logger.info({ patternCount: this.getTotalPatternCount() }, 'Default patterns initialized');
   }
 
@@ -560,6 +765,21 @@ export class IntentPatternEngine {
       case 'assign_task':
         Object.assign(entities, EntityExtractors.agentInfo(originalText, match));
         Object.assign(entities, EntityExtractors.taskInfo(originalText, match));
+        break;
+      case 'decompose_task':
+        Object.assign(entities, EntityExtractors.taskInfo(originalText, match));
+        Object.assign(entities, EntityExtractors.descriptionInfo(originalText, match));
+        break;
+      case 'decompose_project':
+        Object.assign(entities, EntityExtractors.projectName(originalText, match));
+        Object.assign(entities, EntityExtractors.descriptionInfo(originalText, match));
+        break;
+      case 'search_files':
+        Object.assign(entities, EntityExtractors.searchInfo(originalText, match));
+        break;
+      case 'search_content':
+        Object.assign(entities, EntityExtractors.searchInfo(originalText, match));
+        Object.assign(entities, EntityExtractors.contentInfo(originalText, match));
         break;
     }
 

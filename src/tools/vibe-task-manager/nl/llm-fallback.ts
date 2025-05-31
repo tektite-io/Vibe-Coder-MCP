@@ -3,8 +3,8 @@
  * Provides LLM-based intent recognition when pattern matching fails or has low confidence
  */
 
-import { Intent, RecognizedIntent, ConfidenceLevel } from '../types/nl.js';
-import { performDirectLlmCall } from '../../../utils/llmHelper.js';
+import { Intent, RecognizedIntent, ConfidenceLevel, Entity } from '../types/nl.js';
+import { performFormatAwareLlmCall } from '../../../utils/llmHelper.js';
 import { OpenRouterConfig } from '../../../types/workflow.js';
 import { getPromptService } from '../services/prompt-service.js';
 import { ConfigLoader } from '../utils/config-loader.js';
@@ -220,11 +220,13 @@ export class LLMFallbackSystem {
 
     for (let attempt = 1; attempt <= this.config.maxRetries; attempt++) {
       try {
-        const response = await performDirectLlmCall(
+        const response = await performFormatAwareLlmCall(
           userPrompt,
           systemPrompt,
           this.openRouterConfig!,
           'intent_recognition',
+          'json', // Explicitly specify JSON format
+          undefined, // Schema will be inferred from task name
           this.config.temperature
         );
 
@@ -289,7 +291,7 @@ export class LLMFallbackSystem {
       intent: llmResponse.intent,
       confidence: llmResponse.confidence,
       confidenceLevel: this.getConfidenceLevel(llmResponse.confidence),
-      entities: llmResponse.parameters || {},
+      entities: this.convertParametersToEntities(llmResponse.parameters || {}),
       originalInput,
       processedInput: originalInput.toLowerCase().trim(),
       alternatives: llmResponse.alternatives?.map(alt => ({
@@ -303,6 +305,25 @@ export class LLMFallbackSystem {
         timestamp: new Date()
       }
     };
+  }
+
+  /**
+   * Convert parameters to Entity array format
+   */
+  private convertParametersToEntities(parameters: Record<string, any>): Entity[] {
+    const entityArray: Entity[] = [];
+
+    for (const [type, value] of Object.entries(parameters)) {
+      if (value !== undefined && value !== null) {
+        entityArray.push({
+          type,
+          value: String(value),
+          confidence: 0.8 // Default confidence for LLM-extracted entities
+        });
+      }
+    }
+
+    return entityArray;
   }
 
   /**
