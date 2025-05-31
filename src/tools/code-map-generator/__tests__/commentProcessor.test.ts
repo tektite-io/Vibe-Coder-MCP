@@ -174,11 +174,70 @@ describe('CommentProcessor', () => {
 
       expect(result.length).toBeLessThanOrEqual(25);
       // Should preserve meaningful keywords without truncation
-      expect(result.toLowerCase()).toMatch(/auth|user|validation|database/);
+      expect(result.toLowerCase()).toMatch(/processes|validates|user|credentials/);
       // Should NOT contain truncation indicator
       expect(result).not.toContain('...');
       // Should be composed of meaningful words, not truncated text
       expect(result.split(' ').every(word => word.length > 0)).toBe(true);
+    });
+
+    it('should preserve action verbs in semantic extraction', () => {
+      const comment = 'Validates user credentials against the database';
+      const result = processor.processComment(comment);
+
+      expect(result.length).toBeLessThanOrEqual(25);
+      expect(result.toLowerCase()).toContain('validates');
+      expect(result.toLowerCase()).toMatch(/user|credentials/);
+    });
+
+    it('should handle authentication context meaningfully', () => {
+      const comment = 'Manages user sessions and token validation processes';
+      const result = processor.processComment(comment);
+
+      expect(result.length).toBeLessThanOrEqual(25);
+      expect(result.toLowerCase()).toContain('manages');
+      expect(result.toLowerCase()).toMatch(/user|sessions|token/);
+      expect(result).not.toContain('...');
+    });
+
+    it('should handle database context meaningfully', () => {
+      const comment = 'Executes SQL queries to retrieve user records from database';
+      const result = processor.processComment(comment);
+
+      expect(result.length).toBeLessThanOrEqual(25);
+      expect(result.toLowerCase()).toContain('executes');
+      expect(result.toLowerCase()).toMatch(/sql|queries|user|records/);
+      expect(result).not.toContain('...');
+    });
+
+    it('should preserve semantic meaning over compression', () => {
+      const comment = 'Stores encrypted user data in secure database storage';
+      const result = processor.processComment(comment);
+
+      expect(result.length).toBeLessThanOrEqual(25);
+      expect(result.toLowerCase()).toContain('stores');
+      expect(result.toLowerCase()).toMatch(/encrypted|user|data/);
+      // Should not become generic like "auth config"
+      expect(result.toLowerCase()).not.toMatch(/^(auth|db|api)\s+(config|integration)$/);
+    });
+
+    it('should handle file operations meaningfully', () => {
+      const comment = 'Handles file upload operations with comprehensive validation and security checks';
+      const result = processor.processComment(comment);
+
+      expect(result.length).toBeLessThanOrEqual(25);
+      expect(result.toLowerCase()).toContain('handles');
+      expect(result.toLowerCase()).toMatch(/file|upload/);
+      expect(result).not.toContain('...');
+    });
+
+    it('should fallback gracefully for unclear comments', () => {
+      const comment = 'This is a very generic comment without specific technical terms or actions';
+      const result = processor.processComment(comment);
+
+      expect(result.length).toBeLessThanOrEqual(25);
+      expect(result.length).toBeGreaterThan(0);
+      expect(result).not.toContain('...');
     });
   });
 
