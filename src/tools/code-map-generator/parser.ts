@@ -59,8 +59,9 @@ export let processLifecycleManager: ProcessLifecycleManager | null = null;
 let fileContentManager: FileContentManager | null = null;
 
 // Path to the directory where .wasm grammar files are expected to be.
-// Grammar files are located in the 'grammars' directory relative to this module.
-const GRAMMARS_BASE_DIR = path.join(__dirname, 'grammars');
+// Grammar files are located in the 'grammars' directory relative to the source module.
+// Use project root to ensure we find the files in src/ even when running from build/
+const GRAMMARS_BASE_DIR = resolveProjectPath('src/tools/code-map-generator/grammars');
 
 logger.info(`Grammar files directory: ${GRAMMARS_BASE_DIR}`);
 // Also log the project root and current working directory to help with debugging
