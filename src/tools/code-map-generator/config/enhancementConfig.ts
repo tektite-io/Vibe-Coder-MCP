@@ -136,11 +136,11 @@ export const DEFAULT_ENHANCEMENT_CONFIG: CodeMapEnhancementConfig = {
     compressDescriptions: true
   },
 
-  // MAXIMUM AGGRESSIVE: Content density with semantic comment compression
+  // MAXIMUM AGGRESSIVE: Content density with complete comment elimination
   contentDensity: {
     enabled: true,
     importanceThreshold: 6.0, // Changed from 3.0 to 6.0 for more aggressive filtering
-    maxContentLength: 25, // Semantic-aware comment compression to 25 characters
+    maxContentLength: 0, // Eliminate ALL comments for maximum token efficiency
     layeredDetailLevels: 'aggressive',
     fileImportanceScoring: true
   }
@@ -222,7 +222,7 @@ export const QUALITY_FIRST_PRESETS = {
     contentDensity: {
       enabled: true,
       importanceThreshold: 6.0, // Changed from 3.0 to 6.0 for more aggressive filtering
-      maxContentLength: 25, // Semantic-aware comment compression to 25 characters
+      maxContentLength: 0, // Eliminate ALL comments for maximum token efficiency
       layeredDetailLevels: 'aggressive',
       fileImportanceScoring: true
     }
@@ -302,7 +302,7 @@ export class EnhancementConfigManager {
     this.config.semanticCompression.enabled = true;
     this.config.contentDensity.enabled = true;
     this.config.contentDensity.importanceThreshold = 6.0; // Changed from 3.0 to 6.0
-    this.config.contentDensity.maxContentLength = 25; // Semantic-aware comment compression to 25 characters
+    this.config.contentDensity.maxContentLength = 0; // Eliminate ALL comments for maximum token efficiency
 
     // Enable all universal optimizations
     this.config.universalOptimization.eliminateVerboseDiagrams = true;
