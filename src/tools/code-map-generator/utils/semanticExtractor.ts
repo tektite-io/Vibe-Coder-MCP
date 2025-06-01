@@ -207,29 +207,275 @@ export function compressSemanticContent(comment: string, keywords: string[]): st
 }
 
 /**
- * Pure semantic keyword selection without truncation
+ * Semantic keyword selection that preserves meaning over compression
  */
 export function selectBestKeywords(comment: string, maxLength: number, context?: CommentContext): string {
   if (comment.length <= maxLength) return comment;
 
-  // Detect context automatically
-  const enhancedContext = detectFullContext(comment, context);
+  // Step 1: Extract meaningful terms with semantic roles
+  const meaningfulTerms = extractMeaningfulTerms(comment);
 
-  // Extract keywords with context awareness
-  const keywords = extractSemanticKeywords(comment, context);
+  // Step 2: Preserve semantic core (action + object)
+  const semanticCore = preserveSemanticCore(meaningfulTerms);
 
-  // Prioritize keywords by context relevance
-  const prioritizedKeywords = prioritizeKeywordsByContext(keywords, enhancedContext.domains);
+  // Step 3: Enhance with context if space allows
+  const contextEnhanced = enhanceWithContext(semanticCore, comment, context);
 
-  // Apply domain-specific abbreviations
-  const abbreviatedKeywords = applyContextAbbreviations(prioritizedKeywords, enhancedContext.domains);
+  // Step 4: Apply selective abbreviations only if needed
+  const optimized = applySelectiveAbbreviations(contextEnhanced, maxLength);
 
-  // Select keywords that fit within length limit
-  return selectKeywordsWithinLimit(abbreviatedKeywords, maxLength);
+  // Step 5: Validate semantic quality
+  const result = validateAndFinalize(optimized, comment, maxLength);
+
+  return result;
 }
 
 /**
- * Prioritize keywords based on detected context domains
+ * Extract meaningful terms with semantic role classification
+ */
+function extractMeaningfulTerms(comment: string): { actions: string[], objects: string[], descriptors: string[], domains: string[] } {
+  const words = comment.toLowerCase()
+    .replace(/[^\w\s-]/g, ' ')
+    .split(/\s+/)
+    .filter(word => word.length > 0);
+
+  const meaningfulTerms = {
+    actions: [] as string[],
+    objects: [] as string[],
+    descriptors: [] as string[],
+    domains: [] as string[]
+  };
+
+  // Action verbs (highest priority)
+  const actionVerbs = [
+    'validates', 'manages', 'processes', 'handles', 'creates', 'generates', 'executes',
+    'retrieves', 'stores', 'updates', 'deletes', 'checks', 'verifies', 'authenticates',
+    'authorizes', 'encrypts', 'decrypts', 'compresses', 'decompresses', 'parses',
+    'formats', 'transforms', 'converts', 'filters', 'sorts', 'searches', 'finds',
+    'loads', 'saves', 'sends', 'receives', 'connects', 'disconnects', 'initializes',
+    'configures', 'optimizes', 'caches', 'invalidates', 'refreshes', 'synchronizes'
+  ];
+
+  // Specific objects (high priority)
+  const objectNouns = [
+    'user', 'users', 'credentials', 'password', 'token', 'tokens', 'session', 'sessions',
+    'data', 'record', 'records', 'file', 'files', 'query', 'queries', 'request', 'requests',
+    'response', 'responses', 'connection', 'connections', 'configuration', 'config',
+    'settings', 'options', 'parameters', 'metadata', 'schema', 'table', 'database',
+    'cache', 'memory', 'storage', 'repository', 'service', 'api', 'endpoint', 'route'
+  ];
+
+  // Technical descriptors (medium priority)
+  const descriptors = [
+    'secure', 'encrypted', 'cached', 'optimized', 'validated', 'authenticated',
+    'authorized', 'compressed', 'formatted', 'parsed', 'filtered', 'sorted',
+    'synchronized', 'asynchronous', 'concurrent', 'parallel', 'distributed',
+    'scalable', 'reliable', 'efficient', 'fast', 'slow', 'large', 'small'
+  ];
+
+  // Domain terms (lowest priority - context only)
+  const domainTerms = [
+    'auth', 'authentication', 'database', 'db', 'sql', 'api', 'http', 'rest',
+    'graphql', 'json', 'xml', 'html', 'css', 'javascript', 'typescript',
+    'python', 'java', 'security', 'encryption', 'validation'
+  ];
+
+  // Classify words by semantic role
+  for (const word of words) {
+    if (actionVerbs.includes(word)) {
+      meaningfulTerms.actions.push(word);
+    } else if (objectNouns.includes(word)) {
+      meaningfulTerms.objects.push(word);
+    } else if (descriptors.includes(word)) {
+      meaningfulTerms.descriptors.push(word);
+    } else if (domainTerms.includes(word)) {
+      meaningfulTerms.domains.push(word);
+    }
+  }
+
+  return meaningfulTerms;
+}
+
+/**
+ * Preserve semantic core (action + object combination)
+ */
+function preserveSemanticCore(terms: { actions: string[], objects: string[], descriptors: string[], domains: string[] }): string[] {
+  const core: string[] = [];
+
+  // Always include the first action verb (most important)
+  if (terms.actions.length > 0) {
+    core.push(terms.actions[0]);
+  }
+
+  // Include primary objects (up to 2)
+  if (terms.objects.length > 0) {
+    core.push(...terms.objects.slice(0, 2));
+  }
+
+  // If no action verb, include descriptors
+  if (terms.actions.length === 0 && terms.descriptors.length > 0) {
+    core.push(terms.descriptors[0]);
+  }
+
+  return core;
+}
+
+/**
+ * Enhance with context while preserving core meaning
+ */
+function enhanceWithContext(core: string[], comment: string, context?: CommentContext): string[] {
+  const enhanced = [...core];
+
+  // Only add context terms if they provide additional value
+  const contextTerms = detectDomainContext(comment);
+
+  // Add context term only if it's not redundant with existing terms
+  for (const contextTerm of contextTerms) {
+    const isRedundant = enhanced.some(term =>
+      term.includes(contextTerm) || contextTerm.includes(term)
+    );
+
+    if (!isRedundant && enhanced.length < 4) {
+      // Add abbreviated context term if space allows
+      const abbreviatedContext = getContextAbbreviation(contextTerm);
+      if (abbreviatedContext && abbreviatedContext !== contextTerm) {
+        enhanced.push(abbreviatedContext);
+      }
+    }
+  }
+
+  return enhanced;
+}
+
+/**
+ * Apply selective abbreviations only when necessary
+ */
+function applySelectiveAbbreviations(terms: string[], maxLength: number): string[] {
+  const currentLength = terms.join(' ').length;
+
+  if (currentLength <= maxLength) {
+    return terms; // No abbreviation needed
+  }
+
+  const abbreviated = terms.map(term => {
+    // Only abbreviate if it saves significant space and preserves meaning
+    const abbrev = getSelectiveAbbreviation(term);
+    return abbrev || term;
+  });
+
+  return abbreviated;
+}
+
+/**
+ * Get context-appropriate abbreviation
+ */
+function getContextAbbreviation(contextTerm: string): string | null {
+  const abbreviations: Record<string, string> = {
+    'authentication': 'auth',
+    'database': 'db',
+    'configuration': 'config',
+    'repository': 'repo',
+    'application': 'app'
+  };
+
+  return abbreviations[contextTerm] || null;
+}
+
+/**
+ * Get selective abbreviation only for long terms
+ */
+function getSelectiveAbbreviation(term: string): string | null {
+  // Only abbreviate terms longer than 8 characters
+  if (term.length <= 8) return null;
+
+  const abbreviations: Record<string, string> = {
+    'authentication': 'auth',
+    'configuration': 'config',
+    'repository': 'repo',
+    'application': 'app',
+    'management': 'mgmt',
+    'processing': 'proc',
+    'generation': 'gen',
+    'initialization': 'init',
+    'validation': 'valid'
+  };
+
+  return abbreviations[term] || null;
+}
+
+/**
+ * Validate semantic quality and finalize result
+ */
+function validateAndFinalize(terms: string[], originalComment: string, maxLength: number): string {
+  const result = terms.join(' ');
+
+  // Check if result fits within length limit
+  if (result.length > maxLength) {
+    // Try removing least important terms
+    const reduced = reduceToFit(terms, maxLength);
+    return reduced;
+  }
+
+  // Validate semantic quality
+  if (!hasSemanticMeaning(result, originalComment)) {
+    // Fallback to intelligent truncation
+    return intelligentTruncation(originalComment, maxLength);
+  }
+
+  return result;
+}
+
+/**
+ * Reduce terms to fit within length limit
+ */
+function reduceToFit(terms: string[], maxLength: number): string {
+  // Remove terms from least to most important
+  const priorityOrder = [...terms];
+
+  while (priorityOrder.length > 1 && priorityOrder.join(' ').length > maxLength) {
+    // Remove last term (least important)
+    priorityOrder.pop();
+  }
+
+  return priorityOrder.join(' ');
+}
+
+/**
+ * Check if result has semantic meaning
+ */
+function hasSemanticMeaning(result: string, original: string): boolean {
+  // Must have at least 2 meaningful words
+  const words = result.split(' ').filter(w => w.length > 2);
+  if (words.length < 2) return false;
+
+  // Should contain at least one action or object from original
+  const originalWords = original.toLowerCase().split(/\s+/);
+  const hasRelevantTerm = words.some(word =>
+    originalWords.some(orig => orig.includes(word) || word.includes(orig))
+  );
+
+  return hasRelevantTerm;
+}
+
+/**
+ * Intelligent truncation fallback
+ */
+function intelligentTruncation(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+
+  // Find last complete word that fits
+  const truncated = text.substring(0, maxLength);
+  const lastSpace = truncated.lastIndexOf(' ');
+
+  if (lastSpace > maxLength * 0.7) {
+    return truncated.substring(0, lastSpace);
+  }
+
+  return truncated;
+}
+
+/**
+ * Prioritize keywords based on detected context domains (LEGACY - keeping for compatibility)
  */
 function prioritizeKeywordsByContext(keywords: string[], domains: string[]): string[] {
   const priorityMap: Record<string, string[]> = {
