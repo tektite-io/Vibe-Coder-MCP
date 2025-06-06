@@ -234,7 +234,7 @@ describe('Enhancement Configuration Manager', () => {
       expect(config.universalOptimization.eliminateVerboseDiagrams).toBe(true);
       expect(config.universalOptimization.reduceClassDetails).toBe(true);
       expect(config.universalOptimization.focusOnPublicInterfaces).toBe(true);
-      expect(config.contentDensity.maxContentLength).toBe(25); // Changed from 45 to 25 for higher compression
+      expect(config.contentDensity.maxContentLength).toBe(0); // Default value is 0 for maximum aggressive optimization
     });
 
     it('should have quality thresholds adjusted for aggressive optimization', () => {
@@ -263,7 +263,7 @@ describe('Enhancement Configuration Manager', () => {
       expect(config.maxOptimizationLevel).toBe('maximum');
       expect(config.qualityThresholds.minSemanticCompleteness).toBe(90);
       expect(config.universalOptimization.eliminateVerboseDiagrams).toBe(true);
-      expect(config.contentDensity.maxContentLength).toBe(25); // Changed from 45 to 25
+      expect(config.contentDensity.maxContentLength).toBe(0); // Default value is 0 for maximum preset
     });
   });
 
@@ -280,7 +280,7 @@ describe('Enhancement Configuration Manager', () => {
       expect(config.functionCompression.enabled).toBe(true);
       expect(config.semanticCompression.enabled).toBe(true);
       expect(config.contentDensity.enabled).toBe(true);
-      expect(config.contentDensity.maxContentLength).toBe(25); // Changed from 45 to 25
+      expect(config.contentDensity.maxContentLength).toBe(0); // Default value is 0 for aggressive optimizations
     });
   });
 

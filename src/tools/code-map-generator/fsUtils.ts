@@ -13,18 +13,36 @@ import { getBaseOutputDir } from './directoryUtils.js';
 /**
  * Reads a file securely, validating the path against the allowed directory.
  * @param filePath The path of the file to read
- * @param allowedDirectory The allowed directory boundary
+ * @param allowedDirectory The allowed directory boundary for source code
  * @param encoding The encoding to use (default: 'utf-8')
+ * @param allowedOutputDirectory Optional allowed directory boundary for output files
  * @returns A promise that resolves to the file content
- * @throws Error if the path is outside the allowed directory or the file cannot be read
+ * @throws Error if the path is outside both allowed directories or the file cannot be read
  */
 export async function readFileSecure(
   filePath: string,
   allowedDirectory: string,
-  encoding: BufferEncoding = 'utf-8'
+  encoding: BufferEncoding = 'utf-8',
+  allowedOutputDirectory?: string
 ): Promise<string> {
-  // Validate and normalize the path
-  const securePath = createSecurePath(filePath, allowedDirectory);
+  // Normalize the path
+  const normalizedPath = normalizePath(filePath);
+
+  // Check if this is an output path
+  const baseOutputDir = getBaseOutputDir();
+  const isOutputPath = isPathWithin(normalizedPath, baseOutputDir);
+
+  // Determine which directory to use for validation
+  let securePath: string;
+
+  if (isOutputPath && allowedOutputDirectory) {
+    // For output files, use the allowedOutputDirectory
+    securePath = createSecurePath(filePath, allowedOutputDirectory);
+    logger.debug(`Using output directory validation for reading: ${filePath}`);
+  } else {
+    // For source files, use the allowedDirectory
+    securePath = createSecurePath(filePath, allowedDirectory);
+  }
 
   try {
     // Check if the file exists and is readable

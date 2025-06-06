@@ -4,7 +4,7 @@ import fs from 'fs/promises';
 import logger from '../../logger.js';
 import { CodeMapGeneratorConfig } from './types.js';
 import { writeFileSecure, readFileSecure } from './fsUtils.js';
-import { getOutputDirectory } from './directoryUtils.js';
+import { getOutputDirectory, getBaseOutputDir } from './directoryUtils.js';
 
 export interface GraphNode {
   id: string; // Unique identifier for the node (e.g., file path, class name)
@@ -119,8 +119,9 @@ export async function buildFileDependencyGraph(
       const batchEdgesFile = path.join(tempDir, `file-dep-edges-batch-${i}.json`);
 
       try {
-        await writeFileSecure(batchNodesFile, JSON.stringify(batchNodes), config.allowedMappingDirectory);
-        await writeFileSecure(batchEdgesFile, JSON.stringify(batchEdges), config.allowedMappingDirectory);
+        const baseOutputDir = getBaseOutputDir();
+        await writeFileSecure(batchNodesFile, JSON.stringify(batchNodes), config.allowedMappingDirectory, 'utf-8', baseOutputDir);
+        await writeFileSecure(batchEdgesFile, JSON.stringify(batchEdges), config.allowedMappingDirectory, 'utf-8', baseOutputDir);
         logger.debug(`Saved batch ${i + 1}/${batches.length} results for file dependency graph`);
       } catch (error) {
         logger.error(`Failed to save batch results for file dependency graph: ${error instanceof Error ? error.message : String(error)}`);
@@ -139,7 +140,8 @@ export async function buildFileDependencyGraph(
       // Read and combine node files
       for (const file of nodeFiles) {
         const filePath = path.join(tempDir, file);
-        const content = await readFileSecure(filePath, config.allowedMappingDirectory);
+        const baseOutputDir = getBaseOutputDir();
+        const content = await readFileSecure(filePath, config.allowedMappingDirectory, 'utf-8', baseOutputDir);
         const batchNodes = JSON.parse(content) as GraphNode[];
         nodes.push(...batchNodes);
       }
@@ -147,7 +149,8 @@ export async function buildFileDependencyGraph(
       // Read and combine edge files
       for (const file of edgeFiles) {
         const filePath = path.join(tempDir, file);
-        const content = await readFileSecure(filePath, config.allowedMappingDirectory);
+        const baseOutputDir = getBaseOutputDir();
+        const content = await readFileSecure(filePath, config.allowedMappingDirectory, 'utf-8', baseOutputDir);
         const batchEdges = JSON.parse(content) as GraphEdge[];
         edges.push(...batchEdges);
       }
@@ -321,7 +324,8 @@ async function processClassInheritanceGraphWithStorage(
     const batchNodesFile = path.join(tempDir, `class-nodes-batch-${i}.json`);
 
     try {
-      await writeFileSecure(batchNodesFile, JSON.stringify(batchNodes), config.allowedMappingDirectory);
+      const baseOutputDir = getBaseOutputDir();
+      await writeFileSecure(batchNodesFile, JSON.stringify(batchNodes), config.allowedMappingDirectory, 'utf-8', baseOutputDir);
       logger.debug(`Saved batch ${i + 1}/${batches.length} nodes for class inheritance graph`);
     } catch (error) {
       logger.error(`Failed to save batch nodes for class inheritance graph: ${error instanceof Error ? error.message : String(error)}`);
@@ -344,7 +348,8 @@ async function processClassInheritanceGraphWithStorage(
       };
     });
 
-    await writeFileSecure(classMapFile, JSON.stringify(classMapObj), config.allowedMappingDirectory);
+    const baseOutputDir = getBaseOutputDir();
+    await writeFileSecure(classMapFile, JSON.stringify(classMapObj), config.allowedMappingDirectory, 'utf-8', baseOutputDir);
     logger.debug(`Saved class map for class inheritance graph`);
   } catch (error) {
     logger.error(`Failed to save class map for class inheritance graph: ${error instanceof Error ? error.message : String(error)}`);
@@ -353,7 +358,8 @@ async function processClassInheritanceGraphWithStorage(
   // Second pass: build edges using the class map
   try {
     // Read the class map from the intermediate file
-    const classMapContent = await readFileSecure(classMapFile, config.allowedMappingDirectory);
+    const baseOutputDir = getBaseOutputDir();
+    const classMapContent = await readFileSecure(classMapFile, config.allowedMappingDirectory, 'utf-8', baseOutputDir);
     const classMapObj = JSON.parse(classMapContent) as Record<string, { classInfo: ClassInfo, filePath: string }>;
 
     // Process in batches
@@ -413,7 +419,8 @@ async function processClassInheritanceGraphWithStorage(
       const batchEdgesFile = path.join(tempDir, `class-edges-batch-${i}.json`);
 
       try {
-        await writeFileSecure(batchEdgesFile, JSON.stringify(batchEdges), config.allowedMappingDirectory);
+        const baseOutputDir = getBaseOutputDir();
+        await writeFileSecure(batchEdgesFile, JSON.stringify(batchEdges), config.allowedMappingDirectory, 'utf-8', baseOutputDir);
         logger.debug(`Saved batch ${i + 1}/${classBatches.length} edges for class inheritance graph`);
       } catch (error) {
         logger.error(`Failed to save batch edges for class inheritance graph: ${error instanceof Error ? error.message : String(error)}`);
@@ -430,7 +437,8 @@ async function processClassInheritanceGraphWithStorage(
     // Read and combine node files
     for (const file of nodeFiles) {
       const filePath = path.join(tempDir, file);
-      const content = await readFileSecure(filePath, config.allowedMappingDirectory);
+      const baseOutputDir = getBaseOutputDir();
+      const content = await readFileSecure(filePath, config.allowedMappingDirectory, 'utf-8', baseOutputDir);
       const batchNodes = JSON.parse(content) as GraphNode[];
       nodes.push(...batchNodes);
     }
@@ -438,7 +446,8 @@ async function processClassInheritanceGraphWithStorage(
     // Read and combine edge files
     for (const file of edgeFiles) {
       const filePath = path.join(tempDir, file);
-      const content = await readFileSecure(filePath, config.allowedMappingDirectory);
+      const baseOutputDir = getBaseOutputDir();
+      const content = await readFileSecure(filePath, config.allowedMappingDirectory, 'utf-8', baseOutputDir);
       const batchEdges = JSON.parse(content) as GraphEdge[];
       edges.push(...batchEdges);
     }
@@ -674,7 +683,8 @@ async function processFunctionCallGraphWithStorage(
     const batchNodesFile = path.join(tempDir, `func-nodes-batch-${i}.json`);
 
     try {
-      await writeFileSecure(batchNodesFile, JSON.stringify(batchNodes), config.allowedMappingDirectory);
+      const baseOutputDir = getBaseOutputDir();
+      await writeFileSecure(batchNodesFile, JSON.stringify(batchNodes), config.allowedMappingDirectory, 'utf-8', baseOutputDir);
       logger.debug(`Saved batch ${i + 1}/${batches.length} nodes for function call graph`);
     } catch (error) {
       logger.error(`Failed to save batch nodes for function call graph: ${error instanceof Error ? error.message : String(error)}`);
@@ -685,7 +695,8 @@ async function processFunctionCallGraphWithStorage(
 
   // Save the functions map to an intermediate file
   try {
-    await writeFileSecure(functionsMapFile, JSON.stringify(allKnownFunctionsObj), config.allowedMappingDirectory);
+    const baseOutputDir = getBaseOutputDir();
+    await writeFileSecure(functionsMapFile, JSON.stringify(allKnownFunctionsObj), config.allowedMappingDirectory, 'utf-8', baseOutputDir);
     logger.debug(`Saved functions map for function call graph`);
   } catch (error) {
     logger.error(`Failed to save functions map for function call graph: ${error instanceof Error ? error.message : String(error)}`);
@@ -696,7 +707,8 @@ async function processFunctionCallGraphWithStorage(
   // Second pass: build edges using the functions map
   try {
     // Read the functions map from the intermediate file
-    const functionsMapContent = await readFileSecure(functionsMapFile, config.allowedMappingDirectory);
+    const baseOutputDir = getBaseOutputDir();
+    const functionsMapContent = await readFileSecure(functionsMapFile, config.allowedMappingDirectory, 'utf-8', baseOutputDir);
     const functionsMap = JSON.parse(functionsMapContent) as Record<string, {
       funcInfo: { name: string, startLine: number, endLine: number },
       filePath: string,
@@ -768,7 +780,8 @@ async function processFunctionCallGraphWithStorage(
       const batchEdgesFile = path.join(tempDir, `func-edges-batch-${i}.json`);
 
       try {
-        await writeFileSecure(batchEdgesFile, JSON.stringify(batchEdges), config.allowedMappingDirectory);
+        const baseOutputDir = getBaseOutputDir();
+        await writeFileSecure(batchEdgesFile, JSON.stringify(batchEdges), config.allowedMappingDirectory, 'utf-8', baseOutputDir);
         logger.debug(`Saved batch ${i + 1}/${batches.length} edges for function call graph`);
       } catch (error) {
         logger.error(`Failed to save batch edges for function call graph: ${error instanceof Error ? error.message : String(error)}`);
@@ -785,7 +798,8 @@ async function processFunctionCallGraphWithStorage(
     // Read and combine node files
     for (const file of nodeFiles) {
       const filePath = path.join(tempDir, file);
-      const content = await readFileSecure(filePath, config.allowedMappingDirectory);
+      const baseOutputDir = getBaseOutputDir();
+      const content = await readFileSecure(filePath, config.allowedMappingDirectory, 'utf-8', baseOutputDir);
       const batchNodes = JSON.parse(content) as GraphNode[];
       nodes.push(...batchNodes);
     }
@@ -793,7 +807,8 @@ async function processFunctionCallGraphWithStorage(
     // Read and combine edge files
     for (const file of edgeFiles) {
       const filePath = path.join(tempDir, file);
-      const content = await readFileSecure(filePath, config.allowedMappingDirectory);
+      const baseOutputDir = getBaseOutputDir();
+      const content = await readFileSecure(filePath, config.allowedMappingDirectory, 'utf-8', baseOutputDir);
       const batchEdges = JSON.parse(content) as GraphEdge[];
       edges.push(...batchEdges);
     }
