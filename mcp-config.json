@@ -49,6 +49,11 @@
       "description": "AI-agent-native task management system with recursive decomposition design (RDD) methodology. Supports project creation, task decomposition, dependency management, and agent coordination for autonomous software development workflows.",
       "use_cases": ["task management", "project planning", "task decomposition", "dependency tracking", "agent coordination", "recursive task breakdown", "atomic task detection", "development workflow", "project organization"],
       "input_patterns": ["create project {projectName}", "decompose task {taskId}", "list projects", "run task {taskId}", "check status of {projectName}", "refine task {taskId}", "manage tasks for {projectName}", "break down {requirement} into atomic tasks", "coordinate agents for {projectName}"]
+    },
+    "curate-context": {
+      "description": "Intelligently analyzes codebases and curates comprehensive context packages for AI-driven development tasks. Generates refined prompts, relevance-ranked files, and meta-prompts for downstream AI agents. Supports automatic task type detection, file relevance scoring, content optimization, and XML output formatting for seamless integration with AI development workflows.",
+      "use_cases": ["context curation", "codebase analysis", "AI task preparation", "file relevance ranking", "meta-prompt generation", "task decomposition", "development context", "code understanding", "AI workflow preparation"],
+      "input_patterns": ["curate context for {task}", "analyze codebase for {feature}", "prepare context for {requirement}", "generate meta-prompt for {task_type}", "rank files for {development_task}", "create context package for {project}"]
     }
   }
 }
