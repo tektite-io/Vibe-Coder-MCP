@@ -1,9 +1,21 @@
 import axios, { AxiosError } from 'axios';
+import https from 'https';
 import { OpenRouterConfig } from '../types/workflow.js';
 import logger from '../logger.js';
 import { AppError, ApiError, ConfigurationError, ParsingError } from './errors.js';
 import { selectModelForTask } from './configLoader.js';
 import { getPromptOptimizer } from './prompt-optimizer.js';
+
+// Configure axios with SSL settings to handle SSL/TLS issues
+const httpsAgent = new https.Agent({
+  rejectUnauthorized: true, // Keep SSL verification enabled for security
+  maxVersion: 'TLSv1.3',
+  minVersion: 'TLSv1.2',
+  ciphers: 'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384',
+  honorCipherOrder: true,
+  keepAlive: true,
+  timeout: 30000
+});
 
 /**
  * Performs a direct LLM call for text generation (not sequential thinking).
@@ -110,7 +122,7 @@ export async function performDirectLlmCall(
 
   // Select the model using the utility function
   // Provide a sensible default if no specific model is found or configured
-  const defaultModel = config.geminiModel || "google/gemini-2.0-flash-001"; // Use a known default
+  const defaultModel = config.geminiModel || "google/gemini-2.5-flash-preview-05-20"; // Use a known default
   const modelToUse = selectModelForTask(config, logicalTaskName, defaultModel);
   logger.info({ modelSelected: modelToUse, logicalTaskName }, `Selected model for direct LLM call.`);
 
@@ -132,7 +144,10 @@ export async function performDirectLlmCall(
           "Authorization": `Bearer ${config.apiKey}`,
           "HTTP-Referer": "https://vibe-coder-mcp.local" // Optional: Referer for tracking
         },
-        timeout: 90000 // Increased timeout to 90s for potentially longer generations
+        timeout: 90000, // Increased timeout to 90s for potentially longer generations
+        httpsAgent: httpsAgent, // Use the configured HTTPS agent for SSL/TLS handling
+        maxRedirects: 5,
+        validateStatus: (status) => status < 500 // Accept 4xx errors but reject 5xx
       }
     );
 
@@ -206,16 +221,19 @@ export async function performOptimizedJsonLlmCall(
     expectedSchema
   );
 
-  // Test JSON parsing to provide feedback
+  // Test JSON parsing to provide feedback and return normalized response if successful
   let parseSuccess = false;
   let parseError: string | undefined;
+  let normalizedResponse = response; // Default to original response
 
   try {
     const normalized = normalizeJsonResponse(response, logicalTaskName);
     JSON.parse(normalized);
     parseSuccess = true;
+    normalizedResponse = normalized; // Use normalized response when parsing succeeds
   } catch (error) {
     parseError = error instanceof Error ? error.message : String(error);
+    // Keep original response when normalization fails
   }
 
   // Record the result for learning
@@ -231,11 +249,13 @@ export async function performOptimizedJsonLlmCall(
     logicalTaskName,
     parseSuccess,
     processingTime,
-    responseLength: response.length
+    responseLength: response.length,
+    normalizedLength: normalizedResponse.length,
+    wasNormalized: normalizedResponse !== response
   }, 'Optimized JSON LLM call completed');
 
   return {
-    response,
+    response: normalizedResponse, // Return normalized response when available
     optimizationApplied: [] // This would be populated from the optimization result
   };
 }
@@ -498,6 +518,36 @@ function completeJsonBrackets(jsonString: string, jobId?: string): string {
  * Only applies preprocessing when needed based on detected issues
  */
 export function intelligentJsonParse(response: string, context: string): any {
+  // Enhanced debug logging for context_curator_relevance_scoring
+  if (context === 'context_curator_relevance_scoring') {
+    logger.info({
+      context,
+      responseLength: response.length,
+      responsePreview: response.substring(0, 300),
+      responseEnd: response.substring(Math.max(0, response.length - 100)),
+      startsWithBrace: response.trim().startsWith('{'),
+      endsWithBrace: response.trim().endsWith('}'),
+      containsFileScores: response.includes('fileScores'),
+      containsOverallMetrics: response.includes('overallMetrics')
+    }, 'RELEVANCE SCORING - intelligentJsonParse called with response');
+  }
+
+  // Enhanced debug logging for context_curator_prompt_refinement
+  if (context === 'context_curator_prompt_refinement') {
+    logger.info({
+      context,
+      responseLength: response.length,
+      responsePreview: response.substring(0, 500),
+      responseEnd: response.substring(Math.max(0, response.length - 200)),
+      startsWithBrace: response.trim().startsWith('{'),
+      endsWithBrace: response.trim().endsWith('}'),
+      containsRefinedPrompt: response.includes('refinedPrompt'),
+      containsEnhancementReasoning: response.includes('enhancementReasoning'),
+      containsAddedContext: response.includes('addedContext'),
+      hasMarkdownBlocks: response.includes('```')
+    }, 'PROMPT REFINEMENT - intelligentJsonParse called with response');
+  }
+
   // STEP 1: Quick validation check - does it look like valid JSON?
   const validationResult = validateJsonExpectations(response);
 
@@ -1232,16 +1282,32 @@ function enhancedProgressiveJsonParsing(rawResponse: string, jobId?: string): an
 
   for (let i = 0; i < strategies.length; i++) {
     try {
+      // Enhanced debug logging for relevance scoring
+      if (jobId === 'context_curator_relevance_scoring') {
+        logger.info({ jobId, strategy: i + 1, strategyName: ['direct', 'mixed-content-smart', 'bracket-completion', 'relaxed-parsing', 'partial-extraction', 'aggressive-extraction'][i] || 'unknown' }, "RELEVANCE SCORING - Trying parsing strategy");
+      }
+
       const result = strategies[i]();
 
       // 16. Circular References detection and 13. Depth limiting
       const sanitizedResult = detectCircularAndLimitDepth(result, maxDepth, maxArrayLength, jobId);
 
       try { logger.debug({ jobId, strategy: i + 1, success: true }, "Enhanced JSON parsing successful"); } catch {}
+
+      // Enhanced success logging for relevance scoring
+      if (jobId === 'context_curator_relevance_scoring') {
+        logger.info({ jobId, strategy: i + 1, resultType: typeof sanitizedResult, resultKeys: sanitizedResult && typeof sanitizedResult === 'object' ? Object.keys(sanitizedResult) : 'not an object' }, "RELEVANCE SCORING - Strategy succeeded");
+      }
+
       return sanitizedResult;
     } catch (error) {
       lastError = error as Error;
       try { logger.debug({ jobId, strategy: i + 1, error: error instanceof Error ? error.message : String(error) }, "Enhanced JSON parsing strategy failed"); } catch {}
+
+      // Enhanced error logging for relevance scoring
+      if (jobId === 'context_curator_relevance_scoring') {
+        logger.info({ jobId, strategy: i + 1, error: error instanceof Error ? error.message : String(error), errorType: error instanceof Error ? error.constructor.name : typeof error }, "RELEVANCE SCORING - Strategy failed");
+      }
     }
   }
 
