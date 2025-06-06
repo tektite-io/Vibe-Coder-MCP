@@ -11,6 +11,7 @@ import './workflow-runner/index.js';
 import './job-result-retriever/index.js';
 import './code-map-generator/index.js';
 import './vibe-task-manager/index.js';
+import './context-curator/index.js';
 import './agent-registry/index.js';
 import './agent-tasks/index.js';
 import './agent-response/index.js';
