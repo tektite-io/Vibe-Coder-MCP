@@ -426,12 +426,12 @@ export class ConfigLoader {
    */
   getLLMModel(operation: string): string {
     if (!this.config) {
-      return 'google/gemini-2.5-flash-preview'; // fallback
+      return 'google/gemini-2.5-flash-preview-05-20'; // fallback
     }
 
     return this.config.llm.llm_mapping[operation] ||
            this.config.llm.llm_mapping['default_generation'] ||
-           'google/gemini-2.5-flash-preview';
+           'google/gemini-2.5-flash-preview-05-20';
   }
 
   /**
