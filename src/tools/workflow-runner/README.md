@@ -1,17 +1,94 @@
-# Workflow Runner Tool (`run-workflow`)
-
-**Status**: Production Ready | **Orchestration**: Multi-Tool Workflows | **Configuration**: workflows.json
+# Workflow Runner (`run-workflow`)
 
 ## Overview
 
-This tool executes a predefined sequence of tool calls, known as a workflow, based on definitions stored in the `workflows.json` file. It allows automating complex, multi-step tasks by orchestrating other tools within the Vibe Coder MCP server.
+The Workflow Runner orchestrates complex, multi-step development workflows by executing predefined sequences of tool calls. It enables automation of complete development processes, from project planning through implementation, by intelligently chaining together other Vibe Coder tools with dynamic parameter resolution and comprehensive error handling.
 
-**Production Highlights:**
+**Core Capabilities:**
 - **Multi-Tool Orchestration**: Seamlessly chains multiple tools in predefined sequences
-- **Asynchronous Processing**: Job-based execution with real-time status tracking
-- **Template Resolution**: Dynamic parameter resolution using workflow inputs and step outputs
-- **Error Resilience**: Comprehensive error handling with step-level failure reporting
-- **Configuration-Driven**: Flexible workflow definitions via JSON configuration
+- **Dynamic Parameter Resolution**: Template-based parameter resolution using workflow inputs and step outputs
+- **Asynchronous Processing**: Job-based execution with real-time status tracking and progress monitoring
+- **Error Resilience**: Comprehensive error handling with step-level failure reporting and recovery
+- **Configuration-Driven**: Flexible workflow definitions via JSON configuration files
+- **Template System**: Powerful templating for parameter passing between workflow steps
+- **Integration Ready**: Works with all Vibe Coder tools for complete automation
+
+## Architecture
+
+The Workflow Runner implements a sophisticated orchestration engine:
+
+```mermaid
+flowchart TD
+    subgraph "Workflow Execution"
+        A1[Load Workflow Definition] --> A2[Validate Inputs]
+        A2 --> A3[Initialize Step Context]
+        A3 --> A4[Execute Step Sequence]
+        A4 --> A5[Process Final Output]
+    end
+
+    subgraph "Step Processing"
+        B1[Resolve Parameters] --> B2[Execute Tool]
+        B2 --> B3[Store Results]
+        B3 --> B4[Check for Errors]
+        B4 --> B5[Continue/Stop]
+    end
+
+    subgraph "Template Resolution"
+        C1[Parse Templates] --> C2[Resolve Workflow Inputs]
+        C2 --> C3[Resolve Step Outputs]
+        C3 --> C4[Validate Resolution]
+    end
+
+    A4 --> B1
+    B1 --> C1
+    B5 --> A4
+```
+
+## Configuration
+
+### Claude Desktop MCP Client Setup
+
+Add this configuration to your `claude_desktop_config.json` file:
+
+```json
+"vibe-coder-mcp": {
+  "command": "node",
+  "args": ["--max-old-space-size=4096", "/path/to/your/Vibe-Coder-MCP/build/index.js"],
+  "cwd": "/path/to/your/Vibe-Coder-MCP",
+  "transport": "stdio",
+  "env": {
+    "LLM_CONFIG_PATH": "/path/to/your/Vibe-Coder-MCP/llm_config.json",
+    "LOG_LEVEL": "debug",
+    "NODE_ENV": "production",
+    "VIBE_CODER_OUTPUT_DIR": "/path/to/your/Vibe-Coder-MCP/VibeCoderOutput"
+  },
+  "disabled": false,
+  "autoApprove": [
+    "run-workflow",
+    "research",
+    "generate-prd",
+    "generate-user-stories",
+    "generate-task-list",
+    "generate-rules",
+    "generate-fullstack-starter-kit",
+    "get-job-result"
+  ]
+}
+```
+
+### Environment Variables
+
+#### Core Configuration
+- **`LLM_CONFIG_PATH`**: Path to LLM model configuration file
+- **`VIBE_CODER_OUTPUT_DIR`**: Directory where workflow outputs are saved
+- **`LOG_LEVEL`**: Logging verbosity for workflow execution
+- **`NODE_ENV`**: Runtime environment
+
+#### Workflow-Specific Settings
+- **`WORKFLOW_CONFIG_PATH`**: Path to workflows.json file (default: ./workflows.json)
+- **`WORKFLOW_EXECUTION_TIMEOUT_MS`**: Maximum workflow execution time (default: 300000)
+- **`WORKFLOW_STEP_TIMEOUT_MS`**: Maximum step execution time (default: 60000)
+- **`WORKFLOW_RETRY_ATTEMPTS`**: Number of retry attempts for failed steps (default: 1)
 
 ## Inputs
 
