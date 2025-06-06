@@ -70,6 +70,14 @@ export class YAMLComposer {
   private config: OpenRouterConfig;
   private generatedTemplateCache: Map<string, ParsedYamlModule> = new Map();
 
+  // Template name aliases to handle variations (e.g., postgres vs postgresql)
+  private templateAliases: Map<string, string> = new Map([
+    ['database/postgres', 'database/postgresql'],
+    ['database/postgresql', 'database/postgres'],
+    ['auth/authentication', 'auth/jwt'],
+    ['auth/jwt', 'auth/authentication'],
+  ]);
+
   constructor(config: OpenRouterConfig, baseTemplatePath: string = path.join(__dirname, 'templates')) {
     this.baseTemplatePath = baseTemplatePath;
     this.config = config;
@@ -84,6 +92,8 @@ The module path segment is '${modulePathSegment}'.
 
 === CRITICAL JSON FORMATTING REQUIREMENTS ===
 🚨 RESPOND WITH ONLY A VALID JSON OBJECT - NO MARKDOWN, NO CODE BLOCKS, NO EXPLANATIONS, NO SURROUNDING TEXT
+🚨 THE RESPONSE MUST BE A JSON OBJECT (starting with { and ending with }), NEVER AN ARRAY
+🚨 DO NOT RETURN ARRAYS OF STRINGS - RETURN A COMPLETE OBJECT STRUCTURE
 🚨 FAILURE TO FOLLOW THESE RULES WILL CAUSE SYSTEM FAILURE
 
 JSON SYNTAX RULES:
@@ -149,6 +159,8 @@ JSON Structure to follow:
 
 CRITICAL SCHEMA REQUIREMENTS:
 - Generate ONLY the raw JSON object. Do NOT use Markdown, code blocks, or any surrounding text.
+- The response MUST be a complete object with moduleName, description, type, and provides fields.
+- NEVER return just an array of strings - always return the full object structure.
 - Ensure all paths in 'directoryStructure' are relative to the module's own root.
 - For 'directoryStructure' items:
   * Files (type: "file") MUST have "content" as a string OR "generationPrompt" as a string, but NOT both
@@ -156,6 +168,38 @@ CRITICAL SCHEMA REQUIREMENTS:
   * ALL items MUST include the "content" field (string for files, null for directories)
 - If 'content' for a file is provided, 'generationPrompt' should be null/undefined, and vice-versa.
 - Use common placeholders like {projectName}, {backendPort}, {frontendPort}, {frontendPath}, {backendPath} where appropriate.
+
+EXAMPLE STRUCTURE (for reference - adapt for your specific technology):
+{
+  "moduleName": "example-module",
+  "description": "Example module description",
+  "type": "database",
+  "placeholders": ["projectName", "dbPort"],
+  "provides": {
+    "techStack": {
+      "technology": {
+        "name": "Technology Name",
+        "version": "latest",
+        "rationale": "Why this technology"
+      }
+    },
+    "directoryStructure": [
+      {
+        "path": "config.yml",
+        "type": "file",
+        "content": "example: {projectName}",
+        "generationPrompt": null
+      }
+    ],
+    "dependencies": {},
+    "setupCommands": [
+      {
+        "context": "root",
+        "command": "setup command"
+      }
+    ]
+  }
+}
 - Be comprehensive but sensible for a starter module of type '${category}' using '${technology}'.
 - Example: "dependencies": { "npm": { "{frontendPath}": { "dependencies": {"react": "^18.0.0"} } } }
 - If the module is self-contained, dependencies might be under "root":
@@ -218,7 +262,20 @@ Ensure the output is a single, raw JSON object without any other text or formatt
       // Use intelligent parsing with validation-first approach
       // This only applies preprocessing when needed, avoiding unnecessary data loss
       const { intelligentJsonParse } = await import('../../utils/llmHelper.js');
-      parsedJson = intelligentJsonParse(llmResponse, `dynamic-gen-${modulePathSegment}`) as Record<string, unknown>;
+      const parsed = intelligentJsonParse(llmResponse, `dynamic-gen-${modulePathSegment}`);
+
+      // Validate that the response is an object, not an array
+      if (Array.isArray(parsed)) {
+        logger.error({ modulePathSegment, parsedResponse: parsed, responsePreview: llmResponse.substring(0, 200) }, `LLM returned an array instead of object for ${modulePathSegment}`);
+        throw new ParsingError(`LLM returned an array instead of expected object structure for ${modulePathSegment}. Got: ${JSON.stringify(parsed)}`, { originalResponse: llmResponse, parsedResponse: parsed });
+      }
+
+      if (typeof parsed !== 'object' || parsed === null) {
+        logger.error({ modulePathSegment, parsedResponse: parsed, responsePreview: llmResponse.substring(0, 200) }, `LLM returned invalid type for ${modulePathSegment}`);
+        throw new ParsingError(`LLM returned invalid type (expected object) for ${modulePathSegment}. Got: ${typeof parsed}`, { originalResponse: llmResponse, parsedResponse: parsed });
+      }
+
+      parsedJson = parsed as Record<string, unknown>;
       logger.debug({ modulePathSegment, responseLength: llmResponse.length, parsedSize: JSON.stringify(parsedJson).length }, "Intelligent JSON parsing successful");
     } catch (error) {
       logger.error({ err: error, modulePathSegment, responsePreview: llmResponse.substring(0, 200) }, `Failed to parse LLM JSON response for ${modulePathSegment} using intelligent parsing`);
@@ -258,8 +315,21 @@ Ensure the output is a single, raw JSON object without any other text or formatt
       return this.generatedTemplateCache.get(modulePathSegment)!;
     }
 
-    const fullPath = path.resolve(this.baseTemplatePath, `${modulePathSegment}.yaml`);
+    // Try the original path first
+    let fullPath = path.resolve(this.baseTemplatePath, `${modulePathSegment}.yaml`);
     logger.debug(`Attempting to load YAML module from: ${fullPath}`);
+
+    // If the file doesn't exist, try template aliases
+    if (!(await fs.pathExists(fullPath)) && this.templateAliases.has(modulePathSegment)) {
+      const aliasPath = this.templateAliases.get(modulePathSegment)!;
+      const aliasFullPath = path.resolve(this.baseTemplatePath, `${aliasPath}.yaml`);
+      logger.debug(`Original template not found, trying alias: ${aliasFullPath}`);
+
+      if (await fs.pathExists(aliasFullPath)) {
+        fullPath = aliasFullPath;
+        logger.info(`Using template alias: ${modulePathSegment} -> ${aliasPath}`);
+      }
+    }
 
     if (await fs.pathExists(fullPath)) {
       logger.info(`Found existing YAML module: ${fullPath}`);

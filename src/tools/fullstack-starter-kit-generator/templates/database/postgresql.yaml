@@ -1,0 +1,56 @@
+# src/tools/fullstack-starter-kit-generator/templates/database/postgresql.yaml
+moduleName: postgresql-database
+description: "PostgreSQL database module for {projectName}"
+type: database
+
+placeholders:
+  - projectName
+  - dbUser
+  - dbPassword
+  - dbName
+  - dbPort
+
+provides:
+  techStack:
+    postgresql:
+      name: PostgreSQL
+      version: "latest"
+      rationale: "Provides a robust and widely-used relational database with advanced features."
+
+  directoryStructure:
+    - path: "docker-compose.yml"
+      type: file
+      content: |
+        version: '3.8'
+
+        services:
+          db:
+            image: postgres:latest
+            container_name: {projectName}_db
+            restart: always
+            environment:
+              POSTGRES_USER: {dbUser}
+              POSTGRES_PASSWORD: {dbPassword}
+              POSTGRES_DB: {dbName}
+            ports:
+              - "{dbPort}:5432"
+            volumes:
+              - db_data:/var/lib/postgresql/data
+
+        volumes:
+          db_data:
+      generationPrompt: null
+    - path: ".env.example"
+      type: file
+      content: |
+        DB_USER={dbUser}
+        DB_PASSWORD={dbPassword}
+        DB_NAME={dbName}
+        DB_PORT={dbPort}
+      generationPrompt: null
+
+  dependencies: {}
+
+  setupCommands:
+    - context: "root"
+      command: "docker-compose up -d"
