@@ -141,7 +141,7 @@ The setup script (from Step 3) automatically creates a `.env` file in the projec
 
         ## Sets the specific Gemini model to be used via OpenRouter for certain AI tasks.
         ## ':free' indicates potential usage of a free tier model if available and supported by your key.
-        GEMINI_MODEL=google/gemini-2.0-flash-thinking-exp:free
+        GEMINI_MODEL=google/gemini-2.5-flash-preview-05-20
         ```
     *   **Crucially, replace `"Your OPENROUTER_API_KEY here"` with your actual OpenRouter API key.** Remove the quotes if your key doesn't require them.
 
@@ -271,6 +271,78 @@ The location varies depending on your AI assistant:
 3. **Check for Proper Response:**
    * If working correctly, you should receive a research response.
    * If not, check the Troubleshooting section below.
+
+## AI Agent Integration
+
+The Vibe Coder MCP system includes comprehensive system instructions designed to help AI agents and MCP clients effectively leverage the full ecosystem. These instructions provide detailed guidance on tool usage, integration patterns, and best practices.
+
+### System Instructions File
+
+The `VIBE_CODER_MCP_SYSTEM_INSTRUCTIONS.md` file contains comprehensive guidance for AI agents on how to use the Vibe Coder MCP ecosystem effectively. This file should be integrated into your AI development environment to train your agents on optimal tool usage.
+
+### Platform-Specific Integration
+
+#### Claude Desktop
+Place the system instructions in your project's system instructions or custom instructions:
+1. Open Claude Desktop
+2. Navigate to project settings
+3. Add the contents of `VIBE_CODER_MCP_SYSTEM_INSTRUCTIONS.md` to the system instructions field
+4. Save and restart Claude Desktop
+
+#### ChatGPT
+Add the system instructions to your custom instructions or project settings:
+1. Open ChatGPT settings
+2. Navigate to custom instructions or project configuration
+3. Paste the contents of `VIBE_CODER_MCP_SYSTEM_INSTRUCTIONS.md`
+4. Save the configuration
+
+#### VS Code Extensions (Cline, Roo Coder, Augment)
+Integrate the system instructions into your extension's configuration:
+1. **Cline**: Place in system instructions or memories section
+2. **Roo Coder**: Add to system instructions or rules folder
+3. **Augment**: Place in system instructions or memories
+4. **Other VS Code forks**: Place in system instructions or rules folder with "always active" setting
+
+#### General MCP Clients
+For other MCP-compatible clients:
+1. Locate the system instructions or rules configuration
+2. Add the contents of `VIBE_CODER_MCP_SYSTEM_INSTRUCTIONS.md`
+3. Set as "always active" or "persistent" if the option is available
+4. Restart the client to apply changes
+
+### Key Integration Benefits
+
+- **Comprehensive Tool Knowledge**: Agents learn about all 15+ available tools and their capabilities
+- **Workflow Orchestration**: Guidance on chaining tools together for complex development workflows
+- **Job Polling Protocol**: Critical instructions for handling asynchronous operations correctly
+- **Best Practices**: Performance optimization and error handling strategies
+- **Integration Patterns**: Common workflows for research, planning, and implementation
+
+### Usage Examples
+
+Once integrated, your AI agents will be able to:
+
+```bash
+# Research-driven development
+"Research modern React patterns, then create a PRD and generate user stories"
+
+# Complete project setup
+"Set up a new e-commerce project with React frontend and Node.js backend"
+
+# Context-aware development
+"Analyze this codebase and suggest improvements with implementation tasks"
+
+# Multi-agent coordination
+"Register frontend and backend agents, then distribute authentication tasks"
+```
+
+### Verification
+
+To verify successful integration:
+1. Ask your AI agent about available Vibe Coder tools
+2. Request a workflow that uses multiple tools in sequence
+3. Check that the agent follows proper job polling protocols
+4. Confirm that outputs are saved to the correct directories
 
 ## Project Architecture
 
