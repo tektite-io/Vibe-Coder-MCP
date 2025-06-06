@@ -206,6 +206,16 @@ async function initDirectories() {
     }
 
     try {
+      const contextCurator = await import('./tools/context-curator/index.js');
+      if (typeof contextCurator.initDirectories === 'function') {
+        await contextCurator.initDirectories();
+        logger.debug('Initialized context-curator directories');
+      }
+    } catch (error) {
+      logger.error({ err: error }, 'Error initializing context-curator');
+    }
+
+    try {
       const taskListGenerator = await import('./tools/task-list-generator/index.js');
       if (typeof taskListGenerator.initDirectories === 'function') {
         await taskListGenerator.initDirectories();
@@ -232,7 +242,7 @@ async function initializeApp() {
   const openRouterConfig: OpenRouterConfig = {
       baseUrl: process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1",
       apiKey: process.env.OPENROUTER_API_KEY || "",
-      geminiModel: process.env.GEMINI_MODEL || "google/gemini-2.0-flash-001",
+      geminiModel: process.env.GEMINI_MODEL || "google/gemini-2.5-flash-preview-05-20",
       perplexityModel: process.env.PERPLEXITY_MODEL || "perplexity/sonar-deep-research",
       llm_mapping: JSON.parse(JSON.stringify(llmMapping)) // Create a deep copy using JSON serialization
   };

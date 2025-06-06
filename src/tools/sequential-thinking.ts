@@ -1,10 +1,22 @@
 import axios, { AxiosError } from 'axios';
+import https from 'https';
 import { OpenRouterConfig } from '../types/workflow.js';
 import logger from '../logger.js';
 import { sequentialThoughtSchema, SequentialThought as ZodSequentialThought } from '../types/sequentialThought.js';
 // Removed ValidationIssue from import as it's no longer exported/used here
 import { ApiError, ParsingError, ValidationError, AppError, FallbackError } from '../utils/errors.js';
 import { selectModelForTask } from '../utils/configLoader.js'; // Import the new utility
+
+// Configure axios with SSL settings to handle SSL/TLS issues (same as llmHelper.ts)
+const httpsAgent = new https.Agent({
+  rejectUnauthorized: true, // Keep SSL verification enabled for security
+  maxVersion: 'TLSv1.3',
+  minVersion: 'TLSv1.2',
+  ciphers: 'ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384',
+  honorCipherOrder: true,
+  keepAlive: true,
+  timeout: 30000
+});
 
 // Removed internal SequentialThought interface as ZodSequentialThought is now the source of truth.
 
@@ -237,7 +249,7 @@ export async function getNextThought( // Added export back
   // Removed outer declaration: let rawContent: string | undefined;
 
   // Select the model using the utility function
-  const defaultModel = config.geminiModel || "google/gemini-2.0-flash-001"; // Ensure a default model exists
+  const defaultModel = config.geminiModel || "google/gemini-2.5-flash-preview-05-20"; // Ensure a default model exists
   const modelToUse = selectModelForTask(config, logicalTaskName, defaultModel);
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -266,7 +278,11 @@ export async function getNextThought( // Added export back
             "Content-Type": "application/json",
             "Authorization": `Bearer ${config.apiKey}`,
             "HTTP-Referer": "https://vibe-coder-mcp.local"
-          }
+          },
+          httpsAgent: httpsAgent, // Use the configured HTTPS agent for SSL/TLS handling
+          timeout: 90000, // Increased timeout to 90s for potentially longer generations
+          maxRedirects: 5,
+          validateStatus: (status) => status < 500 // Accept 4xx errors but reject 5xx
         }
       );
 

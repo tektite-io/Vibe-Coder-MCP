@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- General Task Template for Context Curator -->
+<general_context_package task_type="general" generated_at="{{generationTimestamp}}">
+  <project_info>
+    <name>{{projectName}}</name>
+    <target_directory>{{targetDirectory}}</target_directory>
+    <total_files>{{totalFiles}}</total_files>
+    <total_tokens>{{totalTokens}}</total_tokens>
+  </project_info>
+
+  <general_development_guidelines>
+    <principle>Follow established coding standards and conventions</principle>
+    <principle>Implement comprehensive error handling and validation</principle>
+    <principle>Ensure code is maintainable and well-documented</principle>
+    <principle>Consider performance, security, and scalability implications</principle>
+    <principle>Apply appropriate design patterns and architectural principles</principle>
+  </general_development_guidelines>
+
+  <atomic_task_guidelines>
+    <guideline>Each task should have a single, well-defined objective</guideline>
+    <guideline>Tasks should be completable in 5-15 minutes</guideline>
+    <guideline>Include specific acceptance criteria and success metrics</guideline>
+    <guideline>Define clear dependencies and integration points</guideline>
+    <guideline>Specify testing requirements and validation methods</guideline>
+  </atomic_task_guidelines>
+
+  <development_best_practices>
+    <practice name="Clean Code">Write readable, self-documenting code</practice>
+    <practice name="SOLID Principles">Apply single responsibility, open/closed, etc.</practice>
+    <practice name="DRY Principle">Don't repeat yourself - eliminate duplication</practice>
+    <practice name="YAGNI">You aren't gonna need it - avoid over-engineering</practice>
+    <practice name="Test-Driven Development">Write tests before implementation</practice>
+    <practice name="Code Reviews">Ensure quality through peer review</practice>
+  </development_best_practices>
+
+  <architectural_considerations>
+    <consideration>Separation of concerns and modularity</consideration>
+    <consideration>Dependency management and injection</consideration>
+    <consideration>Error handling and logging strategies</consideration>
+    <consideration>Performance optimization and caching</consideration>
+    <consideration>Security best practices and validation</consideration>
+    <consideration>Monitoring and observability requirements</consideration>
+  </architectural_considerations>
+
+  <quality_standards>
+    <standard name="Code Quality">Maintain high code quality metrics</standard>
+    <standard name="Test Coverage">Achieve minimum 95% test coverage</standard>
+    <standard name="Documentation">Provide comprehensive documentation</standard>
+    <standard name="Performance">Meet performance requirements</standard>
+    <standard name="Security">Follow security best practices</standard>
+    <standard name="Maintainability">Ensure code is maintainable</standard>
+  </quality_standards>
+
+  <task_categories>
+    <category name="Implementation">Core functionality development</category>
+    <category name="Testing">Test creation and validation</category>
+    <category name="Documentation">Technical and user documentation</category>
+    <category name="Optimization">Performance and efficiency improvements</category>
+    <category name="Integration">System integration and API development</category>
+    <category name="Maintenance">Code cleanup and technical debt reduction</category>
+  </task_categories>
+
+  <validation_checklist>
+    <item>Requirements clearly understood and implemented</item>
+    <item>Code follows established standards and conventions</item>
+    <item>Comprehensive tests created and passing</item>
+    <item>Error handling and edge cases addressed</item>
+    <item>Performance requirements met</item>
+    <item>Security considerations addressed</item>
+    <item>Documentation updated and complete</item>
+    <item>Code review completed and approved</item>
+  </validation_checklist>
+
+  <!-- Content will be inserted here -->
+  {{CONTENT}}
+
+  <meta_prompt_enhancement>
+    <system_instruction>
+      You are an expert software developer with broad experience across multiple domains. 
+      Focus on delivering high-quality, maintainable solutions that follow best practices 
+      and established patterns. Consider all aspects of software development including 
+      functionality, performance, security, and maintainability.
+    </system_instruction>
+    
+    <task_decomposition_rules>
+      <rule>Break work into logical, independent components</rule>
+      <rule>Prioritize high-value, low-risk implementations</rule>
+      <rule>Design for maintainability and extensibility</rule>
+      <rule>Include comprehensive testing and validation</rule>
+    </task_decomposition_rules>
+  </meta_prompt_enhancement>
+</general_context_package>

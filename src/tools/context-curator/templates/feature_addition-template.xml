@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Feature Addition Task Template for Context Curator -->
+<feature_addition_context_package task_type="feature_addition" generated_at="{{generationTimestamp}}">
+  <project_info>
+    <name>{{projectName}}</name>
+    <target_directory>{{targetDirectory}}</target_directory>
+    <total_files>{{totalFiles}}</total_files>
+    <total_tokens>{{totalTokens}}</total_tokens>
+  </project_info>
+
+  <feature_development_guidelines>
+    <principle>Follow existing architectural patterns and conventions</principle>
+    <principle>Implement comprehensive error handling and validation</principle>
+    <principle>Ensure backward compatibility with existing features</principle>
+    <principle>Design for scalability and maintainability</principle>
+    <principle>Include comprehensive documentation and examples</principle>
+  </feature_development_guidelines>
+
+  <atomic_task_guidelines>
+    <guideline>Each feature task should implement a single, well-defined capability</guideline>
+    <guideline>Tasks should be completable in 5-15 minutes</guideline>
+    <guideline>Include specific acceptance criteria and test cases</guideline>
+    <guideline>Define clear integration points with existing code</guideline>
+    <guideline>Specify rollback procedures and feature flags if needed</guideline>
+  </atomic_task_guidelines>
+
+  <development_patterns>
+    <pattern name="Feature Flag">Implement toggleable features for safe deployment</pattern>
+    <pattern name="API First">Design API contracts before implementation</pattern>
+    <pattern name="Test-Driven Development">Write tests before implementation</pattern>
+    <pattern name="Progressive Enhancement">Build features incrementally</pattern>
+    <pattern name="Dependency Injection">Use DI for testable, modular code</pattern>
+    <pattern name="Event-Driven Architecture">Implement loose coupling through events</pattern>
+  </development_patterns>
+
+  <integration_considerations>
+    <consideration>Database schema changes and migrations</consideration>
+    <consideration>API versioning and backward compatibility</consideration>
+    <consideration>Security implications and access control</consideration>
+    <consideration>Performance impact and optimization</consideration>
+    <consideration>Monitoring and observability requirements</consideration>
+    <consideration>Documentation and user training needs</consideration>
+  </integration_considerations>
+
+  <quality_requirements>
+    <requirement name="Test Coverage">Achieve minimum 95% test coverage</requirement>
+    <requirement name="Performance">Meet specified performance benchmarks</requirement>
+    <requirement name="Security">Pass security review and vulnerability scans</requirement>
+    <requirement name="Accessibility">Comply with accessibility standards</requirement>
+    <requirement name="Documentation">Complete API and user documentation</requirement>
+  </quality_requirements>
+
+  <validation_checklist>
+    <item>Feature requirements fully implemented</item>
+    <item>All acceptance criteria met</item>
+    <item>Comprehensive test suite created</item>
+    <item>Integration tests passing</item>
+    <item>Performance benchmarks met</item>
+    <item>Security review completed</item>
+    <item>Documentation updated</item>
+    <item>User acceptance testing completed</item>
+  </validation_checklist>
+
+  <!-- Content will be inserted here -->
+  {{CONTENT}}
+
+  <meta_prompt_enhancement>
+    <system_instruction>
+      You are an expert software feature developer. Focus on implementing robust, scalable 
+      features that integrate seamlessly with existing systems. Follow established patterns, 
+      ensure comprehensive testing, and maintain high code quality standards. Consider 
+      security, performance, and user experience in all implementations.
+    </system_instruction>
+    
+    <task_decomposition_rules>
+      <rule>Break features into independent, testable components</rule>
+      <rule>Implement core functionality before enhancements</rule>
+      <rule>Design for extensibility and future requirements</rule>
+      <rule>Include comprehensive error handling and edge cases</rule>
+    </task_decomposition_rules>
+  </meta_prompt_enhancement>
+</feature_addition_context_package>

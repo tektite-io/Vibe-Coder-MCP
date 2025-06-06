@@ -224,7 +224,7 @@ describe('ConfigLoader', () => {
     it('should fallback to hardcoded default when config not loaded', () => {
       const newLoader = new (ConfigLoader as any)();
       const model = newLoader.getLLMModel('task_decomposition');
-      expect(model).toBe('google/gemini-2.5-flash-preview');
+      expect(model).toBe('google/gemini-2.5-flash-preview-05-20');
     });
   });
 

@@ -1,17 +1,89 @@
 # Fullstack Starter Kit Generator (`generate-fullstack-starter-kit`)
 
-**Status**: Production Ready | **Tech Stacks**: Multiple Supported | **Dynamic Generation**: YAML Module Creation
-
 ## Overview
 
-Generates full-stack project starter kits by composing YAML modules based on user requirements and tech stack preferences. This tool leverages Large Language Models (LLMs) via OpenRouter to select appropriate modules and parameters, and then assembles them into a final JSON definition using a `YAMLComposer`.
+The Fullstack Starter Kit Generator creates complete, production-ready project scaffolds by intelligently composing YAML modules based on user requirements and tech stack preferences. It features dynamic template generation, comprehensive tech stack support, and automated project setup scripts for rapid development kickstart.
 
-**Production Highlights:**
-- **Multiple Tech Stacks**: React, Vue, Angular, Node.js, Python, Go, and more
-- **Dynamic YAML Module Generation**: Auto-generates missing templates using LLM
-- **Asynchronous Processing**: Job-based execution with real-time status tracking
-- **Comprehensive Output**: Complete project structure with setup scripts
-- **Template Caching**: In-memory and persistent template caching for performance
+**Core Capabilities:**
+- **Multi-Stack Support**: React, Vue, Angular, Node.js, Python, Go, and 20+ technology combinations
+- **Dynamic YAML Module Generation**: Auto-generates missing templates using LLM when needed
+- **Intelligent Composition**: Smart merging of modules with conflict resolution
+- **Complete Project Setup**: Generates directory structure, dependencies, and setup scripts
+- **Template Caching**: In-memory and persistent template caching for optimal performance
+- **Cross-Platform Scripts**: Generates both Unix (.sh) and Windows (.bat) setup scripts
+- **Integration Ready**: Works with other Vibe Coder tools for complete project planning
+
+## Architecture
+
+The Fullstack Starter Kit Generator implements a sophisticated module composition system:
+
+```mermaid
+flowchart TD
+    subgraph "Module Selection"
+        A1[Tech Stack Analysis] --> A2[Module Recommendation]
+        A2 --> A3[Template Selection]
+        A3 --> A4[Dynamic Generation]
+    end
+
+    subgraph "YAML Composition"
+        B1[Template Loading] --> B2[Parameter Substitution]
+        B2 --> B3[Module Merging]
+        B3 --> B4[Conflict Resolution]
+        B4 --> B5[Validation]
+    end
+
+    subgraph "Output Generation"
+        C1[JSON Definition] --> C2[Setup Scripts]
+        C2 --> C3[Directory Structure]
+        C3 --> C4[File Generation]
+    end
+
+    A4 --> B1
+    B5 --> C1
+```
+
+## Configuration
+
+### Claude Desktop MCP Client Setup
+
+Add this configuration to your `claude_desktop_config.json` file:
+
+```json
+"vibe-coder-mcp": {
+  "command": "node",
+  "args": ["--max-old-space-size=4096", "/path/to/your/Vibe-Coder-MCP/build/index.js"],
+  "cwd": "/path/to/your/Vibe-Coder-MCP",
+  "transport": "stdio",
+  "env": {
+    "LLM_CONFIG_PATH": "/path/to/your/Vibe-Coder-MCP/llm_config.json",
+    "LOG_LEVEL": "debug",
+    "NODE_ENV": "production",
+    "VIBE_CODER_OUTPUT_DIR": "/path/to/your/Vibe-Coder-MCP/VibeCoderOutput",
+    "OPENROUTER_API_KEY": "your-openrouter-api-key"
+  },
+  "disabled": false,
+  "autoApprove": [
+    "generate-fullstack-starter-kit",
+    "research",
+    "generate-task-list",
+    "get-job-result"
+  ]
+}
+```
+
+### Environment Variables
+
+#### Core Configuration
+- **`OPENROUTER_API_KEY`**: Required API key for research and dynamic template generation
+- **`LLM_CONFIG_PATH`**: Path to LLM model configuration file
+- **`VIBE_CODER_OUTPUT_DIR`**: Directory where starter kits are generated
+- **`LOG_LEVEL`**: Logging verbosity for generation operations
+
+#### Starter Kit-Specific Settings
+- **`STARTER_KIT_TEMPLATE_CACHE_TTL`**: Template cache TTL in minutes (default: 60)
+- **`STARTER_KIT_DYNAMIC_GENERATION`**: Enable dynamic template generation (default: true)
+- **`STARTER_KIT_RESEARCH_ENABLED`**: Enable tech stack research (default: true)
+- **`STARTER_KIT_MAX_MODULES`**: Maximum modules per kit (default: 10)
 
 **Dynamic YAML Module Generation:**
 If a specified YAML module template (e.g., `frontend/react-vite.yaml`) is not found in the `src/tools/fullstack-starter-kit-generator/templates/` directory, the system will attempt to dynamically generate it using an LLM. The generated module (in JSON format from LLM, then converted to YAML) will then be saved to the templates directory for future use and cached in memory for the current session.

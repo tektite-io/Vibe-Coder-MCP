@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Refactoring Task Template for Context Curator -->
+<refactoring_context_package task_type="refactoring" generated_at="{{generationTimestamp}}">
+  <project_info>
+    <name>{{projectName}}</name>
+    <target_directory>{{targetDirectory}}</target_directory>
+    <total_files>{{totalFiles}}</total_files>
+    <total_tokens>{{totalTokens}}</total_tokens>
+  </project_info>
+
+  <refactoring_guidelines>
+    <principle>Preserve existing functionality while improving code quality</principle>
+    <principle>Maintain backward compatibility unless explicitly specified</principle>
+    <principle>Follow established architectural patterns in the codebase</principle>
+    <principle>Ensure comprehensive test coverage for refactored components</principle>
+    <principle>Document any breaking changes or migration requirements</principle>
+  </refactoring_guidelines>
+
+  <atomic_task_guidelines>
+    <guideline>Each refactoring task should focus on a single concern (SRP)</guideline>
+    <guideline>Tasks should be completable in 5-15 minutes</guideline>
+    <guideline>Include specific before/after code examples</guideline>
+    <guideline>Define clear success criteria and validation methods</guideline>
+    <guideline>Specify rollback procedures for each change</guideline>
+  </atomic_task_guidelines>
+
+  <refactoring_patterns>
+    <pattern name="Extract Method">Break down large methods into smaller, focused functions</pattern>
+    <pattern name="Extract Class">Separate concerns by creating new classes</pattern>
+    <pattern name="Rename Variable/Method">Improve code readability with descriptive names</pattern>
+    <pattern name="Remove Duplication">Consolidate repeated code into reusable components</pattern>
+    <pattern name="Simplify Conditionals">Reduce complexity in conditional logic</pattern>
+    <pattern name="Improve Error Handling">Enhance error handling and logging</pattern>
+  </refactoring_patterns>
+
+  <quality_metrics>
+    <metric name="Cyclomatic Complexity">Reduce complexity score by at least 20%</metric>
+    <metric name="Code Duplication">Eliminate duplicate code blocks</metric>
+    <metric name="Test Coverage">Maintain or improve test coverage above 95%</metric>
+    <metric name="Performance">Ensure no performance degradation</metric>
+    <metric name="Maintainability Index">Improve maintainability score</metric>
+  </quality_metrics>
+
+  <validation_checklist>
+    <item>All existing tests pass</item>
+    <item>New tests added for refactored code</item>
+    <item>Code review completed</item>
+    <item>Performance benchmarks maintained</item>
+    <item>Documentation updated</item>
+    <item>Breaking changes documented</item>
+  </validation_checklist>
+
+  <!-- Content will be inserted here -->
+  {{CONTENT}}
+
+  <meta_prompt_enhancement>
+    <system_instruction>
+      You are an expert software refactoring specialist. Focus on improving code quality, 
+      maintainability, and performance while preserving existing functionality. Apply SOLID 
+      principles and established design patterns. Ensure all changes are thoroughly tested 
+      and documented.
+    </system_instruction>
+    
+    <task_decomposition_rules>
+      <rule>Break refactoring into atomic, reversible changes</rule>
+      <rule>Prioritize high-impact, low-risk improvements</rule>
+      <rule>Maintain functional equivalence throughout</rule>
+      <rule>Include comprehensive testing strategy</rule>
+    </task_decomposition_rules>
+  </meta_prompt_enhancement>
+</refactoring_context_package>

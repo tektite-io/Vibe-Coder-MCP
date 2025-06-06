@@ -1,17 +1,82 @@
-# Job Result Retriever Tool (`get-job-result`)
-
-**Status**: Production Ready | **Function**: Asynchronous Job Management | **Features**: Adaptive Polling & Rate Limiting
+# Job Result Retriever (`get-job-result`)
 
 ## Overview
 
-This tool retrieves the final result of an asynchronous background job that was previously initiated by another tool (like `generate-task-list`, `run-workflow`, etc.).
+The Job Result Retriever manages asynchronous job completion by providing intelligent polling mechanisms for background tasks. It implements adaptive polling strategies, rate limiting, and comprehensive status tracking to efficiently retrieve results from long-running operations initiated by other Vibe Coder tools.
 
-**Production Highlights:**
-- **Asynchronous Job Management**: Retrieves results from background job execution
-- **Adaptive Polling**: Intelligent polling recommendations with exponential backoff
-- **Rate Limiting**: Server-side protection against excessive polling
-- **Real-Time Status**: Live job status updates with progress tracking
+**Core Capabilities:**
+- **Asynchronous Job Management**: Retrieves results from background job execution across all tools
+- **Adaptive Polling**: Intelligent polling recommendations with exponential backoff strategies
+- **Rate Limiting**: Server-side protection against excessive polling with dynamic wait times
+- **Real-Time Status**: Live job status updates with detailed progress tracking
 - **Error Resilience**: Comprehensive error handling and recovery strategies
+- **Performance Optimization**: Smart polling intervals based on job type and current status
+- **Integration Ready**: Works with all asynchronous Vibe Coder tools for seamless job management
+
+## Architecture
+
+The Job Result Retriever implements a sophisticated job management system:
+
+```mermaid
+flowchart TD
+    subgraph "Job Management"
+        A1[Job Status Check] --> A2[Rate Limit Validation]
+        A2 --> A3[Status Retrieval]
+        A3 --> A4[Progress Analysis]
+        A4 --> A5[Response Generation]
+    end
+
+    subgraph "Polling Strategy"
+        B1[Current Status] --> B2[Job Type Analysis]
+        B2 --> B3[Interval Calculation]
+        B3 --> B4[Backoff Strategy]
+        B4 --> B5[Recommendation]
+    end
+
+    subgraph "Rate Limiting"
+        C1[Request Frequency] --> C2[Limit Check]
+        C2 --> C3[Wait Time Calculation]
+        C3 --> C4[Exponential Backoff]
+    end
+
+    A4 --> B1
+    A2 --> C1
+```
+
+## Configuration
+
+### Claude Desktop MCP Client Setup
+
+Add this configuration to your `claude_desktop_config.json` file:
+
+```json
+"vibe-coder-mcp": {
+  "command": "node",
+  "args": ["--max-old-space-size=4096", "/path/to/your/Vibe-Coder-MCP/build/index.js"],
+  "cwd": "/path/to/your/Vibe-Coder-MCP",
+  "transport": "stdio",
+  "env": {
+    "LOG_LEVEL": "debug",
+    "NODE_ENV": "production"
+  },
+  "disabled": false,
+  "autoApprove": [
+    "get-job-result"
+  ]
+}
+```
+
+### Environment Variables
+
+#### Core Configuration
+- **`LOG_LEVEL`**: Logging verbosity for job management operations
+- **`NODE_ENV`**: Runtime environment
+
+#### Job Management Settings
+- **`JOB_POLLING_MIN_INTERVAL_MS`**: Minimum polling interval (default: 1000)
+- **`JOB_POLLING_MAX_INTERVAL_MS`**: Maximum polling interval (default: 10000)
+- **`JOB_RATE_LIMIT_WINDOW_MS`**: Rate limiting window (default: 5000)
+- **`JOB_MAX_CONCURRENT_POLLS`**: Maximum concurrent polling requests (default: 10)
 
 ## Inputs
 

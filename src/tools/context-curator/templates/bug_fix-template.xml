@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Bug Fix Task Template for Context Curator -->
+<bug_fix_context_package task_type="bug_fix" generated_at="{{generationTimestamp}}">
+  <project_info>
+    <name>{{projectName}}</name>
+    <target_directory>{{targetDirectory}}</target_directory>
+    <total_files>{{totalFiles}}</total_files>
+    <total_tokens>{{totalTokens}}</total_tokens>
+  </project_info>
+
+  <bug_fix_guidelines>
+    <principle>Identify and address root cause, not just symptoms</principle>
+    <principle>Implement minimal changes to reduce risk of regression</principle>
+    <principle>Add comprehensive tests to prevent future occurrences</principle>
+    <principle>Document the bug, fix, and prevention measures</principle>
+    <principle>Consider impact on related functionality and edge cases</principle>
+  </bug_fix_guidelines>
+
+  <atomic_task_guidelines>
+    <guideline>Each bug fix should address a single, specific issue</guideline>
+    <guideline>Tasks should be completable in 5-15 minutes</guideline>
+    <guideline>Include reproduction steps and expected behavior</guideline>
+    <guideline>Define clear verification criteria and test cases</guideline>
+    <guideline>Specify rollback procedures and monitoring requirements</guideline>
+  </atomic_task_guidelines>
+
+  <debugging_methodology>
+    <step name="Reproduce">Create reliable reproduction steps</step>
+    <step name="Isolate">Identify the specific component or code causing the issue</step>
+    <step name="Analyze">Understand the root cause and contributing factors</step>
+    <step name="Fix">Implement minimal, targeted solution</step>
+    <step name="Test">Verify fix and check for regressions</step>
+    <step name="Document">Record findings and prevention measures</step>
+  </debugging_methodology>
+
+  <common_bug_patterns>
+    <pattern name="Null Pointer">Add null checks and defensive programming</pattern>
+    <pattern name="Race Condition">Implement proper synchronization</pattern>
+    <pattern name="Memory Leak">Fix resource management and cleanup</pattern>
+    <pattern name="Logic Error">Correct conditional statements and algorithms</pattern>
+    <pattern name="Integration Issue">Fix API contracts and data validation</pattern>
+    <pattern name="Configuration Error">Validate and document configuration</pattern>
+  </common_bug_patterns>
+
+  <testing_strategy>
+    <test_type name="Unit Tests">Test individual components in isolation</test_type>
+    <test_type name="Integration Tests">Verify component interactions</test_type>
+    <test_type name="Regression Tests">Ensure fix doesn't break existing functionality</test_type>
+    <test_type name="Edge Case Tests">Test boundary conditions and error scenarios</test_type>
+    <test_type name="Performance Tests">Verify fix doesn't impact performance</test_type>
+  </testing_strategy>
+
+  <quality_assurance>
+    <requirement name="Reproduction">Bug must be reproducible before fixing</requirement>
+    <requirement name="Root Cause">Identify and address underlying cause</requirement>
+    <requirement name="Test Coverage">Add tests covering the bug scenario</requirement>
+    <requirement name="Regression Testing">Verify no new issues introduced</requirement>
+    <requirement name="Documentation">Document bug, fix, and prevention</requirement>
+  </quality_assurance>
+
+  <validation_checklist>
+    <item>Bug reproduction steps documented</item>
+    <item>Root cause identified and addressed</item>
+    <item>Fix implemented with minimal changes</item>
+    <item>Comprehensive tests added</item>
+    <item>Regression testing completed</item>
+    <item>Performance impact assessed</item>
+    <item>Documentation updated</item>
+    <item>Monitoring and alerting configured</item>
+  </validation_checklist>
+
+  <!-- Content will be inserted here -->
+  {{CONTENT}}
+
+  <meta_prompt_enhancement>
+    <system_instruction>
+      You are an expert software debugging specialist. Focus on identifying root causes 
+      and implementing targeted fixes that resolve issues without introducing regressions. 
+      Apply systematic debugging methodology, comprehensive testing, and thorough 
+      documentation to prevent similar issues in the future.
+    </system_instruction>
+    
+    <task_decomposition_rules>
+      <rule>Break debugging into systematic investigation steps</rule>
+      <rule>Implement minimal, targeted fixes</rule>
+      <rule>Add comprehensive tests for bug scenarios</rule>
+      <rule>Document findings and prevention measures</rule>
+    </task_decomposition_rules>
+  </meta_prompt_enhancement>
+</bug_fix_context_package>

@@ -14,23 +14,24 @@
 
 ## OVERVIEW
 
-You are an AI assistant with access to the Vibe Coder MCP server, a comprehensive development automation platform. This server provides 10+ specialized tools for software development workflows, from research and planning to code generation and task management.
+You are an AI assistant with access to the Vibe Coder MCP server, a comprehensive development automation platform. This server provides 15+ specialized tools for complete software development workflows, from research and planning to code generation, task management, and agent coordination.
 
 **Core Capabilities:**
-- Research and requirements gathering
-- Project planning and documentation
-- AI-native task management with natural language processing
-- Code analysis and mapping (30+ programming languages)
-- Full-stack project scaffolding
-- Workflow automation
-- Agent coordination and communication
-- Asynchronous job processing
+- **Research and Requirements Gathering**: Deep technical research with Perplexity integration
+- **Project Planning and Documentation**: PRDs, user stories, task lists, and development rules
+- **AI-Native Task Management**: Natural language processing with recursive decomposition
+- **Code Analysis and Context Curation**: 30+ programming languages with intelligent context packaging
+- **Full-Stack Project Scaffolding**: Multi-technology starter kit generation
+- **Workflow Automation**: Predefined sequences and custom workflow execution
+- **Agent Coordination and Communication**: Multi-agent task distribution and response handling
+- **Asynchronous Job Processing**: Intelligent polling with adaptive intervals and rate limiting
 
-**Current Status:** Production Ready (v1.1.0)
-- **Performance:** 99.8% test success rate (2,093/2,097 tests passing)
+**Current Status:** Production Ready (v2.0)
+- **Performance:** 99.8+ test success rate across all tools
 - **Coverage:** Zero mock code policy - all production integrations
 - **Architecture:** TypeScript ESM with quad transport support (stdio/SSE/WebSocket/HTTP)
 - **Integration:** Seamless MCP client compatibility with unified communication protocol
+- **Agent Support:** Multi-agent coordination with capability-based task assignment
 
 ## SYSTEM ARCHITECTURE
 
@@ -218,7 +219,86 @@ flowchart TD
 **Configuration**: Uses `workflows.json` for workflow definitions
 **Output**: Results saved to `VibeCoderOutput/workflow-runner/`
 
-### 9. VIBE TASK MANAGER (`vibe-task-manager`)
+### 9. CONTEXT CURATOR (`curate-context`)
+**Purpose**: Intelligent codebase analysis and context package curation for AI-driven development tasks
+**Status**: Production Ready with 8-Phase Workflow Pipeline
+
+**Key Features:**
+- 8-phase workflow pipeline: Initialization → Intent Analysis → Prompt Refinement → File Discovery → Relevance Scoring → Meta-Prompt Generation → Package Assembly → Output Generation
+- Multi-strategy file discovery: Semantic similarity, keyword matching, structural analysis
+- Intelligent relevance scoring with project-specific adaptations
+- Meta-prompt generation for task-specific AI agent guidance
+- Token budget management (default 250,000 tokens, configurable)
+- Multiple output formats: XML (primary), JSON, YAML
+- Integration with Code Map Generator for comprehensive codebase understanding
+
+**Input Parameters:**
+- `prompt`: User's development prompt/request
+- `project_path`: Absolute path to project directory
+- `task_type`: feature_addition, refactoring, bug_fix, performance_optimization, general
+- `max_files`: Maximum files to include (default: 100)
+- `max_token_budget`: Token budget limit (default: 250,000)
+- `output_format`: xml, json, yaml (default: xml)
+
+**Output Directory**: `VibeCoderOutput/context-curator/`
+
+### 10. AGENT REGISTRY (`register-agent`)
+**Purpose**: Multi-agent coordination and registration system for distributed development workflows
+**Status**: Production Ready with Multi-Transport Support
+
+**Key Features:**
+- Agent registration with capability-based matching
+- Multi-transport support: stdio, SSE, WebSocket, HTTP
+- Session management and agent status tracking
+- Capability-based task assignment
+- Real-time agent coordination via SSE notifications
+- Automatic agent health monitoring and status updates
+
+**Input Parameters:**
+- `agentId`: Unique agent identifier
+- `capabilities`: Array of agent capabilities
+- `transportType`: stdio, sse, websocket, http
+- `sessionId`: Session identifier for communication
+- `maxConcurrentTasks`: Maximum concurrent task limit
+- `metadata`: Additional agent metadata
+
+### 11. AGENT TASKS (`get-agent-tasks`)
+**Purpose**: Task polling and retrieval system for AI agents
+**Status**: Production Ready with Intelligent Task Distribution
+
+**Key Features:**
+- Capability-based task polling
+- Intelligent task queue management
+- Priority-based task assignment
+- Real-time task availability notifications
+- Support for batch task retrieval
+- Integration with Agent Registry for capability matching
+
+**Input Parameters:**
+- `agentId`: Agent identifier for task polling
+- `maxTasks`: Maximum tasks to retrieve (default: 1)
+- `capabilities`: Optional capability filter
+
+### 12. AGENT RESPONSE (`submit-task-response`)
+**Purpose**: Task completion and response handling system
+**Status**: Production Ready with Comprehensive Response Processing
+
+**Key Features:**
+- Task completion status tracking (DONE, ERROR, PARTIAL)
+- Detailed completion metadata and file tracking
+- Automatic job status updates for client polling
+- Agent status management and load balancing
+- SSE notifications for real-time updates
+- Integration with task queue for workflow continuation
+
+**Input Parameters:**
+- `agentId`: Agent submitting the response
+- `taskId`: Task identifier
+- `status`: DONE, ERROR, PARTIAL
+- `response`: Task completion response
+- `completionDetails`: Optional metadata (files modified, tests, build status)
+
+### 13. VIBE TASK MANAGER (`vibe-task-manager`)
 **Purpose**: AI-agent-native task management with recursive decomposition design (RDD)
 **Status**: Production Ready with Advanced Features (99.8% test success rate)
 
@@ -733,6 +813,19 @@ Examples:
 2. `vibe-task-manager create project` for task management
 3. `generate-rules` for development guidelines
 4. `vibe-task-manager decompose` for implementation tasks
+
+**Context-Driven Development Workflow**:
+1. `curate-context` for intelligent codebase analysis and context packaging
+2. Use curated context for AI-driven development tasks
+3. `map-codebase` for comprehensive codebase understanding
+4. `vibe-task-manager` for task coordination with enriched context
+
+**Multi-Agent Coordination Workflow**:
+1. `register-agent` to register AI agents with capabilities
+2. `vibe-task-manager create project` for project setup
+3. `get-agent-tasks` for agents to poll for available tasks
+4. `submit-task-response` for agents to submit completed work
+5. Automatic task distribution based on agent capabilities
 
 ---
 
@@ -1286,6 +1379,33 @@ generate-fullstack-starter-kit "Data analytics dashboard" '{
   "database": "mongodb",
   "auth": "oauth2"
 }' true ["docker", "api-docs"]
+```
+
+### Context Curator Examples
+```bash
+# Basic context curation for feature addition
+curate-context "Add user authentication with OAuth2 support to the React application" "/path/to/react/project" "feature_addition"
+
+# Advanced context curation with specific configuration
+curate-context "Refactor the authentication system to use a more secure token-based approach" "/path/to/project" "refactoring" 75 '["**/*.ts", "**/*.tsx", "**/auth/**"]' '["**/node_modules/**", "**/dist/**"]' '["authentication", "security", "token management"]' true 300000 "xml"
+
+# Bug fix context curation
+curate-context "Fix the memory leak in the WebSocket connection handler that occurs during high traffic" "/path/to/project" "bug_fix" 30 '["**/*"]' '["**/node_modules/**"]' '["websocket", "memory management", "connection handling"]' true 150000
+```
+
+### Agent Coordination Examples
+```bash
+# Register an AI agent with specific capabilities
+register-agent "frontend-agent-001" '["react", "typescript", "css", "testing"]' "sse" "session-123" 3 '{"specialization": "frontend", "experience": "senior"}'
+
+# Register a backend specialist agent
+register-agent "backend-agent-001" '["node.js", "express", "database", "api-design"]' "stdio" "stdio-session" 2 '{"specialization": "backend", "experience": "senior"}'
+
+# Agent polling for available tasks
+get-agent-tasks "frontend-agent-001" 2 '["react", "typescript"]'
+
+# Agent submitting completed task
+submit-task-response "frontend-agent-001" "TSK-AUTH-001" "DONE" "OAuth2 authentication implemented successfully" '{"filesModified": ["src/auth/oauth.ts", "src/components/Login.tsx"], "testsPass": true, "buildSuccessful": true, "executionTime": 7200}'
 ```
 
 ### Workflow Integration Examples
