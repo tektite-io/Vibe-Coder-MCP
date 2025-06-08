@@ -1869,35 +1869,14 @@ export class ContextCuratorService {
         tokenBudget: TOKEN_BUDGET
       };
 
-      // Execute all strategies concurrently
-      logger.info({ jobId: context.jobId, strategies: strategies.length }, 'Starting concurrent strategy execution');
+      // Execute all strategies with resilient error handling
+      logger.info({ jobId: context.jobId, strategies: strategies.length }, 'Starting resilient strategy execution');
 
-      const strategyPromises = strategies.map(async (strategy, index) => {
-        logger.debug({ jobId: context.jobId, strategy, index }, 'Executing strategy');
-
-        try {
-          const result = await this.llmService.performFileDiscovery(
-            context.input.userPrompt,
-            context.intentAnalysis,
-            context.codemapContent!, // Using complete codemap content
-            context.config,
-            strategy,
-            additionalContext
-          );
-
-          return { strategy, result };
-        } catch (error) {
-          logger.error({
-            jobId: context.jobId,
-            strategy,
-            index,
-            error: error instanceof Error ? error.message : 'Unknown error'
-          }, 'Strategy execution failed');
-          throw new Error(`Strategy ${strategy} failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        }
-      });
-
-      const strategyResults = await Promise.all(strategyPromises);
+      const strategyResults = await this.executeStrategiesWithFallback(
+        strategies,
+        context,
+        additionalContext
+      );
 
       // Process and deduplicate results
       const consolidatedResult = await this.consolidateMultiStrategyResults(
@@ -2275,6 +2254,288 @@ export class ContextCuratorService {
     } catch (error) {
       throw new Error(`Enhanced output generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  /**
+   * Execute strategies with resilient error handling and fallback mechanisms
+   * ISOLATED TO CONTEXT CURATOR - NO IMPACT ON OTHER TOOLS
+   */
+  private async executeStrategiesWithFallback(
+    strategies: Array<'semantic_similarity' | 'keyword_matching' | 'semantic_and_keyword' | 'structural_analysis'>,
+    context: WorkflowContext,
+    additionalContext: any
+  ): Promise<Array<{ strategy: string; result: FileDiscoveryResult }>> {
+    const results: Array<{ strategy: string; result?: FileDiscoveryResult; error?: Error }> = [];
+
+    // Try all strategies, collecting both successes and failures
+    for (const [index, strategy] of strategies.entries()) {
+      logger.debug({ jobId: context.jobId, strategy, index }, 'Executing strategy with resilient error handling');
+
+      try {
+        const result = await this.llmService.performFileDiscovery(
+          context.input.userPrompt,
+          context.intentAnalysis,
+          context.codemapContent!, // Using complete codemap content
+          context.config,
+          strategy,
+          additionalContext
+        );
+
+        results.push({ strategy, result });
+
+        logger.info({
+          jobId: context.jobId,
+          strategy,
+          filesFound: result.relevantFiles.length,
+          success: true
+        }, 'Context Curator: Strategy executed successfully');
+
+      } catch (error) {
+        const errorObj = error as Error;
+        results.push({ strategy, error: errorObj });
+
+        logger.warn({
+          jobId: context.jobId,
+          strategy,
+          index,
+          error: errorObj.message,
+          errorType: this.categorizeStrategyError(errorObj),
+          success: false
+        }, 'Context Curator: Strategy failed, continuing with others');
+      }
+    }
+
+    // Filter successful results
+    const successfulResults = results.filter(r => r.result).map(r => ({
+      strategy: r.strategy,
+      result: r.result!
+    }));
+
+    // Log strategy execution summary
+    const failedStrategies = results.filter(r => r.error);
+    logger.info({
+      jobId: context.jobId,
+      totalStrategies: strategies.length,
+      successfulStrategies: successfulResults.length,
+      failedStrategies: failedStrategies.length,
+      failedStrategyNames: failedStrategies.map(r => r.strategy),
+      networkErrors: failedStrategies.filter(r => this.isNetworkError(r.error!)).length
+    }, 'Context Curator: Multi-strategy execution completed');
+
+    // If no strategies succeeded, try fallback approach
+    if (successfulResults.length === 0) {
+      logger.warn({
+        jobId: context.jobId,
+        allErrors: failedStrategies.map(r => ({ strategy: r.strategy, error: r.error!.message }))
+      }, 'Context Curator: All strategies failed, attempting fallback');
+
+      const fallbackResult = await this.generateFallbackResult(context, additionalContext);
+      if (fallbackResult) {
+        return [{ strategy: 'codemap_fallback', result: fallbackResult }];
+      }
+
+      // If even fallback fails, throw with detailed error information
+      const networkErrorCount = failedStrategies.filter(r => this.isNetworkError(r.error!)).length;
+      const errorSummary = networkErrorCount > 0
+        ? `${networkErrorCount} network errors, ${failedStrategies.length - networkErrorCount} other errors`
+        : `${failedStrategies.length} strategy errors`;
+
+      throw new Error(`All file discovery strategies failed: ${errorSummary}. First error: ${failedStrategies[0]?.error?.message || 'Unknown error'}`);
+    }
+
+    return successfulResults;
+  }
+
+  /**
+   * Categorize strategy errors for better diagnostics
+   * PRIVATE METHOD - NO EXTERNAL IMPACT
+   */
+  private categorizeStrategyError(error: Error): string {
+    const message = error.message.toLowerCase();
+
+    if (message.includes('ssl') || message.includes('tls') || message.includes('bad record mac')) {
+      return 'ssl_tls_error';
+    }
+    if (message.includes('epipe') || message.includes('econnreset')) {
+      return 'connection_reset';
+    }
+    if (message.includes('timeout')) {
+      return 'timeout';
+    }
+    if (message.includes('network') || message.includes('connection')) {
+      return 'network_error';
+    }
+    if (message.includes('validation') || message.includes('format')) {
+      return 'response_validation_error';
+    }
+
+    return 'unknown_error';
+  }
+
+  /**
+   * Check if an error is network-related
+   * PRIVATE METHOD - NO EXTERNAL IMPACT
+   */
+  private isNetworkError(error: Error): boolean {
+    const message = error.message.toLowerCase();
+    return (
+      message.includes('ssl') ||
+      message.includes('tls') ||
+      message.includes('epipe') ||
+      message.includes('econnreset') ||
+      message.includes('timeout') ||
+      message.includes('network') ||
+      message.includes('connection')
+    );
+  }
+
+  /**
+   * Generate fallback result using codemap analysis when all strategies fail
+   * PRIVATE METHOD - NO EXTERNAL IMPACT
+   */
+  private async generateFallbackResult(
+    context: WorkflowContext,
+    additionalContext: any
+  ): Promise<FileDiscoveryResult | null> {
+    try {
+      logger.info({ jobId: context.jobId }, 'Context Curator: Generating codemap-based fallback result');
+
+      // Extract files from codemap using pattern matching
+      const codemapFiles = this.extractFilesFromCodemap(context.codemapContent!);
+
+      // Apply basic filtering based on task type and user prompt
+      const relevantFiles = this.filterFilesByRelevance(
+        codemapFiles,
+        context.input.userPrompt,
+        context.intentAnalysis.taskType,
+        additionalContext.maxFiles || 50
+      );
+
+      if (relevantFiles.length === 0) {
+        logger.warn({ jobId: context.jobId }, 'Context Curator: Fallback result generation failed - no relevant files found');
+        return null;
+      }
+
+      const fallbackResult: FileDiscoveryResult = {
+        relevantFiles,
+        totalFilesAnalyzed: codemapFiles.length,
+        processingTimeMs: 100, // Minimal processing time for fallback
+        searchStrategy: 'codemap_fallback' as any,
+        coverageMetrics: {
+          totalTokens: relevantFiles.reduce((sum, f) => sum + f.estimatedTokens, 0),
+          averageConfidence: 0.5 // Conservative confidence for fallback
+        }
+      };
+
+      logger.info({
+        jobId: context.jobId,
+        fallbackFilesFound: relevantFiles.length,
+        totalAnalyzed: codemapFiles.length
+      }, 'Context Curator: Fallback result generated successfully');
+
+      return fallbackResult;
+
+    } catch (error) {
+      logger.error({
+        jobId: context.jobId,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }, 'Context Curator: Fallback result generation failed');
+      return null;
+    }
+  }
+
+  /**
+   * Extract files from codemap content
+   * PRIVATE METHOD - NO EXTERNAL IMPACT
+   */
+  private extractFilesFromCodemap(codemapContent: string): Array<{ path: string; estimatedTokens: number }> {
+    const files: Array<{ path: string; estimatedTokens: number }> = [];
+
+    // Extract file paths using regex pattern
+    const filePathRegex = /^[\s]*[├└│]\s*[─]*\s*(.+\.(ts|js|tsx|jsx|py|java|cpp|c|h|hpp|cs|php|rb|go|rs|swift|kt|scala|clj|hs|ml|fs|vb|pas|pl|sh|bat|ps1|yaml|yml|json|xml|html|css|scss|sass|less|md|txt))\s*$/gm;
+    const matches = codemapContent.matchAll(filePathRegex);
+
+    for (const match of matches) {
+      const filePath = match[1].trim();
+      // Estimate tokens based on file type and typical file sizes
+      const estimatedTokens = this.estimateFileTokens(filePath);
+      files.push({ path: filePath, estimatedTokens });
+    }
+
+    return files;
+  }
+
+  /**
+   * Filter files by relevance using basic heuristics
+   * PRIVATE METHOD - NO EXTERNAL IMPACT
+   */
+  private filterFilesByRelevance(
+    files: Array<{ path: string; estimatedTokens: number }>,
+    userPrompt: string,
+    taskType: string,
+    maxFiles: number
+  ): FileDiscoveryFile[] {
+    const promptKeywords = userPrompt.toLowerCase().split(/\s+/).filter(word => word.length > 3);
+
+    const scoredFiles = files.map(file => {
+      const fileName = file.path.toLowerCase();
+      let relevanceScore = 0.3; // Base score
+
+      // Keyword matching
+      for (const keyword of promptKeywords) {
+        if (fileName.includes(keyword)) {
+          relevanceScore += 0.2;
+        }
+      }
+
+      // Task type specific scoring
+      if (taskType === 'feature_addition' && (fileName.includes('component') || fileName.includes('service'))) {
+        relevanceScore += 0.2;
+      }
+      if (taskType === 'bug_fix' && (fileName.includes('test') || fileName.includes('spec'))) {
+        relevanceScore += 0.1;
+      }
+
+      // File type scoring
+      if (fileName.endsWith('.ts') || fileName.endsWith('.js')) {
+        relevanceScore += 0.1;
+      }
+
+      return {
+        path: file.path,
+        priority: relevanceScore > 0.6 ? 'high' : relevanceScore > 0.4 ? 'medium' : 'low',
+        reasoning: `Codemap fallback: keyword match score ${relevanceScore.toFixed(2)}`,
+        confidence: Math.min(relevanceScore, 0.8), // Cap confidence for fallback
+        estimatedTokens: file.estimatedTokens,
+        modificationLikelihood: relevanceScore > 0.6 ? 'high' : 'medium'
+      } as FileDiscoveryFile;
+    });
+
+    // Sort by confidence and take top files
+    return scoredFiles
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, maxFiles);
+  }
+
+  /**
+   * Estimate file tokens based on file path and type
+   * PRIVATE METHOD - NO EXTERNAL IMPACT
+   */
+  private estimateFileTokens(filePath: string): number {
+    const extension = filePath.split('.').pop()?.toLowerCase() || '';
+
+    // Base estimates by file type
+    const baseEstimates: { [key: string]: number } = {
+      'ts': 300, 'js': 250, 'tsx': 400, 'jsx': 350,
+      'py': 200, 'java': 400, 'cpp': 350, 'c': 300,
+      'cs': 350, 'php': 250, 'rb': 200, 'go': 300,
+      'rs': 350, 'swift': 300, 'kt': 350,
+      'json': 100, 'yaml': 80, 'yml': 80,
+      'md': 150, 'txt': 100,
+      'html': 200, 'css': 150, 'scss': 180
+    };
+
+    return baseEstimates[extension] || 200; // Default estimate
   }
 
   /**
@@ -2863,7 +3124,7 @@ export class ContextCuratorService {
         generationTimestamp,
         targetDirectory: oldPackage.projectPath || '/unknown',
         originalPrompt: oldPackage.userPrompt || '',
-        refinedPrompt: oldPackage.userPrompt || '',
+        refinedPrompt: oldPackage.refinedPrompt || oldPackage.userPrompt || '',
         totalTokenEstimate,
         processingTimeMs: 0,
         taskType: oldPackage.taskType,
@@ -2874,7 +3135,7 @@ export class ContextCuratorService {
         filesAnalyzed: oldPackage.statistics?.totalFiles || 0,
         filesIncluded: oldPackage.files?.length || 0
       },
-      refinedPrompt: oldPackage.userPrompt || '',
+      refinedPrompt: oldPackage.refinedPrompt || oldPackage.userPrompt || '',
       codemapPath: oldPackage.codemapPath || '',
       highPriorityFiles,
       mediumPriorityFiles,
@@ -3526,6 +3787,7 @@ ${(task.subtasks || []).map(subtask => `              <subtask id="${escapeXml(s
       const contextPackage: ContextPackage = {
         id: context.jobId,
         userPrompt: context.input.userPrompt,
+        refinedPrompt: context.promptRefinement.refinedPrompt, // Add the refined prompt
         taskType: context.intentAnalysis.taskType,
         projectPath: context.input.projectPath,
         generatedAt: new Date(),

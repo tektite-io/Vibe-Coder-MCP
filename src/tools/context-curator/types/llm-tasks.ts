@@ -140,7 +140,13 @@ export const relevanceScoringResultSchema = z.object({
     processingTimeMs: z.number().min(0)
   }),
   /** Strategy used for scoring */
-  scoringStrategy: z.enum(['semantic_similarity', 'keyword_density', 'structural_importance', 'hybrid'])
+  scoringStrategy: z.enum(['semantic_similarity', 'keyword_density', 'structural_importance', 'hybrid']),
+  /** Optional chunking metadata for large file sets */
+  chunkingUsed: z.boolean().optional(),
+  /** Total number of chunks processed (only present when chunking is used) */
+  totalChunks: z.number().min(1).optional(),
+  /** Size of each chunk (only present when chunking is used) */
+  chunkSize: z.number().min(1).optional()
 });
 
 export type RelevanceScoringResult = z.infer<typeof relevanceScoringResultSchema>;
