@@ -1,6 +1,6 @@
 # Code-Map Generator Tool (`map-codebase`)
 
-**Status**: Production Ready with Advanced Features | **Languages**: 30+ Supported | **Optimization**: 95-97% Token Reduction
+**Status**: Production Ready with Advanced Features | **Languages**: 35+ Supported | **Optimization**: 95-97% Token Reduction
 
 ## Overview
 
@@ -9,7 +9,7 @@ The "Code-Map Generator" (invoked as `map-codebase`) is a high-performance, lang
 **Core Value Proposition:** Contextual intelligence at speed with production-ready optimization.
 
 **Production Highlights:**
-- **30+ Programming Languages**: Comprehensive language support via Tree-sitter grammars
+- **35+ Programming Languages**: Comprehensive language support via Tree-sitter grammars
 - **95-97% Token Reduction**: Aggressive optimization for AI consumption
 - **Enhanced Import Resolution**: Third-party integration with adapter-based architecture
 - **Memory Optimization**: Sophisticated caching and resource management
@@ -216,7 +216,7 @@ The tool dynamically loads the appropriate grammar files based on the file exten
 
 ## Enhanced Function Name Detection
 
-The Code-Map Generator includes an advanced function name detection system that provides context-aware function names and semantic information for 30+ programming languages.
+The Code-Map Generator includes an advanced function name detection system that provides context-aware function names and semantic information for 35+ programming languages.
 
 ### Key Features
 

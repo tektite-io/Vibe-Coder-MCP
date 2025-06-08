@@ -5,10 +5,12 @@
 The Fullstack Starter Kit Generator creates complete, production-ready project scaffolds by intelligently composing YAML modules based on user requirements and tech stack preferences. It features dynamic template generation, comprehensive tech stack support, and automated project setup scripts for rapid development kickstart.
 
 **Core Capabilities:**
+- **Research-Enhanced Dynamic Generation**: Integrates comprehensive research for informed technology decisions
+- **Zero Static Templates**: Fully dynamic approach supporting any technology stack request
+- **Schema-Aware Generation**: Primary template generation with automatic retry logic and validation
+- **Intelligent Module Composition**: Smart merging with conflict resolution and parameter substitution
 - **Multi-Stack Support**: React, Vue, Angular, Node.js, Python, Go, and 20+ technology combinations
-- **Dynamic YAML Module Generation**: Auto-generates missing templates using LLM when needed
-- **Intelligent Composition**: Smart merging of modules with conflict resolution
-- **Complete Project Setup**: Generates directory structure, dependencies, and setup scripts
+- **Complex Scenario Support**: AI platforms, enterprise e-commerce, microservices, and more
 - **Template Caching**: In-memory and persistent template caching for optimal performance
 - **Cross-Platform Scripts**: Generates both Unix (.sh) and Windows (.bat) setup scripts
 - **Integration Ready**: Works with other Vibe Coder tools for complete project planning
