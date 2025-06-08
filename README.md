@@ -22,16 +22,19 @@ Vibe Coder MCP integrates with MCP-compatible clients to provide the following c
 *   **Agent Orchestration**: Multi-agent coordination with capability mapping and load balancing
 *   **Real Storage Integration**: Zero mock code policy - all production integrations
 
-### 🔍 **Advanced Code Analysis**
-*   **Code Map Generator**: 30+ programming language support with 95-97% token reduction optimization
+### 🔍 **Advanced Code Analysis & Context Curation**
+*   **Code Map Generator**: 35+ programming language support with 95-97% token reduction optimization
+*   **Context Curator**: Language-agnostic project detection with 95%+ accuracy across 35+ languages
 *   **Enhanced Import Resolution**: Third-party integration for accurate dependency mapping
+*   **Multi-Strategy File Discovery**: 4 parallel strategies for comprehensive analysis
 *   **Memory Optimization**: Sophisticated caching and resource management
 *   **Security Boundaries**: Separate read/write path validation for secure operations
 
 ### 📋 **Research & Planning Suite**
 *   **Research Manager**: Deep research using Perplexity Sonar via OpenRouter
+*   **Context Curator**: Intelligent codebase analysis with 8-phase workflow pipeline for AI-driven development
 *   **Document Generators**: PRDs (`generate-prd`), user stories (`generate-user-stories`), task lists (`generate-task-list`), development rules (`generate-rules`)
-*   **Project Scaffolding**: Full-stack starter kits (`generate-fullstack-starter-kit`) with multiple tech stacks
+*   **Project Scaffolding**: Full-stack starter kits (`generate-fullstack-starter-kit`) with dynamic template generation
 *   **Workflow Execution**: Predefined sequences of tool calls defined in `workflows.json`
 
 ### ⚡ **Performance & Reliability**
@@ -718,6 +721,7 @@ Refer to these individual READMEs for in-depth information:
 ### Analysis & Information Tools
 
 *   **Code Map Generator (`map-codebase`)**: Scans a codebase to extract semantic information (classes, functions, comments) and generates either a human-readable Markdown map with Mermaid diagrams or a structured JSON representation with absolute file paths for imports and enhanced class property information.
+*   **Context Curator (`curate-context`)**: Intelligent codebase analysis and context package curation with 8-phase workflow pipeline, language-agnostic project detection supporting 35+ programming languages, and multi-strategy file discovery for AI-driven development tasks.
 *   **Research Manager (`research-manager`)**: Performs deep research on technical topics using Perplexity Sonar, providing summaries and sources.
 
 ### Planning & Documentation Tools
@@ -830,6 +834,7 @@ Interact with the tools via your connected AI assistant:
 *   **Fullstack Starter Kit:** `Create a starter kit for a React/Node.js blog application with user authentication`
 *   **Run Workflow:** `Run workflow newProjectSetup with input { "projectName": "my-new-app", "description": "A simple task manager" }`
 *   **Map Codebase:** `Generate a code map for the current project`, `map-codebase path="./src"`, or `Generate a JSON representation of the codebase structure with output_format="json"`
+*   **Context Curator:** `Curate context for adding authentication to my React app`, `Generate context package for refactoring the user service`, or `Analyze this codebase for performance optimization opportunities`
 *   **Vibe Task Manager:** `Create a new project for building a todo app`, `List all my projects`, `Run task authentication-setup`, `What's the status of my React project?`
 
 ## Vibe Task Manager - AI-Native Task Management
@@ -939,8 +944,14 @@ gantt
 #### Code Map Generator
 * **Status**: Production Ready with Advanced Features
 * **Memory Optimization**: 95-97% token reduction achieved
-* **Language Support**: 30+ programming languages
+* **Language Support**: 35+ programming languages
 * **Import Resolution**: Enhanced with adapter-based architecture
+
+#### Context Curator
+* **Status**: Production Ready
+* **Language Support**: 35+ programming languages with 95%+ accuracy
+* **Workflow Pipeline**: 8-phase intelligent analysis and curation
+* **Project Detection**: Language-agnostic with multi-strategy file discovery
 
 #### Research Manager
 * **Status**: Production Ready
@@ -1057,9 +1068,11 @@ While the primary use is integration with an AI assistant (using stdio), you can
 
 ### Core Documentation
 - **System Instructions**: `VIBE_CODER_MCP_SYSTEM_INSTRUCTIONS.md` - Complete usage guide for MCP clients
+- **System Architecture**: `docs/ARCHITECTURE.md` - Comprehensive system architecture with Mermaid diagrams
 - **Performance & Testing**: `docs/PERFORMANCE_AND_TESTING.md` - Performance metrics, testing strategies, and quality assurance
 - **Vibe Task Manager**: `src/tools/vibe-task-manager/README.md` - Comprehensive task management documentation
-- **Code Map Generator**: `docs/code-map-generator/` - Advanced codebase analysis documentation
+- **Context Curator**: `src/tools/context-curator/README.md` - Language-agnostic codebase analysis documentation
+- **Code Map Generator**: `src/tools/code-map-generator/README.md` - Advanced codebase analysis documentation
 
 ### Tool Documentation
 - **Individual Tool READMEs**: Each tool directory contains detailed documentation
