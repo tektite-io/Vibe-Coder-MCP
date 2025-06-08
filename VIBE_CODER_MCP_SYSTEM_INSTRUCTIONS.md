@@ -1,8 +1,9 @@
 # Vibe Coder MCP System Instructions
 
-**Version**: 2.0 (Production Ready)
+**Version**: 2.1 (Production Ready - Enhanced)
 **Purpose**: Comprehensive system prompt for AI agents and MCP clients consuming the Vibe Coder MCP server
 **Target Clients**: Claude Desktop, Augment, Cursor, Windsurf, Roo Code, Cline, and other MCP-compatible clients
+**Last Updated**: January 2025
 
 ---
 
@@ -139,19 +140,34 @@ flowchart TD
 **Output**: Task lists saved to `VibeCoderOutput/generated_task_lists/`
 
 ### 6. FULLSTACK STARTER KIT GENERATOR (`generate-fullstack-starter-kit`)
-**Purpose**: Generates complete project scaffolding
-**Capabilities**:
-- Frontend: React, Vue, Angular, Next.js, Nuxt.js
-- Backend: Node.js, Python, Java, Go, PHP
-- Database: PostgreSQL, MongoDB, MySQL, Redis
-- Authentication: JWT, OAuth2, Firebase
-- Deployment: Docker, Kubernetes, Vercel, AWS
+**Purpose**: Generates complete project scaffolding with dynamic template generation
+**Status**: Production Ready with Research-Enhanced Dynamic Generation
+
+**Key Features**:
+- **Dynamic YAML Template Generation**: Auto-generates missing templates using LLM when needed
+- **Research-Enhanced Context**: Integrates comprehensive research for informed technology decisions
+- **Schema-Aware Generation**: Primary template generation with automatic retry logic and validation
+- **Intelligent Module Composition**: Smart merging with conflict resolution and parameter substitution
+- **Zero Static Templates**: Fully dynamic approach supporting any technology stack request
+
+**Technology Support**:
+- **Frontend**: React, Vue, Angular, Next.js, Nuxt.js, Svelte, Solid.js, and emerging frameworks
+- **Backend**: Node.js, Python, Java, Go, PHP, Rust, C#, Kotlin, and more
+- **Database**: PostgreSQL, MongoDB, MySQL, Redis, Supabase, Firebase, and others
+- **Authentication**: JWT, OAuth2, Firebase Auth, Auth0, Supabase Auth, and custom solutions
+- **Deployment**: Docker, Kubernetes, Vercel, AWS, Azure, GCP, and containerization
+
+**Enhanced Capabilities**:
+- **Research Integration**: 3 comprehensive research queries for technology, features, and deployment
+- **Template Caching**: In-memory and persistent caching for optimal performance
+- **Cross-Platform Scripts**: Generates both Unix (.sh) and Windows (.bat) setup scripts
+- **Complex Scenario Support**: AI platforms, enterprise e-commerce, microservices, and more
 
 **Input Parameters**:
-- `use_case`: Project description
-- `tech_stack_preferences`: JSON object with preferences
-- `request_recommendation`: Boolean for AI recommendations
-- `include_optional_features`: Array of additional features
+- `use_case`: Project description (detailed preferred for better results)
+- `tech_stack_preferences`: JSON object with technology preferences
+- `request_recommendation`: Boolean for AI-driven technology recommendations
+- `include_optional_features`: Array of additional features (Docker, API docs, testing, etc.)
 
 ### 7. CODE MAP GENERATOR (`map-codebase`)
 **Purpose**: Semantic codebase analysis with Mermaid diagrams
@@ -221,16 +237,23 @@ flowchart TD
 
 ### 9. CONTEXT CURATOR (`curate-context`)
 **Purpose**: Intelligent codebase analysis and context package curation for AI-driven development tasks
-**Status**: Production Ready with 8-Phase Workflow Pipeline
+**Status**: Production Ready with Enhanced Language-Agnostic Detection
 
 **Key Features:**
-- 8-phase workflow pipeline: Initialization → Intent Analysis → Prompt Refinement → File Discovery → Relevance Scoring → Meta-Prompt Generation → Package Assembly → Output Generation
-- Multi-strategy file discovery: Semantic similarity, keyword matching, structural analysis
-- Intelligent relevance scoring with project-specific adaptations
-- Meta-prompt generation for task-specific AI agent guidance
-- Token budget management (default 250,000 tokens, configurable)
-- Multiple output formats: XML (primary), JSON, YAML
-- Integration with Code Map Generator for comprehensive codebase understanding
+- **8-Phase Workflow Pipeline**: Initialization → Intent Analysis → Prompt Refinement → File Discovery → Relevance Scoring → Meta-Prompt Generation → Package Assembly → Output Generation
+- **Language-Agnostic Project Detection**: Enhanced 7-phase detection supporting 35+ programming languages with 95%+ accuracy
+- **Multi-Strategy File Discovery**: 4 parallel strategies (semantic similarity, keyword matching, hybrid, structural analysis)
+- **Intelligent Relevance Scoring**: Project-specific adaptations with enhanced priority weighting
+- **Meta-Prompt Generation**: Task-specific prompts optimized for different development scenarios
+- **Token Budget Management**: Configurable limits (default 250,000 tokens) with intelligent optimization
+- **Multiple Output Formats**: XML (primary), JSON, YAML with validation
+- **Code Map Integration**: Seamless integration with Code Map Generator for comprehensive analysis
+
+**Enhanced Project Type Detection:**
+- **35+ Programming Languages**: JavaScript/TypeScript, Python, Java, C#, Go, Rust, PHP, Ruby, Swift, Kotlin, Dart, and more
+- **25+ Package Managers**: npm, pip, Maven, Gradle, Cargo, Composer, pub, CocoaPods, NuGet, and others
+- **12+ Architectural Patterns**: Web Applications, Mobile Apps, Backend Services, Data Science, DevOps, Microservices
+- **False Positive Prevention**: Intelligent filtering to avoid misclassifying infrastructure files
 
 **Input Parameters:**
 - `prompt`: User's development prompt/request
@@ -914,6 +937,50 @@ VIBE_CODER_OUTPUT_DIR=/path/to/output/directory
 - Sessions maintain conversation history
 - Tool outputs cached per session
 - Natural language context preserved across interactions
+
+---
+
+## ASYNCHRONOUS JOB PROCESSING & MANAGEMENT
+
+### Job Manager Architecture
+
+The Vibe Coder MCP server uses a sophisticated job management system with the following features:
+
+**Core Job Manager Features:**
+- **Singleton Pattern**: Centralized job state management across all tools
+- **Rate Limiting**: Exponential backoff strategy to prevent excessive polling
+- **Status Tracking**: Comprehensive job lifecycle management (PENDING → RUNNING → COMPLETED/FAILED)
+- **Progress Monitoring**: Real-time progress updates with percentage completion and stage information
+- **Resource Management**: Memory and performance optimization for concurrent job execution
+- **Enhanced Debugging**: Detailed job information with diagnostics and metadata
+
+**Job Status Message Format:**
+```typescript
+interface JobStatusMessage {
+  jobId: string;
+  toolName: string;
+  status: JobStatus;
+  message?: string;
+  progress?: number; // 0-100
+  timestamp: number;
+  pollingRecommendation?: {
+    interval: number; // milliseconds
+    nextCheckTime: number;
+  };
+  details?: {
+    currentStage?: string;
+    diagnostics?: string[];
+    subProgress?: number;
+    metadata?: Record<string, any>;
+  };
+}
+```
+
+**Enhanced Job Manager Integration:**
+- **Task Job Management**: Extended job types for task management operations with priority, dependencies, and resource requirements
+- **Performance Metrics**: Real-time monitoring of resource usage, execution time, and performance scoring
+- **Job Queue Management**: Intelligent queuing with dependency resolution and concurrent execution limits
+- **Event-Driven Architecture**: Job lifecycle events for integration with other system components
 
 ---
 
