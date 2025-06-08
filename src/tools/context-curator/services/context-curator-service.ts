@@ -34,6 +34,8 @@ import {
 import { XMLFormatter } from '../utils/xml-formatter.js';
 import { ContextCuratorError } from '../utils/error-handling.js';
 import { TokenEstimator } from '../utils/token-estimator.js';
+import { LanguageHandlerRegistry } from '../../code-map-generator/languageHandlers/registry.js';
+import { languageConfigurations } from '../../code-map-generator/parser.js';
 import logger from '../../../logger.js';
 
 /**
@@ -81,6 +83,66 @@ interface WorkflowContext {
   completedPhases: number;
   errors: string[];
   warnings: string[];
+}
+
+/**
+ * Language-agnostic project type detection interfaces
+ */
+interface LanguageInfo {
+  extension: string;
+  name: string;
+  category: string;
+  ecosystems: string[];
+  projectTypes: string[];
+}
+
+interface LanguageProfile {
+  primary: string;
+  secondary: string[];
+  distribution: Map<string, number>;
+  totalFiles: number;
+  confidence: number;
+}
+
+interface PackageManagerInfo {
+  pattern: string;
+  manager: string;
+  ecosystem: string;
+  supportedLanguages: string[];
+  confidence: number;
+}
+
+interface StructurePattern {
+  pattern: string;
+  types: string[];
+  weight: number;
+  evidence: string[];
+}
+
+interface StructureAnalysis {
+  patterns: StructurePattern[];
+  projectTypes: string[];
+  confidence: number;
+}
+
+interface TechnologyProfile {
+  detectedTechnologies: string[];
+  primaryStack: string;
+  confidence: number;
+}
+
+interface ProjectTypeScore {
+  type: string;
+  confidence: number;
+  evidence: string[];
+  sources: string[];
+}
+
+interface ValidationResult {
+  isValid: boolean;
+  confidence: number;
+  failedChecks: any[];
+  recommendations: string[];
 }
 
 /**
@@ -578,43 +640,72 @@ export class ContextCuratorService {
   }
 
   /**
-   * Detect false positive patterns that might confuse project type detection
-   * This is language-agnostic and works for any technology keyword
+   * Enhanced language-agnostic project type detection
+   * Uses Code Map Generator infrastructure for comprehensive multi-language support
+   * Detects 12+ modern architectural patterns and project types across 35+ languages
    */
-  private detectFalsePositives(content: string, keyword: string): boolean {
-    const lowerContent = content.toLowerCase();
-    const lowerKeyword = keyword.toLowerCase();
-
-    // Common false positive patterns across all languages and technologies
-    const falsePositivePatterns = [
-      `languagehandlers/${lowerKeyword}`,
-      `language handler.*${lowerKeyword}`,
-      `${lowerKeyword} language handler`,
-      `is${lowerKeyword}lifecyclemethod`,
-      `${lowerKeyword}.*method`,
-      `function.*${lowerKeyword}`,
-      `class.*${lowerKeyword}`,
-      `// ${lowerKeyword}`,
-      `/* ${lowerKeyword}`,
-      `* ${lowerKeyword} language`,
-      `handler for.*${lowerKeyword}`,
-      `support.*${lowerKeyword}`,
-      `${lowerKeyword}.*support`,
-      `${lowerKeyword}.*handler`,
-      `handler.*${lowerKeyword}`
-    ];
-
-    return falsePositivePatterns.some(pattern => {
-      const regex = new RegExp(pattern.replace(/\*/g, '.*'), 'i');
-      return regex.test(lowerContent);
-    });
+  private detectProjectType(codemapContent: string): ProjectTypeAnalysisResult {
+    try {
+      // Use enhanced language-agnostic detection
+      return this.enhancedProjectTypeDetection(codemapContent);
+    } catch (error) {
+      logger.warn({ err: error }, 'Enhanced project type detection failed, falling back to legacy method');
+      // Fallback to legacy detection for safety
+      return this.legacyProjectTypeDetection(codemapContent);
+    }
   }
 
   /**
-   * Enhanced project type detection with comprehensive analysis
-   * Detects 12+ modern architectural patterns and project types
+   * Enhanced language-agnostic project type detection implementation
+   * Leverages Code Map Generator's language support for accurate detection
    */
-  private detectProjectType(codemapContent: string): ProjectTypeAnalysisResult {
+  private enhancedProjectTypeDetection(codemapContent: string): ProjectTypeAnalysisResult {
+    // Phase 1: Build language profile from codemap
+    const languageProfile = this.buildLanguageProfileFromCodemap(codemapContent);
+
+    // Phase 2: Detect package managers and ecosystems
+    const packageManagers = this.detectPackageManagersFromCodemap(codemapContent);
+
+    // Phase 3: Analyze project structure patterns
+    const structureAnalysis = this.analyzeUniversalProjectStructure(codemapContent);
+
+    // Phase 4: Perform semantic technology inference
+    const technologyProfile = this.performSemanticTechnologyInference(codemapContent);
+
+    // Phase 5: Calculate weighted project type scores
+    const projectTypeScores = this.calculateMultiDimensionalScores(
+      languageProfile,
+      packageManagers,
+      structureAnalysis,
+      technologyProfile,
+      codemapContent
+    );
+
+    // Phase 6: Validate and select best match
+    const bestMatch = this.selectAndValidateProjectType(
+      projectTypeScores,
+      languageProfile,
+      packageManagers,
+      structureAnalysis
+    );
+
+    // Phase 7: Generate comprehensive analysis result
+    return this.buildProjectTypeAnalysisResult(
+      bestMatch,
+      projectTypeScores,
+      languageProfile,
+      packageManagers,
+      structureAnalysis,
+      technologyProfile,
+      codemapContent
+    );
+  }
+
+  /**
+   * Legacy project type detection (fallback)
+   * Maintains backward compatibility
+   */
+  private legacyProjectTypeDetection(codemapContent: string): ProjectTypeAnalysisResult {
     const content = codemapContent.toLowerCase();
     const projectTypes: { type: string; confidence: number; evidence: string[] }[] = [];
 
@@ -666,6 +757,362 @@ export class ContextCuratorService {
       architectureStyle,
       developmentEnvironment
     };
+  }
+
+  // ========== LANGUAGE-AGNOSTIC PROJECT TYPE DETECTION METHODS ==========
+
+  /**
+   * Build language profile from codemap content using Code Map Generator infrastructure
+   */
+  private buildLanguageProfileFromCodemap(codemapContent: string): LanguageProfile {
+    const registry = LanguageHandlerRegistry.getInstance();
+    const supportedExtensions = registry.getRegisteredExtensions();
+
+    // Extract file extensions from codemap
+    const fileExtensions = this.extractFileExtensionsFromCodemap(codemapContent);
+
+    // Map extensions to languages using Code Map Generator configurations
+    const languageDistribution = new Map<string, number>();
+    let totalFiles = 0;
+
+    for (const [extension, count] of fileExtensions) {
+      const config = languageConfigurations[extension];
+      if (config) {
+        const languageName = config.name;
+        languageDistribution.set(languageName, (languageDistribution.get(languageName) || 0) + count);
+        totalFiles += count;
+      }
+    }
+
+    // Calculate percentages and identify primary/secondary languages
+    const sortedLanguages = Array.from(languageDistribution.entries())
+      .map(([lang, count]) => ({ language: lang, count, percentage: count / totalFiles }))
+      .sort((a, b) => b.count - a.count);
+
+    const primary = sortedLanguages[0]?.language || 'Unknown';
+    const secondary = sortedLanguages.slice(1, 4).map(l => l.language);
+
+    // Calculate confidence based on primary language dominance
+    const primaryPercentage = sortedLanguages[0]?.percentage || 0;
+    const confidence = Math.min(primaryPercentage + 0.2, 1.0);
+
+    return {
+      primary,
+      secondary,
+      distribution: languageDistribution,
+      totalFiles,
+      confidence
+    };
+  }
+
+  /**
+   * Extract file extensions from codemap content
+   */
+  private extractFileExtensionsFromCodemap(codemapContent: string): Map<string, number> {
+    const extensionCounts = new Map<string, number>();
+
+    // Enhanced patterns to match various codemap formats
+    const filePatterns = [
+      // Pattern: - src/file.ts, ├── file.ts, │   └── file.ts
+      /^[\s]*[├│└─\-*•]\s*(.+\.[a-zA-Z0-9]+)/gm,
+      // Pattern: src/file.ts (direct file paths)
+      /^[\s]*([a-zA-Z0-9_\-\/\\]+\.[a-zA-Z0-9]+)[\s]*$/gm,
+      // Pattern: ### src/file.ts, ## file.ts
+      /^#+\s+(.+\.[a-zA-Z0-9]+)/gm,
+      // Pattern: file.ts (simple file names)
+      /([a-zA-Z0-9_\-]+\.[a-zA-Z0-9]+)/g
+    ];
+
+    for (const pattern of filePatterns) {
+      let match;
+      while ((match = pattern.exec(codemapContent)) !== null) {
+        const filePath = match[1];
+        const extension = this.extractExtension(filePath);
+        if (extension && this.isValidFileExtension(extension)) {
+          extensionCounts.set(extension, (extensionCounts.get(extension) || 0) + 1);
+        }
+      }
+    }
+
+    // Also look for explicit file mentions in text
+    const explicitFilePattern = /\b([a-zA-Z0-9_\-]+\.(ts|tsx|js|jsx|py|java|kt|swift|dart|rs|go|rb|php|cs|cpp|c|h|vue|html|css|scss|sass|less|json|yaml|yml|toml|xml|md|txt|sql|sh|bat|ps1|dockerfile|makefile))\b/gi;
+    let explicitMatch;
+    while ((explicitMatch = explicitFilePattern.exec(codemapContent)) !== null) {
+      const fileName = explicitMatch[1];
+      const extension = this.extractExtension(fileName);
+      if (extension) {
+        extensionCounts.set(extension, (extensionCounts.get(extension) || 0) + 1);
+      }
+    }
+
+    return extensionCounts;
+  }
+
+  /**
+   * Check if extension is a valid file extension (not a directory or other artifact)
+   */
+  private isValidFileExtension(extension: string): boolean {
+    const validExtensions = [
+      '.ts', '.tsx', '.js', '.jsx', '.py', '.java', '.kt', '.swift', '.dart',
+      '.rs', '.go', '.rb', '.php', '.cs', '.cpp', '.c', '.h', '.hpp', '.cc',
+      '.vue', '.html', '.css', '.scss', '.sass', '.less', '.json', '.yaml',
+      '.yml', '.toml', '.xml', '.md', '.txt', '.sql', '.sh', '.bat', '.ps1',
+      '.dockerfile', '.makefile', '.gradle', '.maven', '.sbt', '.clj', '.cljs',
+      '.elm', '.ex', '.exs', '.erl', '.hrl', '.hs', '.lhs', '.ml', '.mli',
+      '.fs', '.fsx', '.fsi', '.scala', '.groovy', '.lua', '.r', '.jl', '.nim',
+      '.zig', '.odin', '.v', '.cr', '.d', '.pas', '.pp', '.ada', '.adb', '.ads'
+    ];
+
+    return validExtensions.includes(extension.toLowerCase());
+  }
+
+  /**
+   * Extract file extension from file path
+   */
+  private extractExtension(filePath: string): string | null {
+    const match = filePath.match(/\.([a-zA-Z0-9]+)$/);
+    return match ? `.${match[1].toLowerCase()}` : null;
+  }
+
+  /**
+   * Detect package managers from codemap content
+   */
+  private detectPackageManagersFromCodemap(codemapContent: string): PackageManagerInfo[] {
+    const packageManagerPatterns = new Map([
+      // JavaScript/TypeScript Ecosystem
+      ['package.json', { manager: 'npm/yarn/pnpm', ecosystem: 'JavaScript', languages: ['JavaScript', 'TypeScript'] }],
+      ['yarn.lock', { manager: 'yarn', ecosystem: 'JavaScript', languages: ['JavaScript', 'TypeScript'] }],
+      ['pnpm-lock.yaml', { manager: 'pnpm', ecosystem: 'JavaScript', languages: ['JavaScript', 'TypeScript'] }],
+
+      // Python Ecosystem
+      ['requirements.txt', { manager: 'pip', ecosystem: 'Python', languages: ['Python'] }],
+      ['pyproject.toml', { manager: 'poetry/pip', ecosystem: 'Python', languages: ['Python'] }],
+      ['Pipfile', { manager: 'pipenv', ecosystem: 'Python', languages: ['Python'] }],
+      ['conda.yaml', { manager: 'conda', ecosystem: 'Python', languages: ['Python'] }],
+      ['environment.yml', { manager: 'conda', ecosystem: 'Python', languages: ['Python'] }],
+
+      // Java Ecosystem
+      ['pom.xml', { manager: 'maven', ecosystem: 'Java', languages: ['Java', 'Scala', 'Kotlin'] }],
+      ['build.gradle', { manager: 'gradle', ecosystem: 'Java', languages: ['Java', 'Scala', 'Kotlin'] }],
+      ['build.gradle.kts', { manager: 'gradle', ecosystem: 'Kotlin', languages: ['Kotlin', 'Java'] }],
+      ['build.sbt', { manager: 'sbt', ecosystem: 'Scala', languages: ['Scala', 'Java'] }],
+
+      // .NET Ecosystem
+      ['.csproj', { manager: 'nuget', ecosystem: 'C#', languages: ['C#'] }],
+      ['.sln', { manager: 'nuget', ecosystem: 'C#', languages: ['C#'] }],
+      ['packages.config', { manager: 'nuget', ecosystem: 'C#', languages: ['C#'] }],
+
+      // Go Ecosystem
+      ['go.mod', { manager: 'go modules', ecosystem: 'Go', languages: ['Go'] }],
+      ['go.sum', { manager: 'go modules', ecosystem: 'Go', languages: ['Go'] }],
+
+      // Rust Ecosystem
+      ['Cargo.toml', { manager: 'cargo', ecosystem: 'Rust', languages: ['Rust'] }],
+      ['Cargo.lock', { manager: 'cargo', ecosystem: 'Rust', languages: ['Rust'] }],
+
+      // Ruby Ecosystem
+      ['Gemfile', { manager: 'bundler', ecosystem: 'Ruby', languages: ['Ruby'] }],
+      ['Gemfile.lock', { manager: 'bundler', ecosystem: 'Ruby', languages: ['Ruby'] }],
+      ['.gemspec', { manager: 'gem', ecosystem: 'Ruby', languages: ['Ruby'] }],
+
+      // PHP Ecosystem
+      ['composer.json', { manager: 'composer', ecosystem: 'PHP', languages: ['PHP'] }],
+      ['composer.lock', { manager: 'composer', ecosystem: 'PHP', languages: ['PHP'] }],
+
+      // Swift Ecosystem
+      ['Package.swift', { manager: 'swift package manager', ecosystem: 'Swift', languages: ['Swift'] }],
+      ['Podfile', { manager: 'cocoapods', ecosystem: 'iOS', languages: ['Swift', 'Objective-C'] }],
+
+      // Dart/Flutter Ecosystem
+      ['pubspec.yaml', { manager: 'pub', ecosystem: 'Dart', languages: ['Dart'] }],
+      ['pubspec.lock', { manager: 'pub', ecosystem: 'Dart', languages: ['Dart'] }],
+
+      // Elixir Ecosystem
+      ['mix.exs', { manager: 'mix', ecosystem: 'Elixir', languages: ['Elixir'] }],
+      ['mix.lock', { manager: 'mix', ecosystem: 'Elixir', languages: ['Elixir'] }],
+
+      // R Ecosystem
+      ['DESCRIPTION', { manager: 'R packages', ecosystem: 'R', languages: ['R'] }],
+      ['renv.lock', { manager: 'renv', ecosystem: 'R', languages: ['R'] }],
+
+      // Lua Ecosystem
+      ['rockspec', { manager: 'luarocks', ecosystem: 'Lua', languages: ['Lua'] }],
+
+      // OCaml Ecosystem
+      ['dune-project', { manager: 'dune', ecosystem: 'OCaml', languages: ['OCaml'] }],
+      ['opam', { manager: 'opam', ecosystem: 'OCaml', languages: ['OCaml'] }],
+
+      // Elm Ecosystem
+      ['elm.json', { manager: 'elm', ecosystem: 'Elm', languages: ['Elm'] }],
+
+      // Zig Ecosystem
+      ['build.zig', { manager: 'zig build', ecosystem: 'Zig', languages: ['Zig'] }]
+    ]);
+
+    const detectedManagers: PackageManagerInfo[] = [];
+
+    for (const [pattern, info] of packageManagerPatterns) {
+      if (codemapContent.includes(pattern)) {
+        detectedManagers.push({
+          pattern,
+          manager: info.manager,
+          ecosystem: info.ecosystem,
+          supportedLanguages: info.languages,
+          confidence: this.calculatePackageManagerConfidence(pattern, codemapContent)
+        });
+      }
+    }
+
+    return detectedManagers;
+  }
+
+  /**
+   * Calculate package manager confidence based on context
+   */
+  private calculatePackageManagerConfidence(pattern: string, codemapContent: string): number {
+    // Base confidence
+    let confidence = 0.7;
+
+    // Boost confidence for common patterns
+    const commonPatterns = ['package.json', 'requirements.txt', 'pom.xml', 'Cargo.toml', 'go.mod'];
+    if (commonPatterns.includes(pattern)) {
+      confidence += 0.2;
+    }
+
+    // Check for related files that increase confidence
+    const relatedFiles = {
+      'package.json': ['yarn.lock', 'package-lock.json', 'node_modules'],
+      'requirements.txt': ['setup.py', 'pyproject.toml', '__pycache__'],
+      'pom.xml': ['target/', 'src/main/java'],
+      'Cargo.toml': ['Cargo.lock', 'src/main.rs', 'target/'],
+      'go.mod': ['go.sum', 'main.go', 'cmd/']
+    };
+
+    const related = relatedFiles[pattern as keyof typeof relatedFiles];
+    if (related) {
+      const foundRelated = related.filter(file => codemapContent.includes(file));
+      confidence += foundRelated.length * 0.05;
+    }
+
+    return Math.min(confidence, 1.0);
+  }
+
+  /**
+   * Analyze universal project structure patterns
+   */
+  private analyzeUniversalProjectStructure(codemapContent: string): StructureAnalysis {
+    const universalPatterns = [
+      // Web Application Patterns
+      { pattern: /src\/components/i, types: ['React App', 'Vue App', 'Angular App'], weight: 0.9 },
+      { pattern: /public\/.*\.(html|css|js)/i, types: ['Web Application'], weight: 0.8 },
+      { pattern: /dist\/|build\/|out\//i, types: ['Build-based Project'], weight: 0.7 },
+      { pattern: /pages\/.*\.(js|ts|jsx|tsx)/i, types: ['Next.js App', 'Nuxt.js App'], weight: 0.9 },
+
+      // Backend API Patterns
+      { pattern: /routes\/|controllers\/|handlers\//i, types: ['Web API', 'REST API'], weight: 0.9 },
+      { pattern: /models\/|entities\/|schemas\//i, types: ['Database-driven App'], weight: 0.8 },
+      { pattern: /middleware\/|interceptors\//i, types: ['Web Framework App'], weight: 0.8 },
+      { pattern: /api\/|endpoints\//i, types: ['API Service'], weight: 0.8 },
+
+      // Mobile Application Patterns
+      { pattern: /android\/.*\.(java|kt)/i, types: ['Android App'], weight: 0.95 },
+      { pattern: /ios\/.*\.(swift|m)/i, types: ['iOS App'], weight: 0.95 },
+      { pattern: /lib\/.*\.dart/i, types: ['Flutter App'], weight: 0.9 },
+      { pattern: /src\/.*\.(swift|kt|java)/i, types: ['Mobile App'], weight: 0.7 },
+
+      // Desktop Application Patterns
+      { pattern: /src-tauri\//i, types: ['Tauri Desktop App'], weight: 0.95 },
+      { pattern: /electron\/|main\.(js|ts)/i, types: ['Electron App'], weight: 0.9 },
+      { pattern: /\.desktop|\.app\//i, types: ['Desktop Application'], weight: 0.8 },
+
+      // Data Science/ML Patterns
+      { pattern: /notebooks\/.*\.ipynb/i, types: ['Jupyter Project', 'Data Science'], weight: 0.9 },
+      { pattern: /models\/.*\.(pkl|h5|pt|onnx)/i, types: ['ML Project'], weight: 0.9 },
+      { pattern: /data\/.*\.(csv|json|parquet|h5)/i, types: ['Data Analysis'], weight: 0.8 },
+      { pattern: /experiments\/|research\//i, types: ['Research Project'], weight: 0.7 },
+
+      // DevOps/Infrastructure Patterns
+      { pattern: /docker\/|Dockerfile/i, types: ['Containerized App'], weight: 0.8 },
+      { pattern: /k8s\/|kubernetes\//i, types: ['Kubernetes App'], weight: 0.9 },
+      { pattern: /terraform\/.*\.tf/i, types: ['Infrastructure as Code'], weight: 0.9 },
+      { pattern: /ansible\/.*\.yml/i, types: ['Configuration Management'], weight: 0.8 },
+      { pattern: /\.github\/workflows\//i, types: ['CI/CD Project'], weight: 0.7 },
+
+      // Game Development Patterns
+      { pattern: /assets\/.*\.(png|jpg|wav|ogg)/i, types: ['Game Project'], weight: 0.7 },
+      { pattern: /scenes\/|levels\//i, types: ['Game Project'], weight: 0.8 },
+      { pattern: /unity\/|unreal\//i, types: ['Game Engine Project'], weight: 0.9 },
+
+      // Blockchain Patterns
+      { pattern: /contracts\/.*\.sol/i, types: ['Smart Contract Project'], weight: 0.95 },
+      { pattern: /migrations\/|deploy\//i, types: ['Blockchain Project'], weight: 0.8 },
+
+      // Library/Framework Patterns
+      { pattern: /lib\/|library\//i, types: ['Library Project'], weight: 0.7 },
+      { pattern: /examples\/|demo\//i, types: ['Example/Demo Project'], weight: 0.6 },
+      { pattern: /docs\/|documentation\//i, types: ['Documentation Project'], weight: 0.6 },
+
+      // Testing Patterns
+      { pattern: /tests?\/|spec\/|__tests__\//i, types: ['Test Suite'], weight: 0.5 },
+      { pattern: /e2e\/|integration\//i, types: ['Testing Framework'], weight: 0.6 },
+
+      // Microservices Patterns
+      { pattern: /services\/.*\//i, types: ['Microservices'], weight: 0.8 },
+      { pattern: /packages\/.*\//i, types: ['Monorepo'], weight: 0.8 }
+    ];
+
+    const matchedPatterns = universalPatterns
+      .filter(p => p.pattern.test(codemapContent))
+      .map(p => ({
+        pattern: p.pattern.source,
+        types: p.types,
+        weight: p.weight,
+        evidence: this.extractPatternEvidence(codemapContent, p.pattern)
+      }));
+
+    return {
+      patterns: matchedPatterns,
+      projectTypes: this.aggregateProjectTypes(matchedPatterns),
+      confidence: this.calculateStructureConfidence(matchedPatterns)
+    };
+  }
+
+  /**
+   * Extract pattern evidence from codemap
+   */
+  private extractPatternEvidence(codemapContent: string, pattern: RegExp): string[] {
+    const matches = codemapContent.match(pattern);
+    return matches ? matches.slice(0, 5) : []; // Limit to 5 examples
+  }
+
+  /**
+   * Aggregate project types from matched patterns
+   */
+  private aggregateProjectTypes(patterns: StructurePattern[]): string[] {
+    const typeScores = new Map<string, number>();
+
+    for (const pattern of patterns) {
+      for (const type of pattern.types) {
+        typeScores.set(type, (typeScores.get(type) || 0) + pattern.weight);
+      }
+    }
+
+    return Array.from(typeScores.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([type]) => type);
+  }
+
+  /**
+   * Calculate structure confidence
+   */
+  private calculateStructureConfidence(patterns: StructurePattern[]): number {
+    if (patterns.length === 0) return 0.3;
+
+    const totalWeight = patterns.reduce((sum, p) => sum + p.weight, 0);
+    const averageWeight = totalWeight / patterns.length;
+
+    return Math.min(averageWeight + (patterns.length * 0.1), 1.0);
   }
 
   /**
@@ -1643,15 +2090,205 @@ export class ContextCuratorService {
       });
     }
 
-    // Native Android
+    // Native Android - Enhanced with context-aware false positive detection
     const androidIndicators = ['android', 'kotlin', 'gradle', 'androidx', 'android.manifest'];
     const androidEvidence = androidIndicators.filter(indicator => content.includes(indicator));
-    if (androidEvidence.length > 0) {
+
+    // Use language-agnostic false positive detection
+    const hasAndroidFalsePositives = this.detectFalsePositives(content, 'android');
+    const hasKotlinFalsePositives = this.detectFalsePositives(content, 'kotlin');
+
+    // Only detect Android if we have evidence without false positives
+    if (androidEvidence.length > 0 && !hasAndroidFalsePositives && !hasKotlinFalsePositives) {
       projectTypes.push({
         type: 'Android Native',
         confidence: Math.min(androidEvidence.length / androidIndicators.length + 0.4, 1.0),
         evidence: androidEvidence
       });
+    }
+  }
+
+  /**
+   * Language-agnostic false positive detection
+   * Detects when keywords appear in support files, comments, or unrelated contexts
+   */
+  private detectFalsePositives(content: string, keyword: string): boolean {
+    const supportFilePatterns = [
+      /languageHandlers\/.*\.ts/i,
+      /grammars\/.*\.wasm/i,
+      /__tests__\/.*\.test\.ts/i,
+      /tools\/.*\/.*\.ts/i,
+      /node_modules\//i,
+      /\.d\.ts$/i,
+      /test.*\.ts$/i,
+      /spec.*\.ts$/i
+    ];
+
+    // Check if keyword appears primarily in support files
+    const keywordRegex = new RegExp(keyword, 'gi');
+    const matches = content.match(keywordRegex) || [];
+
+    if (matches.length === 0) return false;
+
+    // Count matches in support file contexts
+    let supportFileMatches = 0;
+    for (const pattern of supportFilePatterns) {
+      const supportFileRegex = new RegExp(`${pattern.source}.*${keyword}`, 'gi');
+      const supportMatches = content.match(supportFileRegex) || [];
+      supportFileMatches += supportMatches.length;
+    }
+
+    // If more than 70% of matches are in support files, consider it a false positive
+    const falsePositiveRatio = supportFileMatches / matches.length;
+    return falsePositiveRatio > 0.7;
+  }
+
+  /**
+   * Perform semantic technology inference
+   */
+  private performSemanticTechnologyInference(codemapContent: string): TechnologyProfile {
+    const semanticIndicators = this.extractSemanticIndicators(codemapContent);
+    const technologyClusters = this.clusterTechnologies(semanticIndicators);
+
+    return {
+      detectedTechnologies: technologyClusters,
+      primaryStack: this.identifyPrimaryStack(technologyClusters),
+      confidence: this.calculateSemanticConfidence(semanticIndicators)
+    };
+  }
+
+  /**
+   * Extract semantic indicators from codemap
+   */
+  private extractSemanticIndicators(codemapContent: string): string[] {
+    const indicators = [
+      // Framework/Library patterns
+      'react', 'vue', 'angular', 'express', 'django', 'flask', 'spring', 'rails',
+      // Database patterns
+      'mongodb', 'postgresql', 'mysql', 'redis', 'sqlite',
+      // Cloud/Infrastructure patterns
+      'aws', 'azure', 'gcp', 'docker', 'kubernetes',
+      // Development tools
+      'webpack', 'vite', 'babel', 'eslint', 'prettier'
+    ];
+
+    return indicators.filter(indicator =>
+      new RegExp(indicator, 'i').test(codemapContent)
+    );
+  }
+
+  /**
+   * Cluster technologies by type
+   */
+  private clusterTechnologies(indicators: string[]): string[] {
+    // Simple clustering - in a real implementation, this would be more sophisticated
+    return indicators.slice(0, 10); // Limit to top 10
+  }
+
+  /**
+   * Identify primary technology stack
+   */
+  private identifyPrimaryStack(technologies: string[]): string {
+    if (technologies.includes('react')) return 'React Stack';
+    if (technologies.includes('vue')) return 'Vue.js Stack';
+    if (technologies.includes('angular')) return 'Angular Stack';
+    if (technologies.includes('django')) return 'Django Stack';
+    if (technologies.includes('express')) return 'Node.js Stack';
+    if (technologies.includes('spring')) return 'Spring Stack';
+    return 'Mixed Stack';
+  }
+
+  /**
+   * Calculate semantic confidence
+   */
+  private calculateSemanticConfidence(indicators: string[]): number {
+    return Math.min(indicators.length * 0.1 + 0.3, 1.0);
+  }
+
+  /**
+   * Calculate multi-dimensional project type scores
+   */
+  private calculateMultiDimensionalScores(
+    languageProfile: LanguageProfile,
+    packageManagers: PackageManagerInfo[],
+    structureAnalysis: StructureAnalysis,
+    technologyProfile: TechnologyProfile,
+    codemapContent: string
+  ): Map<string, ProjectTypeScore> {
+    const scores = new Map<string, ProjectTypeScore>();
+
+    // Language-based scoring (40% weight)
+    this.scoreByLanguageEcosystem(scores, languageProfile, 0.4);
+
+    // Package manager-based scoring (30% weight)
+    this.scoreByPackageManagers(scores, packageManagers, 0.3);
+
+    // Structure-based scoring (20% weight)
+    this.scoreByStructure(scores, structureAnalysis, 0.2);
+
+    // Content semantic scoring (10% weight)
+    this.scoreBySemanticContent(scores, codemapContent, 0.1);
+
+    return scores;
+  }
+
+  /**
+   * Score by language ecosystem with enhanced confidence
+   */
+  private scoreByLanguageEcosystem(
+    scores: Map<string, ProjectTypeScore>,
+    languageProfile: LanguageProfile,
+    weight: number
+  ): void {
+    const { primary, secondary } = languageProfile;
+
+    // Enhanced scoring with higher confidence for clear indicators
+
+    // Web Development Scoring
+    if (this.isWebEcosystem(primary, secondary)) {
+      this.addWeightedScore(scores, 'Web Application', 0.95 * weight, ['Language Analysis'], [primary]);
+    }
+
+    // Backend Service Scoring
+    if (this.isBackendEcosystem(primary, secondary)) {
+      this.addWeightedScore(scores, 'Backend Service', 0.9 * weight, ['Language Analysis'], [primary]);
+
+      // Specific language backend scoring
+      if (primary === 'Python') {
+        this.addWeightedScore(scores, 'Python Backend', 0.85 * weight, ['Language Analysis'], ['Python']);
+      } else if (primary === 'Java') {
+        this.addWeightedScore(scores, 'Java Backend', 0.85 * weight, ['Language Analysis'], ['Java']);
+      } else if (primary === 'JavaScript' || primary === 'TypeScript') {
+        this.addWeightedScore(scores, 'Node.js Backend', 0.85 * weight, ['Language Analysis'], [primary]);
+      }
+    }
+
+    // Mobile Development Scoring
+    if (this.isMobileEcosystem(primary, secondary)) {
+      this.addWeightedScore(scores, 'Mobile Application', 0.95 * weight, ['Language Analysis'], [primary]);
+
+      // Specific mobile platform scoring
+      if (primary === 'Swift' || secondary.includes('Swift')) {
+        this.addWeightedScore(scores, 'iOS Application', 0.9 * weight, ['Language Analysis'], ['Swift']);
+      } else if (primary === 'Dart') {
+        this.addWeightedScore(scores, 'Flutter Application', 0.9 * weight, ['Language Analysis'], ['Dart']);
+      } else if (primary === 'Kotlin' || primary === 'Java') {
+        this.addWeightedScore(scores, 'Android Application', 0.85 * weight, ['Language Analysis'], [primary]);
+      }
+    }
+
+    // Data Science Scoring
+    if (this.isDataScienceEcosystem(primary, secondary)) {
+      this.addWeightedScore(scores, 'Data Science', 0.9 * weight, ['Language Analysis'], [primary]);
+    }
+
+    // Systems Programming
+    if (primary === 'Rust') {
+      this.addWeightedScore(scores, 'Rust System Service', 0.85 * weight, ['Language Analysis'], ['Rust']);
+    } else if (primary === 'Go') {
+      this.addWeightedScore(scores, 'Go Microservice', 0.85 * weight, ['Language Analysis'], ['Go']);
+    } else if (primary === 'C#') {
+      this.addWeightedScore(scores, '.NET Backend', 0.85 * weight, ['Language Analysis'], ['C#']);
     }
   }
 
@@ -1900,6 +2537,256 @@ export class ContextCuratorService {
     if (content.includes('jenkins')) environment.add('Jenkins');
 
     return Array.from(environment);
+  }
+
+  // ========== LANGUAGE-AGNOSTIC HELPER METHODS ==========
+
+  /**
+   * Check if language combination indicates web ecosystem
+   */
+  private isWebEcosystem(primary: string, secondary: string[]): boolean {
+    const webLanguages = ['JavaScript', 'TypeScript', 'HTML', 'CSS', 'Vue', 'React'];
+    return webLanguages.includes(primary) ||
+           secondary.some(lang => webLanguages.includes(lang));
+  }
+
+  /**
+   * Check if language combination indicates backend ecosystem
+   */
+  private isBackendEcosystem(primary: string, secondary: string[]): boolean {
+    const backendLanguages = [
+      'JavaScript', 'TypeScript', 'Python', 'Java', 'C#', 'Go',
+      'Ruby', 'PHP', 'Rust', 'Kotlin', 'Scala', 'Elixir'
+    ];
+    return backendLanguages.includes(primary) ||
+           secondary.some(lang => backendLanguages.includes(lang));
+  }
+
+  /**
+   * Check if language combination indicates mobile ecosystem
+   */
+  private isMobileEcosystem(primary: string, secondary: string[]): boolean {
+    const mobileLanguages = ['Swift', 'Objective-C', 'Java', 'Kotlin', 'Dart'];
+    return mobileLanguages.includes(primary) ||
+           secondary.some(lang => mobileLanguages.includes(lang));
+  }
+
+  /**
+   * Check if language combination indicates data science ecosystem
+   */
+  private isDataScienceEcosystem(primary: string, secondary: string[]): boolean {
+    const dataLanguages = ['Python', 'R', 'Julia', 'Scala', 'SQL'];
+    return dataLanguages.includes(primary) ||
+           secondary.some(lang => dataLanguages.includes(lang));
+  }
+
+  /**
+   * Score by package managers with enhanced confidence
+   */
+  private scoreByPackageManagers(
+    scores: Map<string, ProjectTypeScore>,
+    packageManagers: PackageManagerInfo[],
+    weight: number
+  ): void {
+    for (const pm of packageManagers) {
+      const ecosystemTypes = this.getProjectTypesForEcosystem(pm.ecosystem);
+
+      // Enhanced confidence for strong package manager indicators
+      const enhancedConfidence = Math.min(pm.confidence + 0.3, 1.0);
+
+      for (const type of ecosystemTypes) {
+        this.addWeightedScore(scores, type, enhancedConfidence * weight, ['Package Manager'], [pm.manager]);
+      }
+
+      // Special handling for specific package managers
+      if (pm.pattern === 'pubspec.yaml') {
+        this.addWeightedScore(scores, 'Flutter Application', 0.95 * weight, ['Package Manager'], ['pub']);
+      } else if (pm.pattern === 'Cargo.toml') {
+        this.addWeightedScore(scores, 'Rust System Service', 0.9 * weight, ['Package Manager'], ['cargo']);
+      } else if (pm.pattern === 'go.mod') {
+        this.addWeightedScore(scores, 'Go Microservice', 0.9 * weight, ['Package Manager'], ['go modules']);
+      } else if (pm.pattern === 'requirements.txt') {
+        this.addWeightedScore(scores, 'Python Backend', 0.85 * weight, ['Package Manager'], ['pip']);
+      } else if (pm.pattern === 'pom.xml') {
+        this.addWeightedScore(scores, 'Java Backend', 0.85 * weight, ['Package Manager'], ['maven']);
+      }
+    }
+  }
+
+  /**
+   * Score by structure analysis with enhanced confidence
+   */
+  private scoreByStructure(
+    scores: Map<string, ProjectTypeScore>,
+    structureAnalysis: StructureAnalysis,
+    weight: number
+  ): void {
+    for (const pattern of structureAnalysis.patterns) {
+      for (const type of pattern.types) {
+        // Enhanced confidence for high-weight patterns
+        const enhancedConfidence = Math.min(pattern.weight + 0.2, 1.0);
+        this.addWeightedScore(scores, type, enhancedConfidence * weight, ['Structure Analysis'], pattern.evidence);
+      }
+    }
+
+    // Additional scoring for aggregate project types
+    for (const type of structureAnalysis.projectTypes) {
+      const enhancedConfidence = Math.min(structureAnalysis.confidence + 0.15, 1.0);
+      this.addWeightedScore(scores, type, enhancedConfidence * weight, ['Structure Analysis'], ['Directory patterns']);
+    }
+  }
+
+  /**
+   * Score by semantic content
+   */
+  private scoreBySemanticContent(
+    scores: Map<string, ProjectTypeScore>,
+    codemapContent: string,
+    weight: number
+  ): void {
+    // Simple semantic scoring - can be enhanced
+    const semanticIndicators = this.extractSemanticIndicators(codemapContent);
+    const semanticScore = Math.min(semanticIndicators.length * 0.1, 1.0);
+
+    if (semanticScore > 0.3) {
+      this.addWeightedScore(scores, 'General Application', semanticScore * weight, ['Semantic Analysis'], semanticIndicators);
+    }
+  }
+
+  /**
+   * Add weighted score to project type scores
+   */
+  private addWeightedScore(
+    scores: Map<string, ProjectTypeScore>,
+    type: string,
+    score: number,
+    sources: string[],
+    evidence: string[]
+  ): void {
+    const existing = scores.get(type);
+    if (existing) {
+      existing.confidence = Math.min(existing.confidence + score, 1.0);
+      existing.sources.push(...sources);
+      existing.evidence.push(...evidence);
+    } else {
+      scores.set(type, {
+        type,
+        confidence: score,
+        evidence: [...evidence],
+        sources: [...sources]
+      });
+    }
+  }
+
+  /**
+   * Get project types for ecosystem
+   */
+  private getProjectTypesForEcosystem(ecosystem: string): string[] {
+    const ecosystemMap: { [key: string]: string[] } = {
+      'JavaScript': ['Web Application', 'Node.js Backend'],
+      'Python': ['Python Backend', 'Data Science Project', 'Machine Learning'],
+      'Java': ['Java Backend', 'Enterprise Application'],
+      'C#': ['.NET Backend', 'Desktop Application'],
+      'Go': ['Go Microservice', 'Backend Service'],
+      'Rust': ['Rust System Service', 'Systems Software'],
+      'Swift': ['iOS Application', 'Mobile Application'],
+      'Dart': ['Flutter Application', 'Mobile Application'],
+      'Ruby': ['Ruby Backend', 'Web Application'],
+      'PHP': ['PHP Backend', 'Web Application']
+    };
+
+    return ecosystemMap[ecosystem] || ['General Application'];
+  }
+
+  /**
+   * Select and validate project type
+   */
+  private selectAndValidateProjectType(
+    projectTypeScores: Map<string, ProjectTypeScore>,
+    languageProfile: LanguageProfile,
+    packageManagers: PackageManagerInfo[],
+    structureAnalysis: StructureAnalysis
+  ): ProjectTypeScore {
+    // Sort by confidence
+    const sortedTypes = Array.from(projectTypeScores.values())
+      .sort((a, b) => b.confidence - a.confidence);
+
+    if (sortedTypes.length === 0) {
+      return {
+        type: 'General Application',
+        confidence: 0.5,
+        evidence: ['Unknown project structure'],
+        sources: ['Fallback']
+      };
+    }
+
+    const bestMatch = sortedTypes[0];
+
+    // Validate against primary language
+    const isValid = this.validateProjectTypeAgainstLanguage(bestMatch.type, languageProfile.primary);
+
+    if (!isValid && bestMatch.confidence < 0.8) {
+      // If validation fails and confidence is low, use fallback
+      return {
+        type: `${languageProfile.primary} Application`,
+        confidence: 0.6,
+        evidence: [languageProfile.primary],
+        sources: ['Language-based fallback']
+      };
+    }
+
+    return bestMatch;
+  }
+
+  /**
+   * Validate project type against primary language
+   */
+  private validateProjectTypeAgainstLanguage(projectType: string, primaryLanguage: string): boolean {
+    const compatibilityMap: { [key: string]: string[] } = {
+      'Android Native': ['Java', 'Kotlin'],
+      'iOS Application': ['Swift', 'Objective-C'],
+      'Flutter Application': ['Dart'],
+      'React Application': ['JavaScript', 'TypeScript'],
+      'Vue.js Application': ['JavaScript', 'TypeScript'],
+      'Angular Application': ['JavaScript', 'TypeScript'],
+      'Node.js Backend': ['JavaScript', 'TypeScript'],
+      'Python Backend': ['Python'],
+      'Java Backend': ['Java', 'Kotlin', 'Scala'],
+      '.NET Backend': ['C#'],
+      'Go Microservice': ['Go'],
+      'Rust System Service': ['Rust'],
+      'Data Science Project': ['Python', 'R', 'Julia'],
+      'Machine Learning': ['Python', 'R']
+    };
+
+    const compatibleLanguages = compatibilityMap[projectType];
+    return !compatibleLanguages || compatibleLanguages.includes(primaryLanguage);
+  }
+
+  /**
+   * Build project type analysis result
+   */
+  private buildProjectTypeAnalysisResult(
+    bestMatch: ProjectTypeScore,
+    projectTypeScores: Map<string, ProjectTypeScore>,
+    languageProfile: LanguageProfile,
+    packageManagers: PackageManagerInfo[],
+    structureAnalysis: StructureAnalysis,
+    technologyProfile: TechnologyProfile,
+    codemapContent: string
+  ): ProjectTypeAnalysisResult {
+    const sortedTypes = Array.from(projectTypeScores.values())
+      .sort((a, b) => b.confidence - a.confidence);
+
+    return {
+      projectType: bestMatch.type,
+      confidence: bestMatch.confidence,
+      evidence: bestMatch.evidence,
+      secondaryTypes: sortedTypes.slice(1, 4).map(t => t.type),
+      frameworkStack: this.detectFrameworkStack(codemapContent),
+      architectureStyle: this.detectArchitectureStyle(codemapContent),
+      developmentEnvironment: this.detectDevelopmentEnvironment(codemapContent)
+    };
   }
 
   /**
