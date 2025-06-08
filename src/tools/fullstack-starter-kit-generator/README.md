@@ -120,7 +120,39 @@ This tool executes asynchronously.
 ## Workflow
 
 1.  **Input Validation & Job Creation:** Validates inputs and creates a background job, returning the Job ID.
-2.  **Research (Optional):** If `request_recommendation` is true, performs research on the use case (e.g., tech stacks, key features). This research context is then passed to the module selection LLM.
+2.  **Enhanced Research (Optional):** If `request_recommendation` is true, performs comprehensive research using 3 parallel queries:
+    - **Technology & Architecture**: Current tech stack recommendations, best practices, architecture patterns, latest versions, performance considerations, and scalability factors
+    - **Features & Requirements**: Essential features, user experience patterns, security requirements, integration capabilities, accessibility standards, and compliance requirements
+    - **Development & Deployment**: Development workflows, deployment strategies, testing approaches, DevOps practices, CI/CD recommendations, monitoring solutions, and production readiness considerations
+
+    This enhanced research approach aligns with the research manager's `maxConcurrentRequests: 3` limit and provides 5x more comprehensive context than the previous 2-query approach. The research context is then passed to the module selection LLM.
+
+3.  **Schema Unification & Dynamic Types (Phase 2):** Enhanced schema validation system supporting complex project structures:
+    - **Enhanced Module Selection Schema**: Supports up to 15 modules (vs 10 previously) with module type classification for complex projects like AI platforms and enterprise e-commerce
+    - **Unified Template Schema**: Comprehensive schema for dynamic template generation with research-enhanced context, supporting flexible module types beyond the original 5 categories
+    - **Backward Compatibility**: All existing schemas remain functional with new enhanced schemas as additive extensions
+    - **Complex Scenario Support**: Validated against real-world scenarios including AI-powered coding platforms and enterprise e-commerce systems
+
+4.  **Research-Enhanced Template Generation (Phase 3):** Dynamic template generation with research context integration:
+    - **Research Context Integration**: Template generation prompts now include comprehensive research context for informed technology decisions
+    - **Schema-Aware Generation**: Primary template generation uses schema-aware LLM calls with automatic retry logic and validation
+    - **Intelligent Fallback**: Automatic fallback to existing template generation methods when schema-aware generation fails
+    - **Research-Driven Decisions**: Generated templates incorporate latest best practices, recommended technologies, and architectural patterns from research
+    - **Enhanced Prompts**: Template generation prompts include research findings on technology choices, features, and deployment strategies
+
+5.  **Research-Enhanced Module Selection (Phase 4):** Intelligent module selection with research-driven decision making:
+    - **Research-Driven Guidelines**: Module selection prompts include comprehensive research-driven guidelines for technology choices, architecture patterns, and feature requirements
+    - **Adaptive Schema Selection**: Automatically selects enhanced schema (up to 15 modules) for complex projects based on use case analysis, research context, and tech stack complexity
+    - **Project Complexity Analysis**: Intelligent analysis of project complexity using keyword detection, research context evaluation, and tech stack assessment
+    - **Enhanced Module Selection Schema**: Support for complex projects with module type classification and increased module limits
+    - **Comprehensive Validation**: Dual validation system supporting both standard and enhanced schemas with detailed error reporting
+
+6.  **Enhanced Template Preprocessing & Error Recovery:** Robust preprocessing system for handling LLM format variations:
+    - **SetupCommands Format Correction**: Automatically converts string setupCommands to required object format `{command: string, context?: string}`
+    - **Enhanced Prompt Engineering**: Improved prompts with explicit format requirements, validation checklists, and negative examples
+    - **Intelligent Error Recovery**: Multi-layered preprocessing with format detection, automatic conversion, and comprehensive logging
+    - **Schema Validation Helpers**: Dedicated validation functions with detailed error context and debugging information
+    - **Backward Compatibility**: All preprocessing is additive - valid templates remain unchanged while invalid formats are automatically corrected
 3.  **YAML Module Selection (LLM):**
     *   An LLM is prompted with the user's request, preferences, optional features, and any research context.
     *   The LLM is expected to return a JSON object specifying:
