@@ -2,6 +2,14 @@ import { z } from 'zod';
 import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
 import { performFormatAwareLlmCall } from '../../utils/llmHelper.js';
+import { performModuleSelectionCall } from '../../utils/schemaAwareLlmHelper.js';
+import {
+  moduleSelectionResponseSchema,
+  enhancedModuleSelectionResponseSchema,
+  type ModuleSelectionResponse,
+  validateModuleSelectionWithErrors,
+  validateEnhancedModuleSelectionWithErrors
+} from './schemas/moduleSelection.js';
 import { performResearchQuery } from '../../utils/researchHelper.js';
 import logger from '../../logger.js';
 import fs from 'fs-extra';
@@ -59,6 +67,75 @@ const starterKitInputSchemaShape = {
   include_optional_features: z.array(z.string()).optional().describe("Optional features to include (e.g., ['Docker', 'CI/CD'])")
 };
 
+/**
+ * Determines if a project is complex enough to warrant the enhanced module selection schema
+ * Based on use case keywords, research context, and tech stack preferences
+ */
+function determineProjectComplexity(
+  useCase: string,
+  researchContext: string,
+  techStackPreferences?: Record<string, string | undefined>
+): boolean {
+  const complexityIndicators = [
+    // Use case complexity keywords
+    'enterprise', 'platform', 'marketplace', 'e-commerce', 'ecommerce', 'saas', 'multi-tenant',
+    'microservices', 'distributed', 'scalable', 'real-time', 'ai', 'machine learning', 'ml',
+    'analytics', 'dashboard', 'admin', 'cms', 'crm', 'erp', 'social', 'collaboration',
+    'payment', 'financial', 'fintech', 'healthcare', 'education', 'gaming', 'streaming',
+
+    // Architecture complexity keywords
+    'api gateway', 'load balancer', 'caching', 'queue', 'worker', 'background job',
+    'notification', 'email', 'sms', 'push notification', 'websocket', 'graphql',
+    'authentication', 'authorization', 'oauth', 'sso', 'rbac', 'security',
+    'monitoring', 'logging', 'metrics', 'observability', 'deployment', 'ci/cd',
+    'docker', 'kubernetes', 'cloud', 'aws', 'azure', 'gcp'
+  ];
+
+  const useCaseLower = useCase.toLowerCase();
+  const researchLower = researchContext.toLowerCase();
+
+  // Check use case complexity
+  const useCaseComplexity = complexityIndicators.some(indicator =>
+    useCaseLower.includes(indicator)
+  );
+
+  // Check research context complexity
+  const researchComplexity = complexityIndicators.some(indicator =>
+    researchLower.includes(indicator)
+  );
+
+  // Check tech stack complexity (multiple technologies or advanced frameworks)
+  const techStackComplexity = techStackPreferences &&
+    Object.keys(techStackPreferences).length > 3;
+
+  // Check for specific complex technology combinations
+  const advancedTechStack = techStackPreferences && (
+    Object.values(techStackPreferences).some(tech =>
+      tech && (
+        tech.toLowerCase().includes('microservice') ||
+        tech.toLowerCase().includes('kubernetes') ||
+        tech.toLowerCase().includes('graphql') ||
+        tech.toLowerCase().includes('redis') ||
+        tech.toLowerCase().includes('elasticsearch') ||
+        tech.toLowerCase().includes('kafka')
+      )
+    )
+  );
+
+  const isComplex = useCaseComplexity || researchComplexity || !!techStackComplexity || !!advancedTechStack;
+
+  logger.debug({
+    useCase: useCaseLower.substring(0, 100),
+    useCaseComplexity,
+    researchComplexity,
+    techStackComplexity,
+    advancedTechStack,
+    isComplex
+  }, 'Project complexity analysis');
+
+  return isComplex;
+}
+
 export const generateFullstackStarterKit: ToolExecutor = async (
   params: Record<string, unknown>,
   config: OpenRouterConfig,
@@ -106,21 +183,43 @@ export const generateFullstackStarterKit: ToolExecutor = async (
 
       let researchContext = '';
       if (input.request_recommendation) {
-        logger.info({ jobId }, "Performing pre-generation research...");
-        sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Performing research...');
-        jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Performing research...');
-        researchContext = "## Pre-Generation Research Context:\n" + (await Promise.all([
-            performResearchQuery(`Tech stack for ${input.use_case}`, config),
-            performResearchQuery(`Key features for ${input.use_case}`, config)
-        ])).map(r => r.trim()).join("\n\n");
-        logs.push(`[${new Date().toISOString()}] Research completed.`);
-        sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Research complete.');
+        logger.info({ jobId }, "Performing comprehensive pre-generation research...");
+        sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Performing comprehensive research...');
+        jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Performing comprehensive research...');
+
+        // Enhanced research with 3 comprehensive queries (aligns with research manager's maxConcurrentRequests: 3)
+        const researchQueries = [
+          `Current technology stack recommendations, best practices, and architecture patterns for ${input.use_case}. Include latest versions, performance considerations, scalability factors, and industry adoption trends.`,
+          `Essential features, user experience patterns, security requirements, and integration capabilities needed for ${input.use_case}. Focus on must-have vs nice-to-have features, accessibility standards, and compliance requirements.`,
+          `Development workflow, deployment strategies, testing approaches, and DevOps practices for ${input.use_case}. Include CI/CD recommendations, monitoring solutions, and production readiness considerations.`
+        ];
+
+        logger.debug({ jobId, queryCount: researchQueries.length }, "Executing enhanced research queries in parallel");
+
+        const researchResults = await Promise.all(
+          researchQueries.map((query, index) =>
+            performResearchQuery(query, config).then(result => ({
+              index,
+              query: query.substring(0, 100) + '...',
+              result: result.trim()
+            }))
+          )
+        );
+
+        researchContext = "## Comprehensive Pre-Generation Research Context:\n\n" +
+          researchResults.map((r, i) =>
+            `### Research Area ${i + 1}: ${['Technology & Architecture', 'Features & Requirements', 'Development & Deployment'][i]}\n${r.result}`
+          ).join("\n\n");
+
+        logger.info({ jobId, researchResultsCount: researchResults.length, totalLength: researchContext.length }, "Enhanced research completed successfully");
+        logs.push(`[${new Date().toISOString()}] Enhanced research completed with ${researchResults.length} comprehensive queries.`);
+        sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Comprehensive research complete.');
       }
 
       await initDirectories();
 
       const moduleSelectionPrompt = `
-You are an expert Full-Stack Software Architect AI. Based on the user's request and research context, select the appropriate YAML module templates and provide necessary parameters to compose a full-stack starter kit.
+You are an expert Full-Stack Software Architect AI. Based on the user's request and comprehensive research context, select the appropriate YAML module templates and provide necessary parameters to compose a full-stack starter kit.
 
 User Request:
 - Use Case: ${input.use_case}
@@ -128,6 +227,21 @@ User Request:
 - Optional Features: ${JSON.stringify(input.include_optional_features || [], null, 2)}
 
 ${researchContext}
+
+## Research-Driven Module Selection Guidelines:
+
+Based on the research context above, ensure your module selections incorporate:
+1. **Technology Choices**: Use the latest recommended versions and best practices identified in the research
+2. **Architecture Patterns**: Apply the architectural patterns and scalability considerations mentioned in the research
+3. **Feature Requirements**: Include essential features and integrations identified as must-haves in the research
+4. **Development Workflow**: Select modules that support the recommended development, testing, and deployment practices
+5. **Production Readiness**: Ensure selected modules align with the monitoring, security, and compliance requirements from research
+
+When selecting modules, prioritize those that:
+- Align with current industry trends and adoption patterns from the research
+- Support the performance and scalability requirements identified
+- Include the security and compliance features mentioned in the research
+- Enable the recommended CI/CD and DevOps practices
 
 Available YAML Module Categories (and example templates):
 - Frontend: 'frontend/react-vite', 'frontend/vue-nuxt', 'frontend/angular-cli', 'frontend/nextjs', 'frontend/svelte-kit'
@@ -173,30 +287,83 @@ RESPOND WITH ONLY THE JSON OBJECT - NO OTHER TEXT OR FORMATTING.`;
       sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Determining project components...');
       jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Determining project components...');
 
-      const llmModuleResponseRaw = await performFormatAwareLlmCall(
-        moduleSelectionPrompt,
-        '', // System prompt is part of main prompt for this call
-        config,
-        'fullstack_starter_kit_module_selection',
-        'json', // Explicitly specify JSON format
-        undefined, // Schema will be inferred from task name
-        0.1
-      );
-      logs.push(`[${new Date().toISOString()}] LLM response for module selection received.`);
-      logger.debug({ jobId, rawLlmResponse: llmModuleResponseRaw }, "Raw LLM response for module selection");
+      // Determine schema complexity based on use case and research context
+      const isComplexProject = determineProjectComplexity(input.use_case, researchContext, input.tech_stack_preferences);
+      const selectedSchema = isComplexProject ? enhancedModuleSelectionResponseSchema : moduleSelectionResponseSchema;
+      const schemaType = isComplexProject ? 'enhanced' : 'standard';
 
-      let llmModuleSelections;
+      logger.info({ jobId, isComplexProject, schemaType }, 'Selected module selection schema based on project complexity');
+
+      // Try new schema-aware approach first, fallback to existing method
+      let llmModuleSelections: ModuleSelectionResponse;
+      let usedSchemaAware = false;
+
       try {
-        // Use intelligent parsing with validation-first approach for module selection
-        const { intelligentJsonParse } = await import('../../utils/llmHelper.js');
-        llmModuleSelections = intelligentJsonParse(llmModuleResponseRaw, `module-selection-${jobId}`);
-        logger.debug({ jobId, responseLength: llmModuleResponseRaw.length, parsedSize: JSON.stringify(llmModuleSelections).length }, "Intelligent JSON parsing successful for module selection");
-      } catch (e) {
-        throw new ParsingError("Failed to parse LLM response for module selections as JSON.", { rawResponse: llmModuleResponseRaw }, e instanceof Error ? e : undefined);
-      }
+        logger.debug({ jobId, schemaType }, 'Attempting schema-aware module selection...');
 
-      if (!llmModuleSelections.globalParams || !llmModuleSelections.moduleSelections) {
-          throw new ConfigurationError("LLM response for module selections is missing required 'globalParams' or 'moduleSelections' fields.");
+        const schemaAwareResult = await performModuleSelectionCall(
+          moduleSelectionPrompt,
+          '', // System prompt is part of main prompt for this call
+          config,
+          selectedSchema
+        );
+
+        llmModuleSelections = schemaAwareResult.data;
+        usedSchemaAware = true;
+
+        logger.info({
+          jobId,
+          attempts: schemaAwareResult.attempts,
+          hadRetries: schemaAwareResult.hadRetries,
+          processingTimeMs: schemaAwareResult.processingTimeMs,
+          responseLength: schemaAwareResult.rawResponse.length
+        }, 'Schema-aware module selection successful');
+
+        logs.push(`[${new Date().toISOString()}] Schema-aware LLM response received (${schemaAwareResult.attempts} attempts, ${schemaAwareResult.processingTimeMs}ms).`);
+
+      } catch (schemaError) {
+        logger.warn({
+          jobId,
+          error: schemaError instanceof Error ? schemaError.message : String(schemaError)
+        }, 'Schema-aware approach failed, falling back to existing method');
+
+        // Fallback to existing approach
+        const llmModuleResponseRaw = await performFormatAwareLlmCall(
+          moduleSelectionPrompt,
+          '', // System prompt is part of main prompt for this call
+          config,
+          'fullstack_starter_kit_module_selection',
+          'json', // Explicitly specify JSON format
+          undefined, // Schema will be inferred from task name
+          0.1
+        );
+        logs.push(`[${new Date().toISOString()}] Fallback LLM response for module selection received.`);
+        logger.debug({ jobId, rawLlmResponse: llmModuleResponseRaw }, "Raw LLM response for module selection (fallback)");
+
+        try {
+          // Use intelligent parsing with validation-first approach for module selection
+          const { intelligentJsonParse } = await import('../../utils/llmHelper.js');
+          const parsed = intelligentJsonParse(llmModuleResponseRaw, `module-selection-${jobId}`);
+
+          // Validate the parsed result using the appropriate schema
+          const validation = isComplexProject
+            ? validateEnhancedModuleSelectionWithErrors(parsed)
+            : validateModuleSelectionWithErrors(parsed);
+
+          if (!validation.success) {
+            throw new ValidationError(
+              `Module selection validation failed (${schemaType} schema): ${validation.errors?.join('; ')}`,
+              undefined, // No Zod issues available from our custom validation
+              { rawResponse: llmModuleResponseRaw, validationErrors: validation.errors, schemaType }
+            );
+          }
+
+          llmModuleSelections = validation.data!;
+          logger.debug({ jobId, responseLength: llmModuleResponseRaw.length, parsedSize: JSON.stringify(llmModuleSelections).length }, "Fallback parsing and validation successful");
+
+        } catch (e) {
+          throw new ParsingError("Failed to parse LLM response for module selections as JSON.", { rawResponse: llmModuleResponseRaw }, e instanceof Error ? e : undefined);
+        }
       }
 
       logger.info({ jobId, selections: llmModuleSelections }, 'LLM module selections parsed.');
@@ -205,7 +372,8 @@ RESPOND WITH ONLY THE JSON OBJECT - NO OTHER TEXT OR FORMATTING.`;
 
       const composedDefinition = await yamlComposer.compose(
         llmModuleSelections.moduleSelections,
-        llmModuleSelections.globalParams
+        llmModuleSelections.globalParams,
+        researchContext
       );
       logs.push(`[${new Date().toISOString()}] YAML modules composed into a single definition.`);
       logger.info({ jobId }, 'Successfully composed starter kit definition from YAML modules.');
