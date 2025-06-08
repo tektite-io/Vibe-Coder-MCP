@@ -137,7 +137,7 @@ describe('ContextCuratorConfigLoader', () => {
       expect(result.success).toBe(true);
       // The config loader handles missing LLM config gracefully without warnings
       expect(result.warnings.length).toBeGreaterThanOrEqual(0);
-      expect(configLoader.getLLMModel('intent_analysis')).toBe('google/gemini-2.5-flash-preview');
+      expect(configLoader.getLLMModel('intent_analysis')).toBe('google/gemini-2.5-flash-preview-05-20');
     });
 
     it('should load environment configuration', async () => {

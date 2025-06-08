@@ -2,6 +2,7 @@
 import { randomUUID } from 'crypto';
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import logger from '../../logger.js';
+import { JobDetails } from './jobStatusMessage.js';
 
 /**
  * Represents the possible statuses of a background job.
@@ -26,6 +27,7 @@ export interface Job {
   progressMessage?: string; // Optional message describing the current step
   progressPercentage?: number; // Optional percentage of completion (0-100)
   result?: CallToolResult; // Final result (success or error)
+  details?: JobDetails; // Optional detailed information for enhanced debugging
   // Properties for rate limiting
   lastAccessTime?: number; // When the job was last accessed via getJob
   accessCount?: number; // How many times the job has been accessed
@@ -174,9 +176,16 @@ class JobManager {
    * @param status The new status for the job.
    * @param progressMessage An optional message describing the current progress.
    * @param progressPercentage An optional percentage of completion (0-100).
+   * @param details Optional detailed information for enhanced debugging.
    * @returns True if the job was found and updated, false otherwise.
    */
-  updateJobStatus(jobId: string, status: JobStatus, progressMessage?: string, progressPercentage?: number): boolean {
+  updateJobStatus(
+    jobId: string,
+    status: JobStatus,
+    progressMessage?: string,
+    progressPercentage?: number,
+    details?: JobDetails
+  ): boolean {
     const job = this.jobs.get(jobId);
     if (!job) {
       logger.warn({ jobId }, `Attempted to update status for non-existent job.`);
@@ -189,7 +198,6 @@ class JobManager {
         // Optionally return false or allow update
     }
 
-
     job.status = status;
     job.updatedAt = Date.now();
     if (progressMessage !== undefined) {
@@ -198,7 +206,18 @@ class JobManager {
     if (progressPercentage !== undefined) {
       job.progressPercentage = progressPercentage;
     }
-    logger.info({ jobId, status, progressMessage, progressPercentage }, `Updated job status.`);
+    if (details !== undefined) {
+      job.details = details;
+    }
+
+    logger.info({
+      jobId,
+      status,
+      progressMessage,
+      progressPercentage,
+      hasDetails: !!details
+    }, `Updated job status.`);
+
     // TODO: Notify via SSE later
     // sseNotifier.sendProgress(sessionId, jobId, status, progressMessage);
     return true;

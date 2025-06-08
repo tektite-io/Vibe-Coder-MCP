@@ -9,9 +9,10 @@ import { JobStatus } from './index.js';
  * @param progress An optional progress percentage (0-100).
  * @param createdAt The timestamp when the job was created.
  * @param updatedAt The timestamp when the job was last updated.
+ * @param details Optional detailed information for enhanced debugging.
  * @returns A standardized job status message.
  */
-export function createJobStatusMessage(jobId, toolName, status, message, progress, createdAt, updatedAt) {
+export function createJobStatusMessage(jobId, toolName, status, message, progress, createdAt, updatedAt, details) {
     const now = Date.now();
     // Calculate recommended polling interval based on status
     let pollingInterval;
@@ -35,6 +36,7 @@ export function createJobStatusMessage(jobId, toolName, status, message, progres
                 interval: pollingInterval,
                 nextCheckTime: now + pollingInterval
             }
-        } : {})
+        } : {}),
+        ...(details ? { details } : {})
     };
 }

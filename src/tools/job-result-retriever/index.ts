@@ -9,7 +9,8 @@ import { createJobStatusMessage } from '../../services/job-manager/jobStatusMess
 
 // --- Zod Schema ---
 const getJobResultInputSchemaShape = {
-  jobId: z.string().uuid({ message: "Invalid Job ID format. Must be a UUID." }).describe("The unique identifier of the job to retrieve.")
+  jobId: z.string().uuid({ message: "Invalid Job ID format. Must be a UUID." }).describe("The unique identifier of the job to retrieve."),
+  includeDetails: z.boolean().default(true).optional().describe("Whether to include detailed diagnostic information in the response. Defaults to true.")
 };
 
 // --- Tool Executor ---
@@ -22,7 +23,7 @@ export const getJobResult: ToolExecutor = async (
   _config: OpenRouterConfig, // Config might not be needed here, but keep for signature
   context?: ToolExecutionContext // Context might be needed for transport type
 ): Promise<CallToolResult> => {
-  const { jobId } = params as { jobId: string };
+  const { jobId, includeDetails = true } = params as { jobId: string; includeDetails?: boolean };
   const sessionId = context?.sessionId || 'unknown-session';
   const transportType = context?.transportType || 'unknown';
 
@@ -55,7 +56,8 @@ export const getJobResult: ToolExecutor = async (
         `Rate limited: Please wait ${Math.ceil(waitTime / 1000)} seconds before checking again.`,
         undefined,
         job.createdAt,
-        job.updatedAt
+        job.updatedAt,
+        includeDetails ? job.details : undefined
       );
 
       return {
@@ -150,14 +152,42 @@ export const getJobResult: ToolExecutor = async (
       job.toolName,
       job.status,
       job.progressMessage,
-      undefined, // progress percentage not available
+      job.progressPercentage,
       job.createdAt,
-      job.updatedAt
+      job.updatedAt,
+      includeDetails ? job.details : undefined
     );
 
     // Add polling recommendation to the response
     if (statusMessage.pollingRecommendation) {
       responseText += `\n\nRecommended polling interval: ${statusMessage.pollingRecommendation.interval / 1000} seconds.`;
+    }
+
+    // Add detailed information to response text if requested and available
+    if (includeDetails && statusMessage.details) {
+      responseText += '\n\n--- Detailed Information ---';
+
+      if (statusMessage.details.currentStage) {
+        responseText += `\nCurrent Stage: ${statusMessage.details.currentStage}`;
+      }
+
+      if (statusMessage.details.subProgress !== undefined) {
+        responseText += `\nSub-progress: ${statusMessage.details.subProgress}%`;
+      }
+
+      if (statusMessage.details.diagnostics && statusMessage.details.diagnostics.length > 0) {
+        responseText += '\nDiagnostics:';
+        statusMessage.details.diagnostics.forEach((diagnostic, index) => {
+          responseText += `\n  ${index + 1}. ${diagnostic}`;
+        });
+      }
+
+      if (statusMessage.details.metadata && Object.keys(statusMessage.details.metadata).length > 0) {
+        responseText += '\nMetadata:';
+        Object.entries(statusMessage.details.metadata).forEach(([key, value]) => {
+          responseText += `\n  ${key}: ${JSON.stringify(value)}`;
+        });
+      }
     }
 
     // Return the status message
@@ -183,7 +213,7 @@ export const getJobResult: ToolExecutor = async (
 // --- Tool Registration ---
 const getJobResultToolDefinition: ToolDefinition = {
   name: "get-job-result",
-  description: "Retrieves the current status and, if available, the final result of a background job.",
+  description: "Retrieves the current status and, if available, the final result of a background job. Supports enhanced diagnostic information for debugging and troubleshooting.",
   inputSchema: getJobResultInputSchemaShape,
   executor: getJobResult
 };

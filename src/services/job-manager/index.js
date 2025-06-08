@@ -133,9 +133,10 @@ class JobManager {
      * @param status The new status for the job.
      * @param progressMessage An optional message describing the current progress.
      * @param progressPercentage An optional percentage of completion (0-100).
+     * @param details Optional detailed information for enhanced debugging.
      * @returns True if the job was found and updated, false otherwise.
      */
-    updateJobStatus(jobId, status, progressMessage, progressPercentage) {
+    updateJobStatus(jobId, status, progressMessage, progressPercentage, details) {
         const job = this.jobs.get(jobId);
         if (!job) {
             logger.warn({ jobId }, `Attempted to update status for non-existent job.`);
@@ -154,7 +155,16 @@ class JobManager {
         if (progressPercentage !== undefined) {
             job.progressPercentage = progressPercentage;
         }
-        logger.info({ jobId, status, progressMessage, progressPercentage }, `Updated job status.`);
+        if (details !== undefined) {
+            job.details = details;
+        }
+        logger.info({
+            jobId,
+            status,
+            progressMessage,
+            progressPercentage,
+            hasDetails: !!details
+        }, `Updated job status.`);
         // TODO: Notify via SSE later
         // sseNotifier.sendProgress(sessionId, jobId, status, progressMessage);
         return true;
