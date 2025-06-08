@@ -6,6 +6,7 @@ import {
   RELEVANCE_SCORING_EXAMPLES,
   getRelevanceScoringTaskId,
   validateRelevanceScoringResponse,
+  enhanceRelevanceScoringResponse,
   calculateOverallMetrics,
   filterFilesByRelevance,
   sortFilesByRelevance,
@@ -708,6 +709,130 @@ describe('Relevance Scoring Templates', () => {
       expect(stats.mean).toBe(0.8);
       expect(stats.median).toBe(0.8);
       expect(stats.standardDeviation).toBe(0);
+    });
+  });
+
+  describe('enhanceRelevanceScoringResponse', () => {
+    it('should handle incomplete LLM responses by adding missing files', () => {
+      const incompleteResponse = {
+        fileScores: [
+          {
+            filePath: 'file1.ts',
+            relevanceScore: 0.9,
+            confidence: 0.8,
+            reasoning: 'High relevance file',
+            categories: ['core'],
+            modificationLikelihood: 'very_high',
+            estimatedTokens: 500
+          }
+        ]
+      };
+
+      const expectedFiles = [
+        { path: 'file1.ts', estimatedTokens: 500 },
+        { path: 'file2.ts', estimatedTokens: 300 },
+        { path: 'file3.ts', estimatedTokens: 200 }
+      ];
+
+      const enhanced = enhanceRelevanceScoringResponse(
+        incompleteResponse,
+        'hybrid',
+        1000,
+        expectedFiles
+      ) as any;
+
+      expect(enhanced.fileScores).toHaveLength(3);
+      expect(enhanced.fileScores[0].filePath).toBe('file1.ts');
+      expect(enhanced.fileScores[1].filePath).toBe('file2.ts');
+      expect(enhanced.fileScores[2].filePath).toBe('file3.ts');
+
+      // Check that missing files have default scores
+      expect(enhanced.fileScores[1].relevanceScore).toBe(0.3);
+      expect(enhanced.fileScores[1].confidence).toBe(0.5);
+      expect(enhanced.fileScores[1].reasoning).toContain('Auto-generated score');
+      expect(enhanced.fileScores[1].categories).toEqual(['utility']);
+      expect(enhanced.fileScores[1].modificationLikelihood).toBe('low');
+    });
+
+    it('should handle single file responses by converting to array and adding missing files', () => {
+      const singleFileResponse = {
+        filePath: 'file1.ts',
+        relevanceScore: 0.9,
+        confidence: 0.8,
+        reasoning: 'High relevance file',
+        categories: ['core'],
+        modificationLikelihood: 'very_high',
+        estimatedTokens: 500
+      };
+
+      const expectedFiles = [
+        { path: 'file1.ts', estimatedTokens: 500 },
+        { path: 'file2.ts', estimatedTokens: 300 }
+      ];
+
+      const enhanced = enhanceRelevanceScoringResponse(
+        singleFileResponse,
+        'hybrid',
+        1000,
+        expectedFiles
+      ) as any;
+
+      expect(enhanced.fileScores).toHaveLength(2);
+      expect(enhanced.fileScores[0].filePath).toBe('file1.ts');
+      expect(enhanced.fileScores[1].filePath).toBe('file2.ts');
+
+      // Check that the original file properties are removed from top level
+      expect(enhanced.filePath).toBeUndefined();
+      expect(enhanced.relevanceScore).toBeUndefined();
+    });
+
+    it('should not modify complete responses', () => {
+      const completeResponse = {
+        fileScores: [
+          {
+            filePath: 'file1.ts',
+            relevanceScore: 0.9,
+            confidence: 0.8,
+            reasoning: 'High relevance file',
+            categories: ['core'],
+            modificationLikelihood: 'very_high',
+            estimatedTokens: 500
+          },
+          {
+            filePath: 'file2.ts',
+            relevanceScore: 0.7,
+            confidence: 0.6,
+            reasoning: 'Medium relevance file',
+            categories: ['utility'],
+            modificationLikelihood: 'medium',
+            estimatedTokens: 300
+          }
+        ],
+        overallMetrics: {
+          averageRelevance: 0.8,
+          totalFilesScored: 2,
+          highRelevanceCount: 2,
+          processingTimeMs: 1000
+        },
+        scoringStrategy: 'hybrid'
+      };
+
+      const expectedFiles = [
+        { path: 'file1.ts', estimatedTokens: 500 },
+        { path: 'file2.ts', estimatedTokens: 300 }
+      ];
+
+      const enhanced = enhanceRelevanceScoringResponse(
+        completeResponse,
+        'hybrid',
+        1000,
+        expectedFiles
+      ) as any;
+
+      // Should not modify complete responses
+      expect(enhanced.fileScores).toHaveLength(2);
+      expect(enhanced.overallMetrics).toEqual(completeResponse.overallMetrics);
+      expect(enhanced.scoringStrategy).toBe('hybrid');
     });
   });
 });

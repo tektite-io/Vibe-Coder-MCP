@@ -319,6 +319,8 @@ export const contextPackageSchema = z.object({
   id: z.string().min(1),
   /** Original user prompt */
   userPrompt: z.string(),
+  /** Refined prompt after enhancement */
+  refinedPrompt: z.string().optional(),
   /** Task type */
   taskType: taskTypeSchema,
   /** Project path */

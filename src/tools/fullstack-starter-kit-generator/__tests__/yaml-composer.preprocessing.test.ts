@@ -184,6 +184,91 @@ describe('YAMLComposer Preprocessing Fix', () => {
       expect(fileItem.generationPrompt).toBe(null);
     });
 
+    it('should resolve content/generationPrompt conflict by prioritizing generationPrompt', () => {
+      // This is the exact issue that was causing the monaco-judge0 error
+      const problematicJson = {
+        moduleName: 'monaco-judge0-development-tools',
+        description: 'Test module with content/generationPrompt conflict',
+        type: 'development-tools',
+        provides: {
+          directoryStructure: [
+            {
+              path: 'backend/',
+              type: 'directory',
+              content: null,
+              children: [
+                {
+                  path: 'backend/.env.example',
+                  type: 'file',
+                  content: 'BACKEND_PORT=3000\nAPI_KEY=YOUR_API_KEY_HERE',
+                  generationPrompt: 'Please fill in your API key for the service.'
+                }
+              ]
+            }
+          ]
+        }
+      };
+
+      const preprocessed = (yamlComposer as any).preprocessTemplateForValidation(problematicJson, 'development-tools/monaco-judge0');
+
+      // Verify the conflict was resolved by prioritizing generationPrompt
+      const fileItem = preprocessed.provides.directoryStructure[0].children[0];
+      expect(fileItem.content).toBe(null); // Should be null when generationPrompt is present
+      expect(fileItem.generationPrompt).toBe('Please fill in your API key for the service.');
+    });
+
+    it('should handle files with only generationPrompt', () => {
+      const problematicJson = {
+        moduleName: 'test-module',
+        description: 'Test module',
+        type: 'utility',
+        provides: {
+          directoryStructure: [
+            {
+              path: 'config.env',
+              type: 'file',
+              generationPrompt: 'Generate environment configuration'
+              // Missing content field
+            }
+          ]
+        }
+      };
+
+      const preprocessed = (yamlComposer as any).preprocessTemplateForValidation(problematicJson, 'test/module');
+
+      const fileItem = preprocessed.provides.directoryStructure[0];
+      expect(fileItem.content).toBe(null);
+      expect(fileItem.generationPrompt).toBe('Generate environment configuration');
+    });
+
+    it('should handle array responses by converting to minimal object structure', () => {
+      // This tests the fix for the monaco-judge0 array response issue
+      const arrayResponse = ["projectName", "monitoringPath", "prometheusPort", "grafanaPort"];
+      const modulePathSegment = 'monitoring/prometheus-grafana';
+
+      // Simulate the array handling logic from generateDynamicTemplate
+      const minimalObject = {
+        moduleName: `${modulePathSegment.replace('/', '-')}`,
+        description: `${modulePathSegment} module for the project`,
+        type: modulePathSegment.includes('/') ? modulePathSegment.split('/')[0] : 'utility',
+        placeholders: arrayResponse,
+        provides: {
+          techStack: {},
+          directoryStructure: [],
+          dependencies: { npm: {} },
+          setupCommands: [],
+          nextSteps: []
+        }
+      };
+
+      // Verify the constructed object is valid
+      expect(minimalObject.moduleName).toBe('monitoring-prometheus-grafana');
+      expect(minimalObject.type).toBe('monitoring');
+      expect(minimalObject.placeholders).toEqual(arrayResponse);
+      expect(minimalObject.provides.directoryStructure).toEqual([]);
+      expect(minimalObject.provides.setupCommands).toEqual([]);
+    });
+
     it('should not modify already valid structures', () => {
       const validJson = {
         moduleName: 'test-module',

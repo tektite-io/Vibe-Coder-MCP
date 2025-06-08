@@ -27,7 +27,7 @@ export interface TemplateVariables {
   projectName?: string;
   taskType: TaskType;
   userPrompt: string;
-  refinedPrompt: string;
+  refinedPrompt?: string; // Made optional since it's already in metadata
   totalFiles: number;
   totalTokens: number;
   generationTimestamp: string;
@@ -83,7 +83,8 @@ export class OutputFormatterService {
         projectName: contextPackage.metadata.targetDirectory ? path.basename(contextPackage.metadata.targetDirectory) : 'unknown',
         taskType: contextPackage.metadata.taskType,
         userPrompt: contextPackage.metadata.originalPrompt,
-        refinedPrompt: contextPackage.refinedPrompt,
+        // NOTE: refinedPrompt is already in metadata, no need to duplicate it in templateVariables
+        // refinedPrompt: contextPackage.refinedPrompt,
         totalFiles: contextPackage.metadata.filesIncluded,
         totalTokens: contextPackage.metadata.totalTokenEstimate,
         generationTimestamp: (contextPackage.metadata.generationTimestamp || new Date()).toISOString(),
@@ -200,7 +201,7 @@ export class OutputFormatterService {
         taskType: variables.taskType,
         format: 'json' as const
       },
-      refinedPrompt: contextPackage.refinedPrompt,
+      // NOTE: refinedPrompt is already included in metadata, no need to duplicate it here
       codemapPath: contextPackage.codemapPath,
       files: {
         highPriority: contextPackage.highPriorityFiles || [],
@@ -234,7 +235,7 @@ export class OutputFormatterService {
         taskType: variables.taskType,
         format: 'yaml' as const
       },
-      refinedPrompt: contextPackage.refinedPrompt,
+      // NOTE: refinedPrompt is already included in metadata, no need to duplicate it here
       codemapPath: contextPackage.codemapPath,
       files: {
         highPriority: contextPackage.highPriorityFiles || [],
@@ -469,7 +470,7 @@ export class OutputFormatterService {
   private hasRequiredJSONFields(data: any): boolean {
     return !!(data.metadata?.taskType &&
            data.metadata?.generationTimestamp &&
-           (data.refinedPrompt || data.metadata?.refinedPrompt) &&
+           data.metadata?.refinedPrompt &&
            data.files);
   }
 
@@ -483,7 +484,7 @@ export class OutputFormatterService {
   private hasRequiredYAMLFields(data: any): boolean {
     return !!(data.metadata?.taskType &&
            data.metadata?.generationTimestamp &&
-           (data.refinedPrompt || data.metadata?.refinedPrompt) &&
+           data.metadata?.refinedPrompt &&
            data.files);
   }
 }

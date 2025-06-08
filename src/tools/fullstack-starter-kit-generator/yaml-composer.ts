@@ -6,7 +6,9 @@ import logger from '../../logger.js';
 import { StarterKitDefinition, FileStructureItem, fileStructureItemSchema } from './schema.js';
 import { AppError, ParsingError, ConfigurationError, ToolExecutionError } from '../../utils/errors.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
-import { performFormatAwareLlmCall, normalizeJsonResponse } from '../../utils/llmHelper.js';
+import { performFormatAwareLlmCall } from '../../utils/llmHelper.js';
+import { performTemplateGenerationCall } from '../../utils/schemaAwareLlmHelper.js';
+import { dynamicTemplateSchema, validateDynamicTemplateWithErrors } from './schemas/moduleSelection.js';
 import { z } from 'zod';
 
 // Get the directory name equivalent to __dirname in CommonJS
@@ -59,6 +61,61 @@ const parsedYamlModuleSchema = z.object({
     })).optional(),
   }),
 });
+
+/**
+ * Validates setupCommands format and provides detailed error messages
+ */
+export function validateSetupCommandsFormat(setupCommands: unknown): { isValid: boolean; errors: string[] } {
+  const errors: string[] = [];
+
+  if (!Array.isArray(setupCommands)) {
+    errors.push("setupCommands must be an array");
+    return { isValid: false, errors };
+  }
+
+  setupCommands.forEach((cmd, index) => {
+    if (typeof cmd === 'string') {
+      errors.push(`setupCommands[${index}] is a string, expected object with 'command' field`);
+    } else if (typeof cmd !== 'object' || cmd === null) {
+      errors.push(`setupCommands[${index}] must be an object`);
+    } else {
+      if (!cmd.command || typeof cmd.command !== 'string') {
+        errors.push(`setupCommands[${index}] missing required 'command' field (string)`);
+      }
+      if (cmd.context !== undefined && typeof cmd.context !== 'string') {
+        errors.push(`setupCommands[${index}] 'context' field must be string or undefined`);
+      }
+    }
+  });
+
+  return { isValid: errors.length === 0, errors };
+}
+
+/**
+ * Provides detailed validation error context for setupCommands
+ */
+export function generateSetupCommandsErrorContext(setupCommands: unknown, modulePathSegment: string): string {
+  const validation = validateSetupCommandsFormat(setupCommands);
+
+  if (validation.isValid) {
+    return "setupCommands format is valid";
+  }
+
+  const errorContext = [
+    `SetupCommands validation failed for ${modulePathSegment}:`,
+    ...validation.errors.map(err => `  - ${err}`),
+    "",
+    "Expected format:",
+    '  "setupCommands": [',
+    '    {"command": "npm install", "context": "root"},',
+    '    {"command": "npm test"}',
+    '  ]',
+    "",
+    `Received: ${JSON.stringify(setupCommands, null, 2)}`
+  ].join('\n');
+
+  return errorContext;
+}
 
 // Parameters to customize selected modules
 interface ModuleParameters {
@@ -249,37 +306,211 @@ Ensure the output is a single, raw JSON object without any other text or formatt
     }
   }
 
-  private async generateDynamicTemplate(modulePathSegment: string): Promise<ParsedYamlModule> {
+  /**
+   * Builds a template generation prompt for the schema-aware LLM call with research context
+   */
+  private buildTemplateGenerationPrompt(
+    category: string,
+    technology: string,
+    modulePathSegment: string,
+    researchContext: string = ''
+  ): string {
+    const researchSection = researchContext ? `
+
+Research Context (use this to make informed decisions):
+${researchContext}
+
+Based on the research above, ensure your template incorporates the latest best practices, recommended technologies, and architectural patterns mentioned in the research.` : '';
+
+    return `
+You are an expert Full-Stack Software Architect AI. Generate a YAML module template for ${technology} in the ${category} category.
+
+Module Path: ${modulePathSegment}
+Technology: ${technology}
+Category: ${category}${researchSection}
+
+Generate a complete module template that follows this exact structure. Respond with ONLY the JSON object - no markdown, no explanations:
+
+{
+  "moduleName": "string (unique identifier for this module)",
+  "description": "string (brief description of what this module provides)",
+  "type": "string (one of: frontend, backend, database, fullstack, utility)",
+  "placeholders": ["array of placeholder variables used in this template"],
+  "provides": {
+    "techStack": {
+      "componentName": {
+        "name": "Technology Name",
+        "version": "^1.0.0",
+        "rationale": "Why this technology was chosen"
+      }
+    },
+    "directoryStructure": [
+      {
+        "path": "relative/path",
+        "type": "file or directory",
+        "content": "file content or null for directories",
+        "children": []
+      }
+    ],
+    "dependencies": {
+      "npm": {
+        "root": {
+          "dependencies": {"package": "version"},
+          "devDependencies": {"package": "version"}
+        }
+      }
+    },
+    "setupCommands": [
+      {
+        "command": "command to run",
+        "context": "directory context"
+      }
+    ],
+    "nextSteps": ["array of recommended next steps"]
+  }
+}
+
+CRITICAL FORMAT REQUIREMENTS:
+- setupCommands MUST be an array of objects, NOT strings
+- Each setupCommand object MUST have a "command" field (string)
+- Each setupCommand object MAY have a "context" field (string, optional)
+- NEVER use string arrays for setupCommands
+
+INVALID EXAMPLES (DO NOT USE):
+❌ "setupCommands": ["npm install", "npm test"]
+❌ "setupCommands": [{"cmd": "npm install"}]
+❌ "setupCommands": [{"command": "npm install", "context": null}]
+
+VALID EXAMPLES:
+✅ "setupCommands": [{"command": "npm install", "context": "root"}]
+✅ "setupCommands": [{"command": "npm test"}]
+✅ "setupCommands": []
+
+VALIDATION CHECKLIST BEFORE RESPONDING:
+✓ JSON object starts with { and ends with }
+✓ All strings use double quotes
+✓ All special characters are properly escaped
+✓ No trailing commas
+✓ No markdown code blocks or surrounding text
+✓ All required fields present (moduleName, description, type, provides)
+✓ Directory items have content: null
+✓ File items have content as string OR generationPrompt as string
+✓ Paths use forward slashes
+✓ Multi-line content uses \\n separators
+✓ setupCommands is array of objects with "command" field (NOT strings)
+✓ Each setupCommand object has required "command" field
+✓ Optional "context" field in setupCommands is string type
+
+Requirements:
+1. Include realistic dependencies for ${technology}
+2. Create a proper directory structure
+3. Add appropriate setup commands as objects with "command" field
+4. Use placeholders like {projectName}, {backendPort} where needed
+5. Ensure all required fields are present and properly typed
+6. Follow the setupCommands object format strictly`;
+  }
+
+  private async generateDynamicTemplate(
+    modulePathSegment: string,
+    researchContext: string = ''
+  ): Promise<ParsedYamlModule> {
     logger.info(`Attempting to dynamically generate YAML module: ${modulePathSegment}`);
     const parts = modulePathSegment.split('/');
     const technology = parts.pop() || modulePathSegment;
     const category = parts.join('/') || 'general';
 
-    const llmResponse = await this.generateTemplateWithLLM(category, technology, modulePathSegment);
-
+    // Try new schema-aware approach first, fallback to existing method
     let parsedJson: Record<string, unknown>;
+    let usedSchemaAware = false;
+
     try {
-      // Use intelligent parsing with validation-first approach
-      // This only applies preprocessing when needed, avoiding unnecessary data loss
-      const { intelligentJsonParse } = await import('../../utils/llmHelper.js');
-      const parsed = intelligentJsonParse(llmResponse, `dynamic-gen-${modulePathSegment}`);
+      logger.debug({ modulePathSegment }, 'Attempting schema-aware template generation...');
 
-      // Validate that the response is an object, not an array
-      if (Array.isArray(parsed)) {
-        logger.error({ modulePathSegment, parsedResponse: parsed, responsePreview: llmResponse.substring(0, 200) }, `LLM returned an array instead of object for ${modulePathSegment}`);
-        throw new ParsingError(`LLM returned an array instead of expected object structure for ${modulePathSegment}. Got: ${JSON.stringify(parsed)}`, { originalResponse: llmResponse, parsedResponse: parsed });
+      const templatePrompt = this.buildTemplateGenerationPrompt(category, technology, modulePathSegment, researchContext);
+      const schemaAwareResult = await performTemplateGenerationCall(
+        templatePrompt,
+        '', // System prompt is part of main prompt
+        this.config,
+        dynamicTemplateSchema
+      );
+
+      parsedJson = schemaAwareResult.data as Record<string, unknown>;
+      usedSchemaAware = true;
+
+      logger.info({
+        modulePathSegment,
+        attempts: schemaAwareResult.attempts,
+        hadRetries: schemaAwareResult.hadRetries,
+        processingTimeMs: schemaAwareResult.processingTimeMs,
+        responseLength: schemaAwareResult.rawResponse.length
+      }, 'Schema-aware template generation successful');
+
+    } catch (schemaError) {
+      logger.warn({
+        modulePathSegment,
+        error: schemaError instanceof Error ? schemaError.message : String(schemaError)
+      }, 'Schema-aware template generation failed, falling back to existing method');
+
+      // Fallback to existing approach
+      const llmResponse = await this.generateTemplateWithLLM(category, technology, modulePathSegment);
+
+      try {
+        // Use intelligent parsing with validation-first approach
+        const { intelligentJsonParse } = await import('../../utils/llmHelper.js');
+        const parsed = intelligentJsonParse(llmResponse, `dynamic-gen-${modulePathSegment}`);
+
+        // Validate that the response is an object, not an array
+        if (Array.isArray(parsed)) {
+          logger.error({ modulePathSegment, parsedResponse: parsed, responsePreview: llmResponse.substring(0, 200) }, `LLM returned an array instead of object for ${modulePathSegment}`);
+
+          // Check if it's just an array of placeholders (common LLM mistake)
+          if (parsed.every(item => typeof item === 'string')) {
+            logger.warn({ modulePathSegment, placeholders: parsed }, `LLM returned placeholder array instead of full object. Attempting to construct minimal object.`);
+
+            // Create a minimal valid object structure with the placeholders
+            const minimalObject = {
+              moduleName: `${modulePathSegment.replace('/', '-')}`,
+              description: `${modulePathSegment} module for the project`,
+              type: modulePathSegment.includes('/') ? modulePathSegment.split('/')[0] : 'utility',
+              placeholders: parsed,
+              provides: {
+                techStack: {},
+                directoryStructure: [],
+                dependencies: { npm: {} },
+                setupCommands: [],
+                nextSteps: []
+              }
+            };
+
+            logger.info({ modulePathSegment, constructedObject: minimalObject }, `Constructed minimal object from placeholder array`);
+            parsedJson = minimalObject as Record<string, unknown>;
+          } else {
+            throw new ParsingError(`LLM returned an array instead of expected object structure for ${modulePathSegment}. Got: ${JSON.stringify(parsed)}`, { originalResponse: llmResponse, parsedResponse: parsed });
+          }
+        } else if (typeof parsed !== 'object' || parsed === null) {
+          logger.error({ modulePathSegment, parsedResponse: parsed, responsePreview: llmResponse.substring(0, 200) }, `LLM returned invalid type for ${modulePathSegment}`);
+          throw new ParsingError(`LLM returned invalid type (expected object) for ${modulePathSegment}. Got: ${typeof parsed}`, { originalResponse: llmResponse, parsedResponse: parsed });
+        } else {
+          parsedJson = parsed as Record<string, unknown>;
+        }
+
+        // Validate against schema if possible (only if we have a valid object)
+        if (parsedJson) {
+          const validation = validateDynamicTemplateWithErrors(parsedJson);
+          if (!validation.success) {
+            logger.warn({
+              modulePathSegment,
+              validationErrors: validation.errors
+            }, 'Fallback template validation failed, proceeding with preprocessing');
+          }
+        }
+
+        logger.debug({ modulePathSegment, responseLength: llmResponse.length, parsedSize: JSON.stringify(parsedJson).length, usedSchemaAware }, "Fallback parsing successful");
+
+      } catch (error) {
+        logger.error({ err: error, modulePathSegment, responsePreview: llmResponse.substring(0, 200) }, `Failed to parse LLM JSON response for ${modulePathSegment} using intelligent parsing`);
+        throw new ParsingError(`Failed to parse dynamically generated template for ${modulePathSegment} as JSON using intelligent parsing. Response preview: ${llmResponse.substring(0, 200)}`, { originalResponse: llmResponse }, error instanceof Error ? error : undefined);
       }
-
-      if (typeof parsed !== 'object' || parsed === null) {
-        logger.error({ modulePathSegment, parsedResponse: parsed, responsePreview: llmResponse.substring(0, 200) }, `LLM returned invalid type for ${modulePathSegment}`);
-        throw new ParsingError(`LLM returned invalid type (expected object) for ${modulePathSegment}. Got: ${typeof parsed}`, { originalResponse: llmResponse, parsedResponse: parsed });
-      }
-
-      parsedJson = parsed as Record<string, unknown>;
-      logger.debug({ modulePathSegment, responseLength: llmResponse.length, parsedSize: JSON.stringify(parsedJson).length }, "Intelligent JSON parsing successful");
-    } catch (error) {
-      logger.error({ err: error, modulePathSegment, responsePreview: llmResponse.substring(0, 200) }, `Failed to parse LLM JSON response for ${modulePathSegment} using intelligent parsing`);
-      throw new ParsingError(`Failed to parse dynamically generated template for ${modulePathSegment} as JSON using intelligent parsing. Response preview: ${llmResponse.substring(0, 200)}`, { originalResponse: llmResponse }, error instanceof Error ? error : undefined);
     }
 
     // Preprocess the parsed JSON to fix common schema issues
@@ -309,7 +540,10 @@ Ensure the output is a single, raw JSON object without any other text or formatt
     return validatedModule;
   }
 
-  public async loadAndParseYamlModule(modulePathSegment: string): Promise<ParsedYamlModule> {
+  public async loadAndParseYamlModule(
+    modulePathSegment: string,
+    researchContext: string = ''
+  ): Promise<ParsedYamlModule> {
     if (this.generatedTemplateCache.has(modulePathSegment)) {
       logger.debug(`Returning cached YAML module for: ${modulePathSegment}`);
       return this.generatedTemplateCache.get(modulePathSegment)!;
@@ -355,7 +589,7 @@ Ensure the output is a single, raw JSON object without any other text or formatt
     } else {
       logger.warn(`YAML module template not found on disk: ${fullPath}. Attempting dynamic generation.`);
       try {
-        return await this.generateDynamicTemplate(modulePathSegment);
+        return await this.generateDynamicTemplate(modulePathSegment, researchContext);
       } catch (generationError) {
         logger.error({ err: generationError, modulePathSegment, filePath: fullPath }, `Dynamic generation failed for YAML module ${modulePathSegment}.`);
         throw new ConfigurationError(
@@ -368,7 +602,7 @@ Ensure the output is a single, raw JSON object without any other text or formatt
 
   /**
    * Preprocesses parsed JSON to fix common schema validation issues
-   * Specifically handles missing content fields in directory structures
+   * Specifically handles missing content fields in directory structures and setupCommands format issues
    */
   private preprocessTemplateForValidation(parsedJson: Record<string, unknown>, modulePathSegment: string): Record<string, unknown> {
     logger.debug({ modulePathSegment }, "Preprocessing template for schema validation");
@@ -381,6 +615,13 @@ Ensure the output is a single, raw JSON object without any other text or formatt
       this.fixDirectoryStructureItems(processed.provides.directoryStructure, modulePathSegment);
     }
 
+    // Fix setupCommands format issues (convert strings to objects)
+    if (processed.provides && processed.provides.setupCommands && Array.isArray(processed.provides.setupCommands)) {
+      const originalCommands = [...processed.provides.setupCommands];
+      this.fixSetupCommandsFormat(processed.provides.setupCommands, modulePathSegment);
+      this.trackSetupCommandsPreprocessing(modulePathSegment, originalCommands, processed.provides.setupCommands);
+    }
+
     return processed;
   }
 
@@ -390,26 +631,38 @@ Ensure the output is a single, raw JSON object without any other text or formatt
   private fixDirectoryStructureItems(items: any[], modulePathSegment: string): void {
     for (const item of items) {
       if (typeof item === 'object' && item !== null) {
-        // Ensure content field exists
-        if (!('content' in item)) {
-          if (item.type === 'directory') {
+        // Handle content vs generationPrompt mutual exclusivity for files
+        if (item.type === 'file') {
+          const hasContent = 'content' in item && item.content !== null && item.content !== undefined;
+          const hasGenerationPrompt = 'generationPrompt' in item && item.generationPrompt !== null && item.generationPrompt !== undefined;
+
+          if (hasContent && hasGenerationPrompt) {
+            // Both are present - prioritize generationPrompt and clear content
+            item.content = null;
+            logger.debug({ modulePathSegment, path: item.path }, "Resolved content/generationPrompt conflict by prioritizing generationPrompt");
+          } else if (!hasContent && !hasGenerationPrompt) {
+            // Neither present - add empty content
+            item.content = '';
+            item.generationPrompt = null;
+            logger.debug({ modulePathSegment, path: item.path }, "Added missing empty content for file");
+          } else if (hasGenerationPrompt && !('content' in item)) {
+            // Has generationPrompt but missing content field
+            item.content = null;
+            logger.debug({ modulePathSegment, path: item.path }, "Added missing content: null for file with generationPrompt");
+          } else if (hasContent && !('generationPrompt' in item)) {
+            // Has content but missing generationPrompt field
+            item.generationPrompt = null;
+            logger.debug({ modulePathSegment, path: item.path }, "Added missing generationPrompt: null for file with content");
+          }
+        } else if (item.type === 'directory') {
+          // Ensure directories have null content
+          if (!('content' in item)) {
             item.content = null;
             logger.debug({ modulePathSegment, path: item.path }, "Added missing content: null for directory");
-          } else if (item.type === 'file') {
-            // If no content and no generationPrompt, add empty content
-            if (!('generationPrompt' in item) || item.generationPrompt === null || item.generationPrompt === undefined) {
-              item.content = '';
-              logger.debug({ modulePathSegment, path: item.path }, "Added missing empty content for file");
-            } else {
-              item.content = null;
-              logger.debug({ modulePathSegment, path: item.path }, "Added missing content: null for file with generationPrompt");
-            }
+          } else if (item.content !== null) {
+            item.content = null;
+            logger.debug({ modulePathSegment, path: item.path }, "Fixed non-null content for directory");
           }
-        }
-
-        // Ensure generationPrompt field exists for files
-        if (item.type === 'file' && !('generationPrompt' in item)) {
-          item.generationPrompt = null;
         }
 
         // Recursively process children
@@ -421,103 +674,113 @@ Ensure the output is a single, raw JSON object without any other text or formatt
   }
 
   /**
-   * Progressive JSON parsing with enhanced error recovery
-   * Implements fallback strategies for common LLM JSON output issues
+   * Fixes setupCommands format issues by converting strings to objects
+   * Handles common LLM format mistakes while preserving valid objects
    */
-  private progressiveJsonParse(jsonString: string, context: string): any {
-    const strategies = [
-      // Strategy 1: Direct parse
-      () => {
-        logger.debug({ context, strategy: 'direct' }, "Attempting direct JSON parse");
-        return JSON.parse(jsonString);
-      },
+  private fixSetupCommandsFormat(setupCommands: any[], modulePathSegment: string): void {
+    for (let i = 0; i < setupCommands.length; i++) {
+      const cmd = setupCommands[i];
 
-      // Strategy 2: Fix common position-specific errors
-      () => {
-        logger.debug({ context, strategy: 'position-fixes' }, "Attempting position-specific error fixes");
-        let fixed = jsonString;
+      if (typeof cmd === 'string') {
+        // Convert string to object format
+        setupCommands[i] = {
+          command: cmd,
+          context: 'root' // Default context for string commands
+        };
 
-        // Fix position 2572 type errors (missing commas between properties)
-        fixed = fixed.replace(/(":\s*"[^"]*")\s+(")/g, '$1, $2');
+        logger.debug({
+          modulePathSegment,
+          originalCommand: cmd,
+          convertedCommand: setupCommands[i]
+        }, "Converted string setupCommand to object format");
 
-        // Fix position 1210 type errors (control characters in strings)
-        fixed = fixed.replace(/("content":\s*")([^"]*[\x00-\x1F][^"]*)(")/, (match, start, content, end) => {
-          const cleanContent = content.replace(/[\x00-\x1F]/g, (char: string) => {
-            const code = char.charCodeAt(0);
-            return `\\u${code.toString(16).padStart(4, '0')}`;
-          });
-          return start + cleanContent + end;
-        });
+      } else if (typeof cmd === 'object' && cmd !== null) {
+        // Validate existing object format
+        if (!cmd.command || typeof cmd.command !== 'string') {
+          logger.warn({
+            modulePathSegment,
+            invalidCommand: cmd
+          }, "Invalid setupCommand object missing 'command' field");
 
-        return JSON.parse(fixed);
-      },
-
-      // Strategy 3: Bracket completion
-      () => {
-        logger.debug({ context, strategy: 'bracket-completion' }, "Attempting bracket completion");
-        let completed = jsonString;
-        const openBraces = (completed.match(/{/g) || []).length;
-        const closeBraces = (completed.match(/}/g) || []).length;
-        const openBrackets = (completed.match(/\[/g) || []).length;
-        const closeBrackets = (completed.match(/\]/g) || []).length;
-
-        if (openBraces > closeBraces) {
-          completed += '}'.repeat(openBraces - closeBraces);
-        }
-        if (openBrackets > closeBrackets) {
-          completed += ']'.repeat(openBrackets - closeBrackets);
-        }
-
-        return JSON.parse(completed);
-      },
-
-      // Strategy 4: Extract largest valid JSON substring
-      () => {
-        logger.debug({ context, strategy: 'partial-extraction' }, "Attempting partial JSON extraction");
-        let maxValidJson = '';
-
-        for (let end = jsonString.length; end > 0; end--) {
-          for (let start = 0; start < end; start++) {
-            const substring = jsonString.substring(start, end);
-            try {
-              JSON.parse(substring);
-              if (substring.length > maxValidJson.length) {
-                maxValidJson = substring;
-              }
-            } catch {
-              continue;
+          // Try to fix common issues
+          if (cmd.cmd && typeof cmd.cmd === 'string') {
+            cmd.command = cmd.cmd;
+            delete cmd.cmd;
+            // Add default context if not present
+            if (!cmd.context) {
+              cmd.context = 'root';
             }
+            logger.debug({ modulePathSegment }, "Fixed 'cmd' -> 'command' field name");
+          } else {
+            // Remove invalid command
+            setupCommands.splice(i, 1);
+            i--; // Adjust index after removal
+            logger.warn({ modulePathSegment }, "Removed invalid setupCommand object");
+            continue;
           }
-          if (maxValidJson) break;
         }
 
-        if (!maxValidJson) {
-          throw new Error('No valid JSON substring found');
+        // Ensure context is string or undefined
+        if (cmd.context !== undefined && typeof cmd.context !== 'string') {
+          cmd.context = String(cmd.context);
+          logger.debug({ modulePathSegment }, "Converted context to string");
         }
+      } else {
+        // Remove invalid command types
+        logger.warn({
+          modulePathSegment,
+          invalidType: typeof cmd,
+          command: cmd
+        }, "Removing setupCommand with invalid type");
 
-        return JSON.parse(maxValidJson);
-      }
-    ];
-
-    let lastError: Error | null = null;
-
-    for (let i = 0; i < strategies.length; i++) {
-      try {
-        const result = strategies[i]();
-        logger.debug({ context, strategy: i + 1, success: true }, "Progressive JSON parsing successful");
-        return result;
-      } catch (error) {
-        lastError = error as Error;
-        logger.debug({ context, strategy: i + 1, error: error instanceof Error ? error.message : String(error) }, "Progressive JSON parsing strategy failed");
+        setupCommands.splice(i, 1);
+        i--; // Adjust index after removal
       }
     }
-
-    throw new ParsingError(
-      `All progressive JSON parsing strategies failed for ${context}. Last error: ${lastError?.message}`,
-      { jsonString: jsonString.substring(0, 500), strategiesAttempted: strategies.length },
-      lastError || undefined
-    );
   }
+
+  /**
+   * Tracks preprocessing statistics for monitoring and debugging
+   */
+  private trackSetupCommandsPreprocessing(modulePathSegment: string, originalCommands: any[], processedCommands: any[]): void {
+    const metrics = {
+      modulePathSegment,
+      originalCount: originalCommands.length,
+      processedCount: processedCommands.length,
+      conversions: 0,
+      removals: 0,
+      fixes: 0
+    };
+
+    // Count conversions (strings to objects)
+    originalCommands.forEach(original => {
+      if (typeof original === 'string') {
+        metrics.conversions++;
+      }
+    });
+
+    // Count removals (items that were invalid and removed)
+    metrics.removals = originalCommands.length - processedCommands.length - metrics.conversions;
+    if (metrics.removals < 0) metrics.removals = 0;
+
+    // Count fixes (objects that were modified)
+    originalCommands.forEach(original => {
+      if (typeof original === 'object' && original !== null) {
+        if (!original.command && original.cmd) {
+          metrics.fixes++;
+        }
+      }
+    });
+
+    // Log metrics for monitoring
+    if (metrics.conversions > 0 || metrics.removals > 0 || metrics.fixes > 0) {
+      logger.info(metrics, "SetupCommands preprocessing completed with changes");
+    } else {
+      logger.debug(metrics, "SetupCommands preprocessing completed with no changes");
+    }
+  }
+
+
 
   private substitutePlaceholders<T extends object | string | null | undefined>(data: T, params: ModuleParameters): T {
     if (typeof data === 'string') {
@@ -641,7 +904,8 @@ Ensure the output is a single, raw JSON object without any other text or formatt
 
   public async compose(
     moduleSelections: Array<{ modulePath: string; params: ModuleParameters; moduleKey?: string }>,
-    globalParams: ModuleParameters
+    globalParams: ModuleParameters,
+    researchContext: string = ''
   ): Promise<StarterKitDefinition> {
     const composedDefinition: StarterKitDefinition = {
       projectName: this.substitutePlaceholders(globalParams.projectName as string || 'my-new-project', globalParams),
@@ -656,7 +920,7 @@ Ensure the output is a single, raw JSON object without any other text or formatt
     for (const selection of moduleSelections) {
       logger.info(`Processing YAML module: ${selection.modulePath} with params: ${JSON.stringify(selection.params)} and moduleKey: ${selection.moduleKey}`);
       const effectiveParams = { ...globalParams, ...selection.params };
-      const module = await this.loadAndParseYamlModule(selection.modulePath);
+      const module = await this.loadAndParseYamlModule(selection.modulePath, researchContext);
       const processedModuleProvides = this.substitutePlaceholders(module.provides, effectiveParams);
       this.mergeTechStacks(composedDefinition.techStack, processedModuleProvides.techStack);
       this.mergeDirectoryStructures(
