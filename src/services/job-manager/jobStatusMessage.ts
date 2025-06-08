@@ -2,6 +2,20 @@
 import { JobStatus } from './index.js';
 
 /**
+ * Detailed job information for enhanced status reporting
+ */
+export interface JobDetails {
+  /** Current stage or phase of the job */
+  currentStage?: string;
+  /** Array of diagnostic messages for troubleshooting */
+  diagnostics?: string[];
+  /** Sub-progress within the current stage (0-100) */
+  subProgress?: number;
+  /** Additional metadata specific to the tool */
+  metadata?: Record<string, any>;
+}
+
+/**
  * Standard format for job status messages.
  */
 export interface JobStatusMessage {
@@ -28,6 +42,8 @@ export interface JobStatusMessage {
     /** Timestamp when the next status check should occur */
     nextCheckTime: number;
   };
+  /** Optional detailed information for enhanced debugging */
+  details?: JobDetails;
 }
 
 /**
@@ -39,6 +55,7 @@ export interface JobStatusMessage {
  * @param progress An optional progress percentage (0-100).
  * @param createdAt The timestamp when the job was created.
  * @param updatedAt The timestamp when the job was last updated.
+ * @param details Optional detailed information for enhanced debugging.
  * @returns A standardized job status message.
  */
 export function createJobStatusMessage(
@@ -48,19 +65,20 @@ export function createJobStatusMessage(
   message?: string,
   progress?: number,
   createdAt?: number,
-  updatedAt?: number
+  updatedAt?: number,
+  details?: JobDetails
 ): JobStatusMessage {
   const now = Date.now();
-  
+
   // Calculate recommended polling interval based on status
   let pollingInterval: number | undefined;
-  
+
   if (status === JobStatus.PENDING) {
     pollingInterval = 5000; // 5 seconds for pending jobs
   } else if (status === JobStatus.RUNNING) {
     pollingInterval = 2000; // 2 seconds for running jobs
   }
-  
+
   return {
     jobId,
     toolName,
@@ -75,6 +93,7 @@ export function createJobStatusMessage(
         interval: pollingInterval,
         nextCheckTime: now + pollingInterval
       }
-    } : {})
+    } : {}),
+    ...(details ? { details } : {})
   };
 }

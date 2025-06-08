@@ -901,26 +901,33 @@ Return the same JSON format but only for these ${chunk.length} files.`;
       };
       categoryFilters?: string[];
       minRelevanceThreshold?: number;
-    }
+    },
+    externalTaskId?: string
   ): Promise<RelevanceScoringResult> {
-    const taskId = getRelevanceScoringTaskId();
+    const taskId = externalTaskId || getRelevanceScoringTaskId();
     const model = this.configLoader.getLLMModel('relevance_ranking');
 
+    // FIX 1: Add diagnostic logging to trace exact file count at threshold evaluation
+    const fileCount = fileDiscoveryResult.relevantFiles.length;
     logger.info({
       taskId,
       model,
       scoringStrategy,
-      filesToScore: fileDiscoveryResult.relevantFiles.length
-    }, 'Starting relevance scoring');
+      filesToScore: fileCount,
+      thresholdCheck: fileCount > 40,
+      chunkingRequired: fileCount > 40 ? 'YES' : 'NO'
+    }, 'Context Curator: Starting relevance scoring with threshold diagnostics');
 
     try {
-      // Check if chunked processing is needed
-      if (fileDiscoveryResult.relevantFiles.length > 40) {
+      // FIX 1: Enhanced chunked processing threshold check with explicit logging
+      if (fileCount > 40) {
         logger.info({
           taskId,
-          fileCount: fileDiscoveryResult.relevantFiles.length,
-          threshold: 40
-        }, `Context Curator: File count (${fileDiscoveryResult.relevantFiles.length}) exceeds threshold (40). Using chunked processing.`);
+          fileCount,
+          threshold: 40,
+          chunkSize: 20,
+          expectedChunks: Math.ceil(fileCount / 20)
+        }, `Context Curator: File count (${fileCount}) exceeds threshold (40). Using chunked processing.`);
 
         return this.processFilesInChunks(
           originalPrompt,
@@ -933,6 +940,14 @@ Return the same JSON format but only for these ${chunk.length} files.`;
           20
         );
       }
+
+      // Log when NOT using chunked processing
+      logger.info({
+        taskId,
+        fileCount,
+        threshold: 40,
+        processingMode: 'single_batch'
+      }, `Context Curator: File count (${fileCount}) is within threshold (40). Using single batch processing.`);
 
       const userPromptContent = buildRelevanceScoringPrompt(
         originalPrompt,
@@ -982,7 +997,8 @@ Return the same JSON format but only for these ${chunk.length} files.`;
       // This aligns with the enhanced JSON normalization pipeline used throughout the system
       let response = intelligentJsonParse(preprocessedResponse, taskId);
 
-      // Add validation before enhancement
+      // FIX 2: Enhanced validation and retry logic for single file responses
+      let retryAttempted = false;
       if (response && typeof response === 'object') {
         const obj = response as Record<string, unknown>;
 
@@ -991,7 +1007,8 @@ Return the same JSON format but only for these ${chunk.length} files.`;
           logger.warn({
             taskId,
             expectedFiles: fileDiscoveryResult.relevantFiles.length,
-            responseType: 'single_file'
+            responseType: 'single_file',
+            retryAttempt: 'initiating'
           }, `Context Curator: LLM returned single file instead of array for ${fileDiscoveryResult.relevantFiles.length} files. Retrying with modified prompt.`);
 
           const expectedFiles = fileDiscoveryResult.relevantFiles.map(f => ({
@@ -1000,9 +1017,23 @@ Return the same JSON format but only for these ${chunk.length} files.`;
           }));
 
           const retryResponse = await this.retryRelevanceScoring(userPromptContent, expectedFiles, config, taskId, 1);
+          retryAttempted = true;
+
           if (retryResponse) {
             responseText = retryResponse;
             response = intelligentJsonParse(preprocessRelevanceScoringResponse(retryResponse, taskId), taskId);
+            logger.info({
+              taskId,
+              retrySuccess: true,
+              newResponseLength: retryResponse.length,
+              containsFileScores: retryResponse.includes('fileScores')
+            }, 'Context Curator: Retry for single file response completed successfully');
+          } else {
+            logger.warn({
+              taskId,
+              retrySuccess: false,
+              fallbackRequired: true
+            }, 'Context Curator: Retry for single file response failed, will use fallback enhancement');
           }
         }
         // Check if fileScores array is incomplete (less than 80% of expected files)
@@ -1012,7 +1043,8 @@ Return the same JSON format but only for these ${chunk.length} files.`;
             taskId,
             scoredFiles: obj.fileScores.length,
             expectedFiles: fileDiscoveryResult.relevantFiles.length,
-            completionRate
+            completionRate,
+            retryAttempt: 'initiating'
           }, `Context Curator: LLM only scored ${obj.fileScores.length}/${fileDiscoveryResult.relevantFiles.length} files (${completionRate}%). Retrying.`);
 
           const expectedFiles = fileDiscoveryResult.relevantFiles.map(f => ({
@@ -1021,26 +1053,82 @@ Return the same JSON format but only for these ${chunk.length} files.`;
           }));
 
           const retryResponse = await this.retryRelevanceScoring(userPromptContent, expectedFiles, config, taskId, 1);
+          retryAttempted = true;
+
           if (retryResponse) {
             responseText = retryResponse;
             response = intelligentJsonParse(preprocessRelevanceScoringResponse(retryResponse, taskId), taskId);
+            logger.info({
+              taskId,
+              retrySuccess: true,
+              newResponseLength: retryResponse.length,
+              containsFileScores: retryResponse.includes('fileScores')
+            }, 'Context Curator: Retry for incomplete array completed successfully');
+          } else {
+            logger.warn({
+              taskId,
+              retrySuccess: false,
+              fallbackRequired: true
+            }, 'Context Curator: Retry for incomplete array failed, will use fallback enhancement');
           }
         }
       }
 
-      // Add fallback logic for missing fields and incomplete responses
+      // FIX 3: More restrictive fallback logic - only apply after retry attempts
       const expectedFiles = fileDiscoveryResult.relevantFiles.map(f => ({
         path: f.path,
         estimatedTokens: f.estimatedTokens
       }));
-      const enhancedResponse = enhanceRelevanceScoringResponse(response, scoringStrategy, fileDiscoveryResult.processingTimeMs, expectedFiles);
+
+      // Only apply fallback enhancement if we haven't retried or retry failed
+      let enhancedResponse;
+      if (retryAttempted) {
+        // If retry was attempted, be more restrictive about fallback
+        if (response && typeof response === 'object') {
+          const obj = response as Record<string, unknown>;
+
+          // Only apply fallback for genuine parsing failures, not format violations
+          if (!('fileScores' in obj) && !('filePath' in obj)) {
+            // Genuine parsing failure - apply fallback
+            logger.info({
+              taskId,
+              reason: 'parsing_failure_after_retry'
+            }, 'Context Curator: Applying fallback enhancement after retry due to parsing failure');
+            enhancedResponse = enhanceRelevanceScoringResponse(response, scoringStrategy, fileDiscoveryResult.processingTimeMs, expectedFiles);
+          } else {
+            // Format violation after retry - use response as-is but log warning
+            logger.warn({
+              taskId,
+              reason: 'format_violation_after_retry',
+              hasFileScores: 'fileScores' in obj,
+              hasSingleFile: 'filePath' in obj
+            }, 'Context Curator: Format violation persists after retry, using response as-is');
+            enhancedResponse = enhanceRelevanceScoringResponse(response, scoringStrategy, fileDiscoveryResult.processingTimeMs, expectedFiles);
+          }
+        } else {
+          // Invalid response after retry
+          logger.warn({
+            taskId,
+            reason: 'invalid_response_after_retry'
+          }, 'Context Curator: Invalid response after retry, applying fallback enhancement');
+          enhancedResponse = enhanceRelevanceScoringResponse(response, scoringStrategy, fileDiscoveryResult.processingTimeMs, expectedFiles);
+        }
+      } else {
+        // No retry attempted - apply normal fallback logic
+        logger.info({
+          taskId,
+          reason: 'no_retry_needed'
+        }, 'Context Curator: No retry needed, applying standard enhancement');
+        enhancedResponse = enhanceRelevanceScoringResponse(response, scoringStrategy, fileDiscoveryResult.processingTimeMs, expectedFiles);
+      }
 
       if (!validateRelevanceScoringResponse(enhancedResponse)) {
         logger.error({
           taskId,
           originalResponse: response,
           enhancedResponse,
-          responseKeys: enhancedResponse && typeof enhancedResponse === 'object' ? Object.keys(enhancedResponse) : 'not an object'
+          responseKeys: enhancedResponse && typeof enhancedResponse === 'object' ? Object.keys(enhancedResponse) : 'not an object',
+          retryAttempted
         }, 'Enhanced relevance scoring response validation failed');
         throw new Error('Invalid relevance scoring response format after enhancement');
       }

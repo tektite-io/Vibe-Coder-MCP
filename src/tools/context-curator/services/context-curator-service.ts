@@ -11,6 +11,7 @@ import { ContextCuratorLLMService } from './llm-integration.js';
 import { ContextCuratorConfigLoader } from './config-loader.js';
 import { OutputFormatterService } from './output-formatter.js';
 import { jobManager, JobStatus } from '../../../services/job-manager/index.js';
+import { JobDetails } from '../../../services/job-manager/jobStatusMessage.js';
 import { executeCodeMapGeneration } from '../../code-map-generator/index.js';
 import { OpenRouterConfig } from '../../../types/workflow.js';
 import { UnifiedSecurityConfiguration } from '../../vibe-task-manager/security/unified-security-config.js';
@@ -140,7 +141,16 @@ export class ContextCuratorService {
         jobId,
         JobStatus.RUNNING,
         'Context Curator workflow execution started',
-        0
+        0,
+        {
+          currentStage: 'initialization',
+          diagnostics: [`Starting 8-phase workflow for ${input.taskType} task`],
+          metadata: {
+            taskType: input.taskType,
+            projectPath: input.projectPath,
+            totalPhases: 8
+          }
+        }
       );
 
       // Execute workflow phases
@@ -169,7 +179,28 @@ export class ContextCuratorService {
         jobId,
         JobStatus.COMPLETED,
         'Context Curator workflow completed successfully',
-        100
+        100,
+        {
+          currentStage: 'workflow_complete',
+          diagnostics: [
+            `All 8 phases completed successfully`,
+            `Total execution time: ${executionTime}ms`,
+            `Total files processed: ${context.contextPackage?.files.length || 0}`,
+            `Total tokens generated: ${context.contextPackage?.statistics.totalTokens || 0}`,
+            `Task type: ${input.taskType}`,
+            `Project: ${input.projectPath}`
+          ],
+          subProgress: 100,
+          metadata: {
+            executionTimeMs: executionTime,
+            totalFiles: context.contextPackage?.files.length || 0,
+            totalTokens: context.contextPackage?.statistics.totalTokens || 0,
+            taskType: input.taskType,
+            projectPath: input.projectPath,
+            allPhasesCompleted: true,
+            phase: 'complete'
+          }
+        }
       );
 
       return context.contextPackage!;
@@ -373,7 +404,20 @@ export class ContextCuratorService {
         context.jobId,
         JobStatus.RUNNING,
         'Initialization completed - codemap generated',
-        progress
+        progress,
+        {
+          currentStage: 'initialization_complete',
+          diagnostics: [
+            `Codemap generated with ${codemapContent.length} characters`,
+            `File contents extracted for ${context.fileContents?.size || 0} files`
+          ],
+          subProgress: 100,
+          metadata: {
+            codemapSize: codemapContent.length,
+            fileContentsCount: context.fileContents?.size || 0,
+            phase: 'initialization'
+          }
+        }
       );
 
       logger.info({
@@ -436,7 +480,24 @@ export class ContextCuratorService {
         context.jobId,
         JobStatus.RUNNING,
         `Enhanced intent analysis completed - detected ${context.intentAnalysis.taskType} task`,
-        progress
+        progress,
+        {
+          currentStage: 'intent_analysis_complete',
+          diagnostics: [
+            `Task type detected: ${context.intentAnalysis.taskType}`,
+            `Project type: ${context.intentAnalysis.projectAnalysis?.projectType || 'unknown'}`,
+            `Primary language: ${context.intentAnalysis.languageAnalysis?.primaryLanguage || 'unknown'}`,
+            `Patterns detected: ${context.intentAnalysis.patternAnalysis?.patterns.length || 0}`
+          ],
+          subProgress: 100,
+          metadata: {
+            taskType: context.intentAnalysis.taskType,
+            projectType: context.intentAnalysis.projectAnalysis?.projectType,
+            primaryLanguage: context.intentAnalysis.languageAnalysis?.primaryLanguage,
+            patternsCount: context.intentAnalysis.patternAnalysis?.patterns.length || 0,
+            phase: 'intent_analysis'
+          }
+        }
       );
 
       logger.info({
@@ -1894,7 +1955,26 @@ export class ContextCuratorService {
         context.jobId,
         JobStatus.RUNNING,
         `Multi-strategy file discovery completed - found ${consolidatedResult.relevantFiles.length} relevant files`,
-        progress
+        progress,
+        {
+          currentStage: 'file_discovery_complete',
+          diagnostics: [
+            `Found ${consolidatedResult.relevantFiles.length} relevant files`,
+            `Total files analyzed: ${consolidatedResult.totalFilesAnalyzed}`,
+            `Search strategy: ${consolidatedResult.searchStrategy}`,
+            `Duplicates removed: ${consolidatedResult.coverageMetrics.duplicatesRemoved}`,
+            `Average confidence: ${Math.round(consolidatedResult.coverageMetrics.averageConfidence * 100)}%`
+          ],
+          subProgress: 100,
+          metadata: {
+            relevantFilesCount: consolidatedResult.relevantFiles.length,
+            totalAnalyzed: consolidatedResult.totalFilesAnalyzed,
+            searchStrategy: consolidatedResult.searchStrategy,
+            duplicatesRemoved: consolidatedResult.coverageMetrics.duplicatesRemoved,
+            averageConfidence: consolidatedResult.coverageMetrics.averageConfidence,
+            phase: 'file_discovery'
+          }
+        }
       );
 
       logger.info({
@@ -1938,6 +2018,39 @@ export class ContextCuratorService {
         )
       };
 
+      // Track relevance scoring diagnostics
+      const fileCount = context.fileDiscovery.relevantFiles.length;
+      const useChunkedProcessing = fileCount > 40;
+      const diagnostics: string[] = [];
+
+      if (useChunkedProcessing) {
+        diagnostics.push(`File count (${fileCount}) exceeds threshold (40). Using chunked processing.`);
+        diagnostics.push(`Expected chunks: ${Math.ceil(fileCount / 20)}`);
+      } else {
+        diagnostics.push(`File count (${fileCount}) within threshold. Using standard processing.`);
+      }
+
+      // Update status before starting relevance scoring
+      jobManager.updateJobStatus(
+        context.jobId,
+        JobStatus.RUNNING,
+        `Starting relevance scoring for ${fileCount} files`,
+        Math.round(((context.completedPhases + 0.1) / context.totalPhases) * 100),
+        {
+          currentStage: 'relevance_scoring_start',
+          diagnostics,
+          subProgress: 10,
+          metadata: {
+            filesToScore: fileCount,
+            chunkingRequired: useChunkedProcessing,
+            threshold: 40,
+            chunkSize: 20,
+            scoringStrategy,
+            phase: 'relevance_scoring'
+          }
+        }
+      );
+
       context.relevanceScoring = await this.llmService.performRelevanceScoring(
         context.input.userPrompt,
         context.intentAnalysis,
@@ -1945,17 +2058,40 @@ export class ContextCuratorService {
         context.fileDiscovery,
         context.config,
         scoringStrategy,
-        additionalContext
+        additionalContext,
+        context.jobId // Pass jobId for enhanced diagnostic logging
       );
 
       context.completedPhases++;
       const progress = Math.round((context.completedPhases / context.totalPhases) * 100);
 
+      // Enhanced completion diagnostics
+      const completionDiagnostics = [
+        `Scored ${context.relevanceScoring.fileScores.length} files successfully`,
+        `Average relevance score: ${context.relevanceScoring.overallMetrics.averageRelevance.toFixed(2)}`,
+        `High relevance files: ${context.relevanceScoring.overallMetrics.highRelevanceCount}`,
+        `Scoring strategy: ${scoringStrategy}`,
+        `Processing time: ${context.relevanceScoring.processingTimeMs || 'N/A'}ms`
+      ];
+
       jobManager.updateJobStatus(
         context.jobId,
         JobStatus.RUNNING,
         `Enhanced relevance scoring completed - scored ${context.relevanceScoring.fileScores.length} files`,
-        progress
+        progress,
+        {
+          currentStage: 'relevance_scoring_complete',
+          diagnostics: completionDiagnostics,
+          subProgress: 100,
+          metadata: {
+            filesScored: context.relevanceScoring.fileScores.length,
+            averageRelevance: context.relevanceScoring.overallMetrics.averageRelevance,
+            highRelevanceCount: context.relevanceScoring.overallMetrics.highRelevanceCount,
+            scoringStrategy,
+            processingTimeMs: context.relevanceScoring.processingTimeMs,
+            phase: 'relevance_scoring'
+          }
+        }
       );
 
       logger.info({
@@ -2014,7 +2150,24 @@ export class ContextCuratorService {
         context.jobId,
         JobStatus.RUNNING,
         'Meta-prompt generation completed',
-        progress
+        progress,
+        {
+          currentStage: 'meta_prompt_generation_complete',
+          diagnostics: [
+            `Quality score: ${context.metaPromptGeneration.qualityScore.toFixed(2)}`,
+            `Estimated complexity: ${context.metaPromptGeneration.estimatedComplexity}`,
+            `Generated ${context.metaPromptGeneration.taskDecomposition.epics.length} epics`,
+            `Detected ${patternAnalysis.patterns.length} architectural patterns`
+          ],
+          subProgress: 100,
+          metadata: {
+            qualityScore: context.metaPromptGeneration.qualityScore,
+            estimatedComplexity: context.metaPromptGeneration.estimatedComplexity,
+            epicsCount: context.metaPromptGeneration.taskDecomposition.epics.length,
+            patternsDetected: patternAnalysis.patterns.length,
+            phase: 'meta_prompt_generation'
+          }
+        }
       );
 
       // Calculate average confidence for detected patterns
@@ -2079,7 +2232,22 @@ export class ContextCuratorService {
           context.jobId,
           JobStatus.RUNNING,
           'Using cached context package',
-          progress
+          progress,
+          {
+            currentStage: 'package_assembly_cached',
+            diagnostics: [
+              `Cache hit for key: ${cacheKey}`,
+              `Cache hit count: ${cachedResult.metadata.hitCount}`,
+              `Cached at: ${new Date(cachedResult.metadata.cachedAt).toISOString()}`
+            ],
+            subProgress: 100,
+            metadata: {
+              fromCache: true,
+              cacheKey,
+              hitCount: cachedResult.metadata.hitCount,
+              phase: 'package_assembly'
+            }
+          }
         );
 
         logger.info({
@@ -2137,7 +2305,27 @@ export class ContextCuratorService {
         context.jobId,
         JobStatus.RUNNING,
         `Enhanced package assembly completed - Quality: ${(validationResult.qualityScore * 100).toFixed(1)}%`,
-        progress
+        progress,
+        {
+          currentStage: 'package_assembly_complete',
+          diagnostics: [
+            `Package validation passed with quality score: ${(validationResult.qualityScore * 100).toFixed(1)}%`,
+            `Total files included: ${contextPackage.files.length}`,
+            `Total tokens: ${contextPackage.statistics.totalTokens}`,
+            `Compression ratio: ${compressedResult.metadata.compressionRatio.toFixed(2)}`,
+            `Package cached with key: ${cacheKey}`
+          ],
+          subProgress: 100,
+          metadata: {
+            qualityScore: validationResult.qualityScore,
+            totalFiles: contextPackage.files.length,
+            totalTokens: contextPackage.statistics.totalTokens,
+            compressionRatio: compressedResult.metadata.compressionRatio,
+            fromCache: false,
+            cacheKey,
+            phase: 'package_assembly'
+          }
+        }
       );
 
       logger.info({
@@ -2237,7 +2425,28 @@ export class ContextCuratorService {
         context.jobId,
         JobStatus.RUNNING,
         statusMessage,
-        progress
+        progress,
+        {
+          currentStage: 'output_generation_complete',
+          diagnostics: [
+            `Primary format: ${outputFormat.toUpperCase()}`,
+            `Primary output saved to: ${primaryOutputPath}`,
+            `Primary file size: ${formattedOutput.size} bytes`,
+            `Additional formats generated: ${additionalOutputs.length}`,
+            `Validation passed: ${this.isValidationPassed(formattedOutput.validation)}`,
+            `Processing time: ${formattedOutput.processingTimeMs}ms`
+          ],
+          subProgress: 100,
+          metadata: {
+            primaryFormat: outputFormat,
+            primaryOutputPath,
+            primarySize: formattedOutput.size,
+            additionalFormats: additionalOutputs.length,
+            validationPassed: this.isValidationPassed(formattedOutput.validation),
+            processingTimeMs: formattedOutput.processingTimeMs,
+            phase: 'output_generation'
+          }
+        }
       );
 
       logger.info({
@@ -4090,4 +4299,5 @@ ${(task.subtasks || []).map(subtask => `              <subtask id="${escapeXml(s
 
     return Array.from(keywords).slice(0, 10); // Limit to top 10 keywords
   }
+
 }
