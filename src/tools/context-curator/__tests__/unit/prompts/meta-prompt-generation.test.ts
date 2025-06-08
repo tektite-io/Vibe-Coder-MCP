@@ -719,5 +719,70 @@ describe('Meta-Prompt Generation Templates', () => {
       const result = attemptResponseRecovery(invalidResponse);
       expect(result).toBe(invalidResponse);
     });
+
+    it('should recover single epic response to complete meta-prompt format', () => {
+      const singleEpicResponse = {
+        id: 'epic-1',
+        title: 'Core Orchestration Hub Development',
+        description: 'Establish src/tools/vibe-task-manager/index.ts as the central orchestration hub',
+        estimatedComplexity: 'very_high',
+        tasks: [
+          {
+            id: 'task-1',
+            title: 'Setup orchestration infrastructure',
+            description: 'Create the basic orchestration framework',
+            estimatedHours: 8,
+            dependencies: [],
+            subtasks: [
+              {
+                id: 'subtask-1-1',
+                title: 'Initialize project structure',
+                description: 'Set up basic project structure and dependencies',
+                estimatedMinutes: 30
+              }
+            ]
+          }
+        ]
+      };
+
+      const result = attemptResponseRecovery(singleEpicResponse);
+
+      expect(result).toHaveProperty('systemPrompt');
+      expect(result).toHaveProperty('userPrompt');
+      expect(result).toHaveProperty('contextSummary');
+      expect(result).toHaveProperty('taskDecomposition');
+      expect(result).toHaveProperty('guidelines');
+      expect(result).toHaveProperty('estimatedComplexity', 'very_high');
+      expect(result).toHaveProperty('qualityScore', 0.75);
+      expect(result).toHaveProperty('aiAgentResponseFormat');
+
+      // Verify the single epic was wrapped in the epics array
+      expect((result as any).taskDecomposition.epics).toHaveLength(1);
+      expect((result as any).taskDecomposition.epics[0]).toEqual(singleEpicResponse);
+
+      // Verify the recovered response passes validation
+      expect(validateMetaPromptGenerationResponse(result)).toBe(true);
+    });
+
+    it('should not modify response that already has epics structure', () => {
+      const validResponse = {
+        epics: [
+          {
+            id: 'epic-1',
+            title: 'Test Epic',
+            description: 'Test description',
+            estimatedComplexity: 'medium',
+            tasks: []
+          }
+        ]
+      };
+
+      const result = attemptResponseRecovery(validResponse);
+
+      // Should be transformed to complete structure, not treated as single epic
+      expect(result).toHaveProperty('systemPrompt');
+      expect(result).toHaveProperty('taskDecomposition');
+      expect((result as any).taskDecomposition.epics).toEqual(validResponse.epics);
+    });
   });
 });
