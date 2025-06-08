@@ -81,11 +81,13 @@ CRITICAL: Respond with a valid JSON object matching this exact structure:
   ]
 }
 
-IMPORTANT REQUIREMENTS:
+CRITICAL JSON FORMAT REQUIREMENTS:
 - "refinedPrompt" must be a detailed string with comprehensive requirements
 - "enhancementReasoning" must be an array of at least 3 specific strings explaining what you enhanced and why
 - "addedContext" must be an array of strings (can be empty if no additional context was added)
 - Do NOT include originalLength, refinedLength, improvementScore, or contextualEnhancements - these will be calculated automatically
+- ALWAYS include both "refinedPrompt" and "enhancementReasoning" fields in your JSON response
+- The response must be valid JSON that can be parsed directly
 
 EXAMPLE:
 {

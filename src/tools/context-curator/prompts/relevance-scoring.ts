@@ -14,6 +14,8 @@ import { relevanceScoringResultSchema, IntentAnalysisResult, FileDiscoveryResult
  */
 export const RELEVANCE_SCORING_SYSTEM_PROMPT = `You are an expert software architect and relevance analyst specializing in scoring file relevance for development tasks.
 
+🚨 CRITICAL INSTRUCTION: You MUST score ALL files provided in the input. Never return a single file response. Always return a complete fileScores array with every file from the input list.
+
 Your task is to analyze discovered files and assign detailed relevance scores based on their importance to the specific development request.
 
 ## SCORING STRATEGIES
@@ -82,7 +84,7 @@ Assess how likely each file is to be modified:
 
 ## RESPONSE FORMAT
 
-CRITICAL: Respond with a valid JSON object matching this exact structure:
+🚨 CRITICAL: You MUST score ALL files in the input list. Respond with a valid JSON object matching this exact structure with a fileScores array containing EVERY file:
 
 {
   "fileScores": [
@@ -202,7 +204,110 @@ ${index + 1}. ${file.path}
     }
   }
 
-  prompt += `\n\nUsing the ${scoringStrategy} strategy, provide detailed relevance scoring for each discovered file. Focus on how each file relates to the development task and assign appropriate relevance scores, confidence levels, categories, and modification likelihood. Provide your response in the required JSON format.`;
+  const fileCount = fileDiscoveryResult.relevantFiles.length;
+
+  prompt += `\n\nUsing the ${scoringStrategy} strategy, provide detailed relevance scoring for each discovered file. Focus on how each file relates to the development task and assign appropriate relevance scores, confidence levels, categories, and modification likelihood.
+
+🚨 CRITICAL REQUIREMENTS - FAILURE TO FOLLOW WILL RESULT IN RETRY 🚨
+- You must score ALL ${fileCount} files listed above
+- Your fileScores array must contain exactly ${fileCount} entries
+- Base your analysis on the actual codebase structure provided
+- Do not make assumptions about project type - use only observable code patterns
+- NEVER return a single file object - ALWAYS return the array format
+
+RESPONSE VALIDATION CHECKLIST:
+Before submitting your response, verify:
+✓ fileScores array has exactly ${fileCount} entries
+✓ Each file from the input list has a corresponding score entry
+✓ overallMetrics.totalFilesScored equals ${fileCount}
+✓ Response starts with { "fileScores": [
+✓ Response ends with valid JSON structure
+
+🚨 CRITICAL REQUIREMENT 🚨
+YOU MUST SCORE EXACTLY ${fileCount} FILES - NOT 1, NOT 2, BUT ALL ${fileCount} FILES!
+INCOMPLETE RESPONSES WILL BE AUTOMATICALLY RETRIED!
+
+❌ WRONG - SINGLE FILE RESPONSE (WILL BE REJECTED AND RETRIED):
+{
+  "filePath": "single/file/path.ts",
+  "relevanceScore": 0.98,
+  "confidence": 0.95,
+  "reasoning": "...",
+  "categories": ["core"],
+  "modificationLikelihood": "very_high",
+  "estimatedTokens": 500
+}
+
+❌ WRONG - INCOMPLETE ARRAY (WILL BE REJECTED AND RETRIED):
+{
+  "fileScores": [
+    { "filePath": "file1.ts", "relevanceScore": 0.98, ... },
+    { "filePath": "file2.ts", "relevanceScore": 0.85, ... }
+    // MISSING ${fileCount - 2} FILES - THIS WILL BE RETRIED!
+  ]
+}
+
+✅ CORRECT - COMPLETE ARRAY WITH ALL ${fileCount} FILES:
+{
+  "fileScores": [
+    { "filePath": "file1.ts", "relevanceScore": 0.98, "confidence": 0.95, "reasoning": "...", "categories": ["core"], "modificationLikelihood": "very_high", "estimatedTokens": 500 },
+    { "filePath": "file2.ts", "relevanceScore": 0.85, "confidence": 0.90, "reasoning": "...", "categories": ["integration"], "modificationLikelihood": "high", "estimatedTokens": 300 },
+    { "filePath": "file3.ts", "relevanceScore": 0.70, "confidence": 0.85, "reasoning": "...", "categories": ["utility"], "modificationLikelihood": "medium", "estimatedTokens": 200 },
+    // ... CONTINUE FOR ALL ${fileCount} FILES - DO NOT STOP EARLY!
+  ],
+  "overallMetrics": {
+    "averageRelevance": 0.0-1.0,
+    "totalFilesScored": ${fileCount},
+    "highRelevanceCount": number,
+    "processingTimeMs": 0
+  },
+  "scoringStrategy": "${scoringStrategy}"
+}
+
+FINAL VALIDATION CHECKLIST - VERIFY BEFORE SUBMITTING:
+☐ Does your response start with { "fileScores": [ ?
+☐ Does your fileScores array have exactly ${fileCount} entries?
+☐ Did you score every single file from the list above?
+☐ Does your overallMetrics.totalFilesScored equal ${fileCount}?
+☐ Is your response valid JSON?
+☐ Did you avoid returning a single file object?
+
+IF ANY CHECKBOX IS UNCHECKED, YOUR RESPONSE IS INVALID AND WILL BE RETRIED!
+
+REQUIRED JSON STRUCTURE FOR ${fileCount} FILES:
+{
+  "fileScores": [
+    // Exactly ${fileCount} entries here - one for each file listed above
+    {
+      "filePath": "exact path from the files list above",
+      "relevanceScore": 0.0-1.0,
+      "confidence": 0.0-1.0,
+      "reasoning": "Based on codebase analysis: why this file is/isn't relevant",
+      "categories": ["category1", "category2"],
+      "modificationLikelihood": "very_high|high|medium|low|very_low",
+      "estimatedTokens": number
+    }
+  ],
+  "overallMetrics": {
+    "averageRelevance": 0.0-1.0,
+    "totalFilesScored": ${fileCount},
+    "highRelevanceCount": number,
+    "processingTimeMs": 0
+  },
+  "scoringStrategy": "${scoringStrategy}"
+}
+
+RESPONSE LENGTH EXPECTATION:
+For ${fileCount} files, your response should be approximately ${Math.max(2000, fileCount * 150)} characters.
+If your response is significantly shorter, you likely missed files.
+
+SELF-VALIDATION BEFORE RESPONDING:
+1. Count the entries in your fileScores array
+2. Verify the count equals ${fileCount}
+3. Check that you have an entry for each file path listed above
+4. Ensure your JSON is valid and complete
+
+IMPORTANT: Start your response with { and end with }. Do not include any text before or after the JSON object.`;
 
   return prompt;
 }
@@ -463,11 +568,13 @@ export function getRelevanceScoringTaskId(): ContextCuratorLLMTask {
 
 /**
  * Enhance relevance scoring response by adding missing required fields
+ * and handling incomplete responses from LLM
  */
 export function enhanceRelevanceScoringResponse(
   response: unknown,
   scoringStrategy: 'semantic_similarity' | 'keyword_density' | 'structural_importance' | 'hybrid',
-  processingTimeMs: number
+  processingTimeMs: number,
+  expectedFiles?: Array<{ path: string; estimatedTokens: number }>
 ): unknown {
   try {
     if (!response || typeof response !== 'object') {
@@ -477,9 +584,47 @@ export function enhanceRelevanceScoringResponse(
     const obj = response as Record<string, unknown>;
     const enhanced = { ...obj };
 
+    // NEW: Handle single file object case
+    if ('filePath' in obj && 'relevanceScore' in obj && !('fileScores' in obj)) {
+      console.warn('Context Curator: LLM returned single file, converting to array format');
+      enhanced.fileScores = [obj];
+      // Remove single file properties from top level
+      delete enhanced.filePath;
+      delete enhanced.relevanceScore;
+      delete enhanced.confidence;
+      delete enhanced.reasoning;
+      delete enhanced.categories;
+      delete enhanced.modificationLikelihood;
+      delete enhanced.estimatedTokens;
+    }
+
     // Ensure fileScores exists and is an array
     if (!Array.isArray(enhanced.fileScores)) {
       enhanced.fileScores = [];
+    }
+
+    // NEW: If we have expected files and the response is incomplete, add missing files with default scores
+    if (expectedFiles && expectedFiles.length > 0 && Array.isArray(enhanced.fileScores)) {
+      const fileScoresArray = enhanced.fileScores as any[];
+      const scoredPaths = new Set(fileScoresArray.map(f => f.filePath));
+      const missingFiles = expectedFiles.filter(f => !scoredPaths.has(f.path));
+
+      if (missingFiles.length > 0) {
+        console.warn(`Context Curator: LLM only scored ${fileScoresArray.length}/${expectedFiles.length} files. Adding default scores for ${missingFiles.length} missing files.`);
+
+        // Add missing files with conservative default scores
+        for (const missingFile of missingFiles) {
+          fileScoresArray.push({
+            filePath: missingFile.path,
+            relevanceScore: 0.3, // Conservative default
+            confidence: 0.5, // Low confidence for auto-generated scores
+            reasoning: 'Auto-generated score: LLM did not provide assessment for this file',
+            categories: ['utility'], // Default category
+            modificationLikelihood: 'low',
+            estimatedTokens: missingFile.estimatedTokens
+          });
+        }
+      }
     }
 
     // Add missing overallMetrics if not present

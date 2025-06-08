@@ -295,9 +295,46 @@ ${index + 1}. ${fileScore.filePath}
 
   prompt += `\n\nGenerate a comprehensive meta-prompt for the ${intentAnalysis.taskType} task. Include structured task decomposition with realistic estimates, development guidelines specific to the task type, and a complete context summary. Focus on creating actionable guidance for downstream AI agents.
 
-CRITICAL REMINDER: You must return a meta-prompt object with systemPrompt, userPrompt, contextSummary, taskDecomposition, guidelines, estimatedComplexity, qualityScore, and aiAgentResponseFormat fields. DO NOT return a single epic or task object. The taskDecomposition field should contain an "epics" array, not be an epic itself.
+CRITICAL STRUCTURE REQUIREMENTS:
+You must return a complete meta-prompt object with ALL required fields:
 
-REQUIRED JSON STRUCTURE - YOU MUST FOLLOW THIS EXACT FORMAT:
+REQUIRED FIELDS CHECKLIST:
+✓ systemPrompt (string)
+✓ userPrompt (string)
+✓ contextSummary (string)
+✓ taskDecomposition (object with "epics" array)
+✓ guidelines (array)
+✓ estimatedComplexity (enum)
+✓ qualityScore (number)
+✓ aiAgentResponseFormat (object with description, format, rules)
+
+CRITICAL FORMAT VALIDATION:
+❌ INVALID: {"id": "epic-1", "title": "...", "tasks": [...]}
+❌ INVALID: {"epics": [{"id": "epic-1", ...}]}
+✅ VALID: {"systemPrompt": "...", "userPrompt": "...", "taskDecomposition": {"epics": [...]}, ...}
+
+Your response MUST start with:
+{
+  "systemPrompt": "
+
+NOT with:
+{
+  "id": "epic-1"
+
+NOT with:
+{
+  "epics": [
+
+COMMON ERROR TO AVOID:
+❌ DO NOT return just an epic object like: {"id": "epic-1", "title": "...", "tasks": [...]}
+✅ DO return complete structure like: {"systemPrompt": "...", "taskDecomposition": {"epics": [...]}, ...}
+
+VALIDATION BEFORE RESPONDING:
+- Confirm your response has all 8 required top-level fields
+- Confirm taskDecomposition contains an "epics" array, not just epic properties
+- Base all file references on the actual codebase structure provided above
+
+REQUIRED JSON STRUCTURE - COPY THIS TEMPLATE:
 {
   "systemPrompt": "Your system prompt here...",
   "userPrompt": "Your user prompt here...",
@@ -309,7 +346,23 @@ REQUIRED JSON STRUCTURE - YOU MUST FOLLOW THIS EXACT FORMAT:
         "title": "Epic Title",
         "description": "Epic description...",
         "estimatedComplexity": "medium",
-        "tasks": [...]
+        "tasks": [
+          {
+            "id": "task-1-1",
+            "title": "Task Title",
+            "description": "Task description...",
+            "estimatedHours": 2,
+            "dependencies": [],
+            "subtasks": [
+              {
+                "id": "subtask-1-1-1",
+                "title": "Subtask Title",
+                "description": "Subtask description...",
+                "estimatedMinutes": 15
+              }
+            ]
+          }
+        ]
       }
     ]
   },
@@ -603,6 +656,32 @@ export function attemptResponseRecovery(response: unknown): unknown {
   }
 
   const obj = response as Record<string, unknown>;
+
+  // NEW: Handle single epic object case
+  if ('id' in obj && 'title' in obj && 'tasks' in obj && 'estimatedComplexity' in obj && !('epics' in obj)) {
+    console.warn('Detected single epic response, converting to complete meta-prompt format');
+
+    return {
+      systemPrompt: "You are an expert software engineer with deep knowledge of the codebase architecture and development best practices.",
+      userPrompt: "Complete the development task following the structured decomposition and guidelines provided.",
+      contextSummary: "The codebase requires implementation of the requested features following established patterns and architectural principles.",
+      taskDecomposition: {
+        epics: [obj] // Wrap single epic in array
+      },
+      guidelines: generateTaskTypeGuidelines('feature_addition'),
+      estimatedComplexity: obj.estimatedComplexity || "medium",
+      qualityScore: 0.75,
+      aiAgentResponseFormat: {
+        description: "Structured response format for development tasks",
+        format: "EPIC_ID: [epic-id]\nTASK_ID: [task-id]\nSUBTASK_ID: [subtask-id]\nSTATUS: [status]",
+        rules: [
+          "Each response must reference the specific epic, task, and subtask being addressed",
+          "Include clear status updates and completion criteria",
+          "Provide detailed implementation notes and considerations"
+        ]
+      }
+    };
+  }
 
   // Check if this is a partial response with only epics
   if ('epics' in obj && Array.isArray(obj.epics) && Object.keys(obj).length === 1) {
