@@ -1,5 +1,5 @@
 @echo off
-REM Setup script for Vibe Coder MCP Server (Production Ready v2.0)
+REM Setup script for Vibe Coder MCP Server (Production Ready v2.1)
 setlocal enabledelayedexpansion
 
 REM Color codes for Windows (using PowerShell for colored output)
@@ -9,10 +9,10 @@ set "YELLOW=[33m"
 set "BLUE=[34m"
 set "NC=[0m"
 
-echo Setting up Vibe Coder MCP Server v2.0...
+echo Setting up Vibe Coder MCP Server v2.1...
 echo ==================================================
-echo Production-ready MCP server with 15+ specialized tools
-echo Agent coordination • Task management • Code analysis • Research
+echo Production-ready MCP server with 16+ specialized tools
+echo Agent coordination • Task management • Code analysis • Research • Context curation
 echo ==================================================
 
 REM Check if npm is installed
@@ -90,6 +90,16 @@ if %ERRORLEVEL% neq 0 (
     set "missing_deps=!missing_deps! vitest"
 )
 
+call npm list zod >nul 2>nul
+if %ERRORLEVEL% neq 0 (
+    set "missing_deps=!missing_deps! zod"
+)
+
+call npm list yaml >nul 2>nul
+if %ERRORLEVEL% neq 0 (
+    set "missing_deps=!missing_deps! yaml"
+)
+
 if not "!missing_deps!"=="" (
     powershell -Command "Write-Host 'Some critical dependencies are missing:' -ForegroundColor Yellow"
     echo !missing_deps!
@@ -103,7 +113,7 @@ echo Creating required VibeCoderOutput directories...
 if not exist "VibeCoderOutput" mkdir "VibeCoderOutput"
 
 REM Core tool output directories (based on actual tools in src/tools/):
-set "tool_dirs=research-manager rules-generator prd-generator user-stories-generator task-list-generator fullstack-starter-kit-generator workflow-runner code-map-generator vibe-task-manager context-curator job-result-retriever agent-registry agent-tasks agent-response"
+set "tool_dirs=research-manager rules-generator prd-generator user-stories-generator task-list-generator fullstack-starter-kit-generator workflow-runner code-map-generator vibe-task-manager context-curator job-result-retriever agent-registry agent-tasks agent-response generated_task_lists"
 
 for %%d in (%tool_dirs%) do (
     if not exist "VibeCoderOutput\%%d" (
@@ -232,7 +242,7 @@ if exist "VibeCoderOutput" if exist "build" if exist "src" (
 echo.
 powershell -Command "Write-Host '✓ Setup completed successfully!' -ForegroundColor Green"
 echo ==================================================
-echo Vibe Coder MCP Server v2.0 (Production Ready) is now set up with 15+ specialized tools:
+echo Vibe Coder MCP Server v2.1 (Production Ready) is now set up with 16+ specialized tools:
 echo.
 echo 📋 PLANNING ^& DOCUMENTATION TOOLS:
 echo   - Research Manager (research-manager) - AI-powered research with Perplexity Sonar
@@ -242,8 +252,9 @@ echo   - Task List Generator (generate-task-list) - Development task breakdown w
 echo   - Rules Generator (generate-rules) - Development guidelines and coding standards
 echo.
 echo 🏗️ PROJECT SCAFFOLDING ^& CODE ANALYSIS:
-echo   - Fullstack Starter Kit Generator (generate-fullstack-starter-kit) - Complete project scaffolding
+echo   - Fullstack Starter Kit Generator (generate-fullstack-starter-kit) - Dynamic LLM-generated project scaffolding
 echo   - Code Map Generator (map-codebase) - Semantic codebase analysis (30+ languages, 95%% token reduction)
+echo   - Context Curator (curate-context) - Intelligent context curation with chunked processing and relevance scoring
 echo.
 echo 🤖 TASK MANAGEMENT ^& AUTOMATION:
 echo   - Vibe Task Manager (vibe-task-manager) - AI-agent-native task management with RDD methodology
@@ -267,6 +278,10 @@ echo   - Real-time agent orchestration and task assignment
 echo   - Enhanced JSON parsing with 6-strategy progressive pipeline
 echo   - Memory optimization with sophisticated caching
 echo   - Security boundaries with separate read/write path validation
+echo   - Schema-aware LLM integration with Zod validation
+echo   - Dynamic template generation replacing static YAML templates
+echo   - Chunked processing for large codebases (^>40 files)
+echo   - Enhanced project type detection with multi-language intelligence
 echo.
 echo.
 powershell -Command "Write-Host '⚠️  CRITICAL NEXT STEPS:' -ForegroundColor Yellow"
@@ -303,7 +318,8 @@ powershell -Command "Write-Host '6. TEST TOOL FUNCTIONALITY' -ForegroundColor Bl
 echo    - Try: 'Research modern JavaScript frameworks' (research-manager)
 echo    - Try: 'vibe-task-manager create project "Test Project" "Testing setup"'
 echo    - Try: 'map-codebase ./src' (code-map-generator)
-echo    - Try: 'curate-context' for context curation
+echo    - Try: 'curate-context' for intelligent context curation
+echo    - Try: 'generate-fullstack-starter-kit' for dynamic project scaffolding
 echo.
 powershell -Command "Write-Host '7. ADVANCED USAGE' -ForegroundColor Yellow"
 echo    - Use 'get-job-result ^<jobId^>' to retrieve outcomes from long-running tasks

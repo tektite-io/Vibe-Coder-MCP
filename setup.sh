@@ -1,5 +1,5 @@
 #!/bin/bash
-# Setup script for Vibe Coder MCP Server (Production Ready v2.0)
+# Setup script for Vibe Coder MCP Server (Production Ready v2.1)
 set -e # Exit immediately if a command exits with a non-zero status.
 
 # Color codes for better output
@@ -26,10 +26,10 @@ print_info() {
     echo -e "${BLUE}ℹ${NC} $1"
 }
 
-echo "Setting up Vibe Coder MCP Server v2.0..."
+echo "Setting up Vibe Coder MCP Server v2.1..."
 echo "=================================================="
-echo "Production-ready MCP server with 15+ specialized tools"
-echo "Agent coordination • Task management • Code analysis • Research"
+echo "Production-ready MCP server with 16+ specialized tools"
+echo "Agent coordination • Task management • Code analysis • Research • Context curation"
 echo "=================================================="
 
 # Check if npm is installed
@@ -93,6 +93,12 @@ fi
 if ! npm list vitest &> /dev/null; then
     missing_deps+=("vitest")
 fi
+if ! npm list zod &> /dev/null; then
+    missing_deps+=("zod")
+fi
+if ! npm list yaml &> /dev/null; then
+    missing_deps+=("yaml")
+fi
 
 if [ ${#missing_deps[@]} -gt 0 ]; then
     print_warning "Some critical dependencies are missing:"
@@ -124,6 +130,7 @@ declare -a tool_dirs=(
     "agent-registry"
     "agent-tasks"
     "agent-response"
+    "generated_task_lists"
 )
 
 for dir in "${tool_dirs[@]}"; do
@@ -271,7 +278,7 @@ fi
 echo ""
 print_status "Setup completed successfully!"
 echo "=================================================="
-echo "Vibe Coder MCP Server v2.0 (Production Ready) is now set up with 15+ specialized tools:"
+echo "Vibe Coder MCP Server v2.1 (Production Ready) is now set up with 16+ specialized tools:"
 echo ""
 echo "📋 PLANNING & DOCUMENTATION TOOLS:"
 echo "  - Research Manager (research-manager) - AI-powered research with Perplexity Sonar"
@@ -281,8 +288,9 @@ echo "  - Task List Generator (generate-task-list) - Development task breakdown 
 echo "  - Rules Generator (generate-rules) - Development guidelines and coding standards"
 echo ""
 echo "🏗️ PROJECT SCAFFOLDING & CODE ANALYSIS:"
-echo "  - Fullstack Starter Kit Generator (generate-fullstack-starter-kit) - Complete project scaffolding"
+echo "  - Fullstack Starter Kit Generator (generate-fullstack-starter-kit) - Dynamic LLM-generated project scaffolding"
 echo "  - Code Map Generator (map-codebase) - Semantic codebase analysis (30+ languages, 95% token reduction)"
+echo "  - Context Curator (curate-context) - Intelligent context curation with chunked processing and relevance scoring"
 echo ""
 echo "🤖 TASK MANAGEMENT & AUTOMATION:"
 echo "  - Vibe Task Manager (vibe-task-manager) - AI-agent-native task management with RDD methodology"
@@ -306,6 +314,10 @@ echo "  - Real-time agent orchestration and task assignment"
 echo "  - Enhanced JSON parsing with 6-strategy progressive pipeline"
 echo "  - Memory optimization with sophisticated caching"
 echo "  - Security boundaries with separate read/write path validation"
+echo "  - Schema-aware LLM integration with Zod validation"
+echo "  - Dynamic template generation replacing static YAML templates"
+echo "  - Chunked processing for large codebases (>40 files)"
+echo "  - Enhanced project type detection with multi-language intelligence"
 echo ""
 echo ""
 echo -e "${YELLOW}⚠️  CRITICAL NEXT STEPS:${NC}"
@@ -342,7 +354,8 @@ echo -e "${BLUE}6. TEST TOOL FUNCTIONALITY${NC}"
 echo "   - Try: 'Research modern JavaScript frameworks' (research-manager)"
 echo "   - Try: 'vibe-task-manager create project \"Test Project\" \"Testing setup\"'"
 echo "   - Try: 'map-codebase ./src' (code-map-generator)"
-echo "   - Try: 'curate-context' for context curation"
+echo "   - Try: 'curate-context' for intelligent context curation"
+echo "   - Try: 'generate-fullstack-starter-kit' for dynamic project scaffolding"
 echo ""
 echo -e "${YELLOW}7. ADVANCED USAGE${NC}"
 echo "   - Use 'get-job-result <jobId>' to retrieve outcomes from long-running tasks"
