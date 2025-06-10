@@ -96,7 +96,8 @@ export const contextCuratorExecutor: ToolExecutor = async (
       includePatterns: ['**/*'],
       excludePatterns: ['node_modules/**', '.git/**', 'dist/**', 'build/**'],
       focusAreas: [],
-      useCodeMapCache: true
+      useCodeMapCache: true,
+      codeMapCacheMaxAgeMinutes: 60 // Default 1 hour cache
     });
 
     logger.debug({

@@ -237,7 +237,7 @@ flowchart TD
 
 ### 9. CONTEXT CURATOR (`curate-context`)
 **Purpose**: Intelligent codebase analysis and context package curation for AI-driven development tasks
-**Status**: Production Ready with Enhanced Language-Agnostic Detection
+**Status**: Production Ready with Enhanced Language-Agnostic Detection and Intelligent Codemap Caching
 
 **Key Features:**
 - **8-Phase Workflow Pipeline**: Initialization → Intent Analysis → Prompt Refinement → File Discovery → Relevance Scoring → Meta-Prompt Generation → Package Assembly → Output Generation
@@ -248,6 +248,7 @@ flowchart TD
 - **Token Budget Management**: Configurable limits (default 250,000 tokens) with intelligent optimization
 - **Multiple Output Formats**: XML (primary), JSON, YAML with validation
 - **Code Map Integration**: Seamless integration with Code Map Generator for comprehensive analysis
+- **Intelligent Codemap Caching**: Configurable caching system that checks for recent codemaps before triggering new generation, optimizing workflow performance
 
 **Enhanced Project Type Detection:**
 - **35+ Programming Languages**: JavaScript/TypeScript, Python, Java, C#, Go, Rust, PHP, Ruby, Swift, Kotlin, Dart, and more
@@ -262,6 +263,8 @@ flowchart TD
 - `max_files`: Maximum files to include (default: 100)
 - `max_token_budget`: Token budget limit (default: 250,000)
 - `output_format`: xml, json, yaml (default: xml)
+- `useCodeMapCache`: Boolean to enable/disable codemap caching (default: true)
+- `cacheMaxAgeMinutes`: Maximum age of cached codemaps in minutes (default: 60, range: 1-1440)
 
 **Output Directory**: `VibeCoderOutput/context-curator/`
 
@@ -838,10 +841,16 @@ Examples:
 4. `vibe-task-manager decompose` for implementation tasks
 
 **Context-Driven Development Workflow**:
-1. `curate-context` for intelligent codebase analysis and context packaging
+1. `curate-context` for intelligent codebase analysis and context packaging (with automatic codemap caching)
 2. Use curated context for AI-driven development tasks
-3. `map-codebase` for comprehensive codebase understanding
+3. `map-codebase` for comprehensive codebase understanding (cached results reused by Context Curator)
 4. `vibe-task-manager` for task coordination with enriched context
+
+**Optimized Context Curation with Caching**:
+1. Context Curator checks for recent cached codemaps (default: 60 minutes)
+2. If recent codemap exists, skips expensive regeneration and uses cached version
+3. If no recent cache or cache disabled, generates new codemap
+4. Configurable cache age and enable/disable options for different workflows
 
 **Multi-Agent Coordination Workflow**:
 1. `register-agent` to register AI agents with capabilities

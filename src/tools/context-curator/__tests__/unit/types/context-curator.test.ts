@@ -223,7 +223,8 @@ describe('Context Curator Type Definitions', () => {
         includePatterns: ['**/*.ts', '**/*.tsx'],
         excludePatterns: ['node_modules/**', '**/*.test.ts'],
         focusAreas: ['authentication', 'security'],
-        useCodeMapCache: true
+        useCodeMapCache: true,
+        codeMapCacheMaxAgeMinutes: 120
       };
 
       expect(() => contextCuratorInputSchema.parse(validInput)).not.toThrow();
@@ -242,6 +243,7 @@ describe('Context Curator Type Definitions', () => {
       expect(parsed.excludePatterns).toEqual(['node_modules/**', '.git/**', 'dist/**', 'build/**']);
       expect(parsed.focusAreas).toEqual([]);
       expect(parsed.useCodeMapCache).toBe(true);
+      expect(parsed.codeMapCacheMaxAgeMinutes).toBe(60);
     });
 
     it('should reject invalid input', () => {
@@ -249,11 +251,27 @@ describe('Context Curator Type Definitions', () => {
         { userPrompt: '', projectPath: '/path' }, // Empty prompt
         { userPrompt: 'Test', projectPath: '' }, // Empty path
         { userPrompt: 'Test', projectPath: '/path', maxFiles: 0 }, // Zero max files
-        { userPrompt: 'Test', projectPath: '/path', maxFiles: 1001 } // Too many max files
+        { userPrompt: 'Test', projectPath: '/path', maxFiles: 1001 }, // Too many max files
+        { userPrompt: 'Test', projectPath: '/path', codeMapCacheMaxAgeMinutes: 0 }, // Zero cache age
+        { userPrompt: 'Test', projectPath: '/path', codeMapCacheMaxAgeMinutes: 1441 } // Too large cache age
       ];
 
       invalidInputs.forEach(input => {
         expect(() => contextCuratorInputSchema.parse(input)).toThrow();
+      });
+    });
+
+    it('should validate cache age limits', () => {
+      const validCacheAges = [1, 60, 120, 1440]; // 1 minute to 24 hours
+
+      validCacheAges.forEach(age => {
+        const input = {
+          userPrompt: 'Test prompt',
+          projectPath: '/test/path',
+          codeMapCacheMaxAgeMinutes: age
+        };
+
+        expect(() => contextCuratorInputSchema.parse(input)).not.toThrow();
       });
     });
   });
