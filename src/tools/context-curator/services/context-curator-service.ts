@@ -336,11 +336,57 @@ export class ContextCuratorService {
 
 
 
-      // Generate codemap for project understanding
-      logger.debug({ jobId: context.jobId, projectPath: context.input.projectPath }, 'Generating codemap');
+      // Check for cached codemap first, then generate if needed
+      logger.debug({
+        jobId: context.jobId,
+        projectPath: context.input.projectPath,
+        useCache: context.input.useCodeMapCache,
+        maxAgeMinutes: context.input.codeMapCacheMaxAgeMinutes
+      }, 'Checking for cached codemap');
 
-      // Inherit maxContentLength from Code-Map Generator defaults (0 = maximum aggressive optimization)
-      const maxContentLength = context.contextCuratorConfig?.contentDensity?.maxContentLength ?? 0;
+      let codemapContent = '';
+      let codemapPath = '';
+      let fromCache = false;
+
+      // Try to use cached codemap if enabled
+      if (context.input.useCodeMapCache) {
+        try {
+          const { CodemapCacheManager } = await import('../utils/codemap-cache.js');
+          const cachedResult = await CodemapCacheManager.findRecentCodemap(
+            context.input.codeMapCacheMaxAgeMinutes,
+            context.securityConfig?.allowedWriteDirectory
+          );
+
+          if (cachedResult) {
+            codemapContent = cachedResult.content;
+            codemapPath = cachedResult.path;
+            fromCache = true;
+
+            logger.info({
+              jobId: context.jobId,
+              codemapPath,
+              ageMinutes: Math.round((Date.now() - cachedResult.timestamp.getTime()) / (60 * 1000)),
+              contentLength: codemapContent.length
+            }, 'Using cached codemap - skipping generation');
+          } else {
+            logger.debug({ jobId: context.jobId }, 'No recent cached codemap found, generating fresh');
+          }
+        } catch (cacheError) {
+          logger.warn({
+            jobId: context.jobId,
+            error: cacheError instanceof Error ? cacheError.message : 'Unknown cache error'
+          }, 'Cache check failed, falling back to fresh generation');
+        }
+      } else {
+        logger.debug({ jobId: context.jobId }, 'Codemap cache disabled, generating fresh');
+      }
+
+      // Generate fresh codemap if not using cache or cache miss
+      if (!fromCache) {
+        logger.debug({ jobId: context.jobId, projectPath: context.input.projectPath }, 'Generating fresh codemap');
+
+        // Inherit maxContentLength from Code-Map Generator defaults (0 = maximum aggressive optimization)
+        const maxContentLength = context.contextCuratorConfig?.contentDensity?.maxContentLength ?? 0;
 
       // Create enhanced configuration with security settings for Code Map Generator
       const enhancedConfig = {
@@ -379,11 +425,8 @@ export class ContextCuratorService {
         throw new Error(`Codemap generation failed: ${errorMessage}`);
       }
 
-      // Extract the actual codemap path from the result and read the file content
-      let codemapContent = '';
-      let codemapPath = '';
-
-      try {
+        // Extract the actual codemap path from the result and read the file content
+        try {
         const resultText = codemapResult.content[0]?.text;
         logger.debug({
           resultTextType: typeof resultText,
@@ -444,6 +487,7 @@ export class ContextCuratorService {
           throw new Error('No codemap content generated');
         }
       }
+      }
 
       // Use the complete codemap content for comprehensive analysis
       // Include full semantic information: classes, functions, imports, exports, etc.
@@ -454,30 +498,41 @@ export class ContextCuratorService {
       logger.info({
         codemapContentLength: codemapContent.length,
         codemapContentPreview: codemapContent.substring(0, 500),
-        codemapContentType: typeof codemapContent
+        codemapContentType: typeof codemapContent,
+        fromCache
       }, 'About to extract file contents from codemap');
 
       context.fileContents = await this.extractFileContentsWithOptimization(codemapContent);
 
       context.completedPhases++;
       const progress = Math.round((context.completedPhases / context.totalPhases) * 100);
-      
+
+      const statusMessage = fromCache ?
+        'Initialization completed - using cached codemap' :
+        'Initialization completed - codemap generated';
+
       jobManager.updateJobStatus(
         context.jobId,
         JobStatus.RUNNING,
-        'Initialization completed - codemap generated',
+        statusMessage,
         progress,
         {
           currentStage: 'initialization_complete',
           diagnostics: [
-            `Codemap generated with ${codemapContent.length} characters`,
-            `File contents extracted for ${context.fileContents?.size || 0} files`
+            fromCache ?
+              `Cached codemap loaded with ${codemapContent.length} characters` :
+              `Codemap generated with ${codemapContent.length} characters`,
+            `File contents extracted for ${context.fileContents?.size || 0} files`,
+            fromCache ? 'Cache hit - performance optimized' : 'Fresh generation completed'
           ],
           subProgress: 100,
           metadata: {
             codemapSize: codemapContent.length,
             fileContentsCount: context.fileContents?.size || 0,
-            phase: 'initialization'
+            phase: 'initialization',
+            fromCache,
+            cacheEnabled: context.input.useCodeMapCache,
+            maxCacheAgeMinutes: context.input.codeMapCacheMaxAgeMinutes
           }
         }
       );
@@ -485,7 +540,9 @@ export class ContextCuratorService {
       logger.info({
         jobId: context.jobId,
         codemapLength: codemapContent.length,
-        fileContentsCount: context.fileContents?.size || 0
+        fileContentsCount: context.fileContents?.size || 0,
+        fromCache,
+        cacheEnabled: context.input.useCodeMapCache
       }, 'Initialization phase completed');
 
     } catch (error) {

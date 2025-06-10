@@ -25,6 +25,7 @@ Vibe Coder MCP integrates with MCP-compatible clients to provide the following c
 ### 🔍 **Advanced Code Analysis & Context Curation**
 *   **Code Map Generator**: 35+ programming language support with 95-97% token reduction optimization
 *   **Context Curator**: Language-agnostic project detection with 95%+ accuracy across 35+ languages
+*   **Intelligent Codemap Caching**: Configurable caching system that reuses recent codemaps to optimize workflow performance
 *   **Enhanced Import Resolution**: Third-party integration for accurate dependency mapping
 *   **Multi-Strategy File Discovery**: 4 parallel strategies for comprehensive analysis
 *   **Memory Optimization**: Sophisticated caching and resource management
@@ -32,7 +33,7 @@ Vibe Coder MCP integrates with MCP-compatible clients to provide the following c
 
 ### 📋 **Research & Planning Suite**
 *   **Research Manager**: Deep research using Perplexity Sonar via OpenRouter
-*   **Context Curator**: Intelligent codebase analysis with 8-phase workflow pipeline for AI-driven development
+*   **Context Curator**: Intelligent codebase analysis with 8-phase workflow pipeline and intelligent codemap caching for AI-driven development
 *   **Document Generators**: PRDs (`generate-prd`), user stories (`generate-user-stories`), task lists (`generate-task-list`), development rules (`generate-rules`)
 *   **Project Scaffolding**: Full-stack starter kits (`generate-fullstack-starter-kit`) with dynamic template generation
 *   **Workflow Execution**: Predefined sequences of tool calls defined in `workflows.json`
@@ -721,7 +722,7 @@ Refer to these individual READMEs for in-depth information:
 ### Analysis & Information Tools
 
 *   **Code Map Generator (`map-codebase`)**: Scans a codebase to extract semantic information (classes, functions, comments) and generates either a human-readable Markdown map with Mermaid diagrams or a structured JSON representation with absolute file paths for imports and enhanced class property information.
-*   **Context Curator (`curate-context`)**: Intelligent codebase analysis and context package curation with 8-phase workflow pipeline, language-agnostic project detection supporting 35+ programming languages, and multi-strategy file discovery for AI-driven development tasks.
+*   **Context Curator (`curate-context`)**: Intelligent codebase analysis and context package curation with 8-phase workflow pipeline, intelligent codemap caching, language-agnostic project detection supporting 35+ programming languages, and multi-strategy file discovery for AI-driven development tasks.
 *   **Research Manager (`research-manager`)**: Performs deep research on technical topics using Perplexity Sonar, providing summaries and sources.
 
 ### Planning & Documentation Tools
@@ -948,10 +949,11 @@ gantt
 * **Import Resolution**: Enhanced with adapter-based architecture
 
 #### Context Curator
-* **Status**: Production Ready
+* **Status**: Production Ready with Intelligent Codemap Caching
 * **Language Support**: 35+ programming languages with 95%+ accuracy
 * **Workflow Pipeline**: 8-phase intelligent analysis and curation
 * **Project Detection**: Language-agnostic with multi-strategy file discovery
+* **Performance Optimization**: Intelligent caching system that reuses recent codemaps (configurable 1-1440 minutes)
 
 #### Research Manager
 * **Status**: Production Ready

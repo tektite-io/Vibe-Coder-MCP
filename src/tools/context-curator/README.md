@@ -13,6 +13,7 @@ The Context Curator is an intelligent codebase analysis tool that curates compre
 - **Token Budget Management**: Configurable token limits with intelligent content optimization
 - **Multiple Output Formats**: XML (primary) and JSON support with validation
 - **Code Map Integration**: Seamless integration with Code Map Generator for comprehensive analysis
+- **Intelligent Codemap Caching**: Configurable caching system that checks for recent codemaps before triggering new generation, optimizing workflow performance
 
 ## Architecture
 
@@ -170,6 +171,36 @@ const result = await mcpClient.callTool('curate-context', {
 });
 ```
 
+### Caching Configuration Examples
+
+```typescript
+// Use cached codemap if available within last 2 hours
+const result = await mcpClient.callTool('curate-context', {
+  prompt: "Add user authentication to the React application",
+  project_path: "/path/to/your/project",
+  task_type: "feature_addition",
+  useCodeMapCache: true,
+  cacheMaxAgeMinutes: 120
+});
+
+// Disable caching to force fresh codemap generation
+const result = await mcpClient.callTool('curate-context', {
+  prompt: "Analyze the latest changes in the codebase",
+  project_path: "/path/to/your/project",
+  task_type: "general",
+  useCodeMapCache: false
+});
+
+// Use default caching (60 minutes)
+const result = await mcpClient.callTool('curate-context', {
+  prompt: "Refactor the authentication system",
+  project_path: "/path/to/your/project",
+  task_type: "refactoring"
+  // useCodeMapCache: true (default)
+  // cacheMaxAgeMinutes: 60 (default)
+});
+```
+
 ## API Documentation
 
 ### Input Parameters
@@ -185,6 +216,8 @@ const result = await mcpClient.callTool('curate-context', {
 | `focus_areas` | string[] | No | [] | Specific areas to focus on |
 | `max_token_budget` | number | No | 250000 | Maximum token budget for the context package |
 | `output_format` | enum | No | 'xml' | Output format: `xml` or `json` |
+| `useCodeMapCache` | boolean | No | true | Enable/disable intelligent codemap caching |
+| `cacheMaxAgeMinutes` | number | No | 60 | Maximum age of cached codemaps in minutes (1-1440) |
 
 ### Response Format
 
@@ -285,6 +318,10 @@ Works seamlessly with other Vibe Coder tools:
 ### Optimization Features
 
 - **Intelligent Caching**: SHA256-based caching for similar requests
+- **Intelligent Codemap Caching**: Configurable caching system that reuses recent codemaps to avoid expensive regeneration
+  - Configurable cache age threshold (1-1440 minutes)
+  - Automatic cache validation and corruption detection
+  - Significant performance improvement for repeated analysis
 - **Token Budget Management**: Automatic content optimization within limits
 - **Parallel Processing**: 4 concurrent file discovery strategies
 - **Memory Optimization**: Streaming file processing for large codebases
@@ -337,7 +374,11 @@ VibeCoderOutput/context-curator/
 
 ### Phase 1: Initialization
 - **Configuration Loading**: Validates environment variables and tool settings
-- **Code Map Generation**: Automatically generates comprehensive codebase analysis
+- **Intelligent Codemap Caching**: Checks for recent cached codemaps before triggering new generation
+  - Configurable cache age threshold (default: 60 minutes, range: 1-1440 minutes)
+  - Boolean toggle to enable/disable caching (default: enabled)
+  - Automatic cache validation and corruption detection
+- **Code Map Generation**: Automatically generates comprehensive codebase analysis (if no recent cache found)
 - **Input Validation**: Ensures all required parameters are present and valid
 - **Security Checks**: Validates project path against allowed directories
 
@@ -470,6 +511,27 @@ cat llm_config.json
 
 # Verify API key in .env
 grep OPENROUTER_API_KEY .env
+```
+
+#### "Cached codemap is outdated"
+**Cause**: Codebase has changed significantly since last cache
+**Solution**: Disable caching or reduce cache age threshold
+
+```typescript
+{
+  useCodeMapCache: false,  // Force fresh generation
+  // OR
+  cacheMaxAgeMinutes: 30   // Reduce cache age
+}
+```
+
+#### "Cache validation failed"
+**Cause**: Cached codemap file is corrupted or incomplete
+**Solution**: The system automatically falls back to fresh generation, but you can manually clear cache
+
+```bash
+# Clear Context Curator cache
+rm -rf VibeCoderOutput/code-map-generator/*.md
 ```
 
 ### Performance Optimization
