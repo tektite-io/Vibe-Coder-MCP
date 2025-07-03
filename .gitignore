@@ -1,6 +1,9 @@
 # Project-specific directories and files
 .env
 workflow-agent-files/
+.claude/
+CLAUDE.md
+.augment/
 
 # Dependency directories
 node_modules/
@@ -40,6 +43,8 @@ test/
 */__tests__/
 */tests/
 */__integration__/
+tests/
+test-workflow-states/
 
 # IDE - VSCode
 .vscode/*

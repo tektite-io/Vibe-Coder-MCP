@@ -8,6 +8,7 @@ import { agentCommand } from './agent.js';
 import { decomposeCommand } from './decompose.js';
 import { searchCommand } from './search.js';
 import { contextCommand } from './context.js';
+import { parseCommand } from './parse.js';
 import logger from '../../../../logger.js';
 
 /**
@@ -62,6 +63,7 @@ export function createVibeTasksCLI(): Command {
   program.addCommand(decomposeCommand);
   program.addCommand(searchCommand);
   program.addCommand(contextCommand);
+  program.addCommand(parseCommand);
 
   // Handle unknown commands
   program.on('command:*', (operands) => {
@@ -117,7 +119,7 @@ export class CLIUtils {
   /**
    * Format output for console display
    */
-  static formatOutput(data: any, format: 'table' | 'json' | 'yaml' = 'table'): string {
+  static formatOutput(data: unknown, format: 'table' | 'json' | 'yaml' = 'table'): string {
     switch (format) {
       case 'json':
         return JSON.stringify(data, null, 2);
@@ -135,7 +137,7 @@ export class CLIUtils {
         if (Array.isArray(data)) {
           return this.formatArrayAsTable(data);
         } else {
-          return this.formatObjectAsTable(data);
+          return this.formatObjectAsTable(data as Record<string, unknown>);
         }
     }
   }
@@ -143,14 +145,18 @@ export class CLIUtils {
   /**
    * Format array as table
    */
-  private static formatArrayAsTable(data: any[]): string {
+  private static formatArrayAsTable(data: unknown[]): string {
     if (data.length === 0) {
       return 'No items found.';
     }
 
-    const headers = Object.keys(data[0]);
+    const firstItem = data[0] as Record<string, unknown>;
+    const headers = Object.keys(firstItem);
     const maxWidths = headers.map(header =>
-      Math.max(header.length, ...data.map(item => String(item[header] || '').length))
+      Math.max(header.length, ...data.map(item => {
+        const itemRecord = item as Record<string, unknown>;
+        return String(itemRecord[header] || '').length;
+      }))
     );
 
     // Header row
@@ -158,9 +164,10 @@ export class CLIUtils {
     const separator = maxWidths.map(width => '-'.repeat(width)).join('-|-');
 
     // Data rows
-    const dataRows = data.map(item =>
-      headers.map((header, i) => String(item[header] || '').padEnd(maxWidths[i])).join(' | ')
-    );
+    const dataRows = data.map(item => {
+      const itemRecord = item as Record<string, unknown>;
+      return headers.map((header, i) => String(itemRecord[header] || '').padEnd(maxWidths[i])).join(' | ');
+    });
 
     return [headerRow, separator, ...dataRows].join('\n');
   }
@@ -168,7 +175,7 @@ export class CLIUtils {
   /**
    * Format object as table
    */
-  private static formatObjectAsTable(data: any): string {
+  private static formatObjectAsTable(data: Record<string, unknown>): string {
     const entries = Object.entries(data);
     const maxKeyWidth = Math.max(...entries.map(([key]) => key.length));
 
@@ -180,7 +187,7 @@ export class CLIUtils {
   /**
    * Format object as YAML-like string
    */
-  private static formatObjectAsYaml(data: any, indent = 0): string {
+  private static formatObjectAsYaml(data: unknown, indent = 0): string {
     const spaces = ' '.repeat(indent);
 
     if (typeof data === 'object' && data !== null) {
@@ -254,7 +261,7 @@ export class CLIUtils {
   /**
    * Validate required parameters
    */
-  static validateRequired(params: Record<string, any>, required: string[]): void {
+  static validateRequired(params: Record<string, unknown>, required: string[]): void {
     const missing = required.filter(key => !params[key]);
 
     if (missing.length > 0) {

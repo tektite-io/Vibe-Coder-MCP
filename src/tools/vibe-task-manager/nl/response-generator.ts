@@ -297,7 +297,7 @@ export class ResponseGenerator {
   private generateErrorSuggestions(
     executionResult: CommandExecutionResult,
     recognizedIntent: RecognizedIntent,
-    context: ResponseContext
+    _context: ResponseContext
   ): string[] {
     const suggestions = [
       'Try rephrasing your request',
@@ -315,9 +315,10 @@ export class ResponseGenerator {
   /**
    * Get intent-specific suggestions
    */
-  private getIntentSpecificSuggestions(intent: Intent, context: ResponseContext): string[] {
+  private getIntentSpecificSuggestions(intent: Intent, _context: ResponseContext): string[] {
     const suggestions: Record<Intent, string[]> = {
       'create_project': ['Add tasks to your project', 'Set project priorities', 'Invite team members'],
+      'update_project': ['Modify project settings', 'Change project configuration', 'Update project details'],
       'create_task': ['Run the task', 'Set task dependencies', 'Assign the task'],
       'list_projects': ['Create a new project', 'Check project status', 'Archive old projects'],
       'list_tasks': ['Create a new task', 'Run a task', 'Update task status'],
@@ -331,6 +332,11 @@ export class ResponseGenerator {
       'assign_task': ['Set task deadlines', 'Add task comments', 'Track assignment'],
       'get_help': ['View command examples', 'Check documentation', 'Contact support'],
       'open_project': ['View project details', 'Edit project settings', 'Add project members'],
+      'parse_prd': ['Generate epics from PRD', 'Create tasks from features', 'Review PRD content'],
+      'parse_tasks': ['Execute task list', 'Review task dependencies', 'Assign tasks to agents'],
+      'import_artifact': ['Parse specific artifact type', 'Review imported content', 'Create project from artifact'],
+      'unrecognized_intent': ['Try being more specific', 'Ask for help', 'View available commands'],
+      'clarification_needed': ['Provide more details', 'Be more specific', 'Try a different approach'],
       'unknown': ['Try a different command', 'Ask for help', 'View available commands']
     };
 
@@ -357,7 +363,7 @@ export class ResponseGenerator {
   private makeErrorHelpful(
     errorText: string,
     recognizedIntent: RecognizedIntent,
-    context: ResponseContext
+    _context: ResponseContext
   ): string {
     let helpfulText = errorText;
 

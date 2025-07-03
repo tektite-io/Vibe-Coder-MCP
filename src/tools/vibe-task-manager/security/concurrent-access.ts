@@ -11,7 +11,8 @@
 
 import fs from 'fs-extra';
 import path from 'path';
-import { VibeTaskManagerConfig } from '../utils/config-loader.js';
+import os from 'os';
+import { getTimeoutManager } from '../utils/timeout-manager.js';
 import { AppError } from '../../../utils/errors.js';
 import logger from '../../../logger.js';
 
@@ -26,7 +27,7 @@ export interface LockInfo {
   operation: 'read' | 'write' | 'execute';
   acquiredAt: Date;
   expiresAt: Date;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -77,7 +78,7 @@ export interface LockAuditEvent {
   sessionId?: string;
   timestamp: Date;
   duration?: number; // ms
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -87,7 +88,7 @@ export class ConcurrentAccessManager {
   private static instance: ConcurrentAccessManager | null = null;
   private config: ConcurrentAccessConfig;
   private activeLocks: Map<string, LockInfo> = new Map();
-  private lockWaiters: Map<string, Array<{ resolve: Function; reject: Function; timeout: NodeJS.Timeout }>> = new Map();
+  private lockWaiters: Map<string, Array<{ resolve: (value: LockAcquisitionResult) => void; reject: (reason?: unknown) => void; timeout: NodeJS.Timeout }>> = new Map();
   private auditEvents: LockAuditEvent[] = [];
   private deadlockDetectionTimer: NodeJS.Timeout | null = null;
   private cleanupTimer: NodeJS.Timeout | null = null;
@@ -97,16 +98,20 @@ export class ConcurrentAccessManager {
   private constructor(config?: Partial<ConcurrentAccessConfig>) {
     const isTestEnv = process.env.NODE_ENV === 'test';
 
+    // Get configurable timeout values from timeout manager
+    const timeoutManager = getTimeoutManager();
+    const retryConfig = timeoutManager.getRetryConfig();
+
     this.config = {
       lockDirectory: isTestEnv
         ? path.join(process.cwd(), 'tmp', 'test-locks')
-        : path.join(process.cwd(), 'data', 'locks'),
-      defaultLockTimeout: isTestEnv ? 5000 : 300000, // 5 seconds in test, 5 minutes in prod
-      maxLockTimeout: isTestEnv ? 10000 : 1800000, // 10 seconds in test, 30 minutes in prod
-      deadlockDetectionInterval: isTestEnv ? 1000 : 10000, // 1 second in test, 10 seconds in prod
-      lockCleanupInterval: isTestEnv ? 2000 : 60000, // 2 seconds in test, 1 minute in prod
-      maxRetryAttempts: 3,
-      retryDelayMs: isTestEnv ? 100 : 1000, // 100ms in test, 1 second in prod
+        : this.getOSAwareLockDirectory(),
+      defaultLockTimeout: isTestEnv ? 5000 : timeoutManager.getTimeout('databaseOperations'), // Configurable
+      maxLockTimeout: isTestEnv ? 10000 : timeoutManager.getTimeout('taskExecution'), // Configurable
+      deadlockDetectionInterval: isTestEnv ? 1000 : 10000, // Keep static for performance
+      lockCleanupInterval: isTestEnv ? 2000 : 60000, // Keep static for performance
+      maxRetryAttempts: retryConfig.maxRetries, // Configurable
+      retryDelayMs: isTestEnv ? 100 : retryConfig.initialDelayMs, // Configurable
       enableDeadlockDetection: !isTestEnv, // Disable in tests for performance
       enableLockAuditTrail: true, // Keep enabled for statistics tracking
       ...config
@@ -129,6 +134,23 @@ export class ConcurrentAccessManager {
   }
 
   /**
+   * Reset singleton instance (for testing)
+   */
+  static resetInstance(): void {
+    if (ConcurrentAccessManager.instance) {
+      ConcurrentAccessManager.instance.dispose();
+      ConcurrentAccessManager.instance = null;
+    }
+  }
+
+  /**
+   * Check if singleton instance exists
+   */
+  static hasInstance(): boolean {
+    return ConcurrentAccessManager.instance !== null;
+  }
+
+  /**
    * Acquire lock on resource
    */
   async acquireLock(
@@ -138,7 +160,7 @@ export class ConcurrentAccessManager {
     options?: {
       timeout?: number;
       sessionId?: string;
-      metadata?: Record<string, any>;
+      metadata?: Record<string, unknown>;
       waitForRelease?: boolean;
     }
   ): Promise<LockAcquisitionResult> {
@@ -286,8 +308,8 @@ export class ConcurrentAccessManager {
       const lockData = JSON.stringify(lock, null, 2);
       await fs.writeFile(lockFilePath, lockData, { flag: 'wx' }); // 'wx' fails if file exists
 
-    } catch (error: any) {
-      if (error.code === 'EEXIST') {
+    } catch (error: unknown) {
+      if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
         // Lock file already exists, check if it's stale
         const existingLock = await this.readLockFile(lockFilePath);
         if (existingLock && this.isLockExpired(existingLock)) {
@@ -297,7 +319,7 @@ export class ConcurrentAccessManager {
         } else {
           throw new AppError('Resource is already locked');
         }
-      } else if (error.code === 'ENOENT') {
+      } else if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
         // Directory doesn't exist, fall back to in-memory locking only
         logger.warn('Lock directory not accessible, using in-memory locking only');
         return;
@@ -316,7 +338,7 @@ export class ConcurrentAccessManager {
     operation: 'read' | 'write' | 'execute',
     lockId: string,
     timeout: number,
-    options?: { sessionId?: string; metadata?: Record<string, any> }
+    options?: { sessionId?: string; metadata?: Record<string, unknown> }
   ): Promise<LockAcquisitionResult> {
     return new Promise((resolve, reject) => {
       const timeoutHandle = setTimeout(() => {
@@ -386,7 +408,7 @@ export class ConcurrentAccessManager {
     if (waiters && waiters.length > 0) {
       // Notify first waiter (FIFO)
       const waiter = waiters.shift()!;
-      waiter.resolve();
+      waiter.resolve({ success: true });
 
       if (waiters.length === 0) {
         this.lockWaiters.delete(resource);
@@ -397,7 +419,7 @@ export class ConcurrentAccessManager {
   /**
    * Remove waiter from queue
    */
-  private removeWaiter(resource: string, resolveFunc: Function): void {
+  private removeWaiter(resource: string, resolveFunc: (value: LockAcquisitionResult) => void): void {
     const waiters = this.lockWaiters.get(resource);
     if (waiters) {
       const index = waiters.findIndex(w => w.resolve === resolveFunc);
@@ -409,6 +431,27 @@ export class ConcurrentAccessManager {
           this.lockWaiters.delete(resource);
         }
       }
+    }
+  }
+
+  /**
+   * Get OS-aware lock directory following existing patterns
+   */
+  private getOSAwareLockDirectory(): string {
+    // Follow existing pattern from security-config.ts and environment variables
+    const envLockDir = process.env.VIBE_LOCK_DIR;
+    if (envLockDir) {
+      return envLockDir;
+    }
+
+    // Use OS-appropriate temp directory (following existing patterns)
+    try {
+      const tempDir = os.tmpdir();
+      return path.join(tempDir, 'vibe-locks');
+    } catch (error) {
+      // Fallback to project directory if os module fails
+      logger.warn({ error }, 'Failed to get OS temp directory, using project fallback');
+      return path.join(process.cwd(), 'tmp', 'vibe-locks');
     }
   }
 
@@ -454,7 +497,7 @@ export class ConcurrentAccessManager {
     for (const [resource, waiters] of this.lockWaiters) {
       const lockHolder = this.findLockHolder(resource);
       if (lockHolder) {
-        for (const waiter of waiters) {
+        for (let i = 0; i < waiters.length; i++) {
           // This is simplified - in a real implementation, you'd track waiter identities
           const waiterId = 'waiter'; // Placeholder
           if (!waitGraph.has(waiterId)) {
@@ -628,7 +671,7 @@ export class ConcurrentAccessManager {
     owner: string,
     sessionId?: string,
     duration?: number,
-    metadata?: Record<string, any>
+    metadata?: Record<string, unknown>
   ): void {
     if (!this.config.enableLockAuditTrail) return;
 
@@ -699,6 +742,41 @@ export class ConcurrentAccessManager {
       totalDeadlocks: deadlocks,
       averageLockDuration: avgDuration
     };
+  }
+
+  /**
+   * Clear all active locks (for testing)
+   */
+  async clearAllLocks(): Promise<void> {
+    const lockIds = Array.from(this.activeLocks.keys());
+    let clearedCount = 0;
+
+    for (const lockId of lockIds) {
+      try {
+        await this.releaseLock(lockId);
+        clearedCount++;
+      } catch (error) {
+        logger.warn({ lockId, error }, 'Failed to clear lock');
+      }
+    }
+
+    // Clear any remaining waiters
+    for (const waiters of this.lockWaiters.values()) {
+      for (const waiter of waiters) {
+        clearTimeout(waiter.timeout);
+        waiter.reject(new Error('All locks cleared'));
+      }
+    }
+    this.lockWaiters.clear();
+
+    logger.debug({ clearedCount }, 'All locks cleared');
+  }
+
+  /**
+   * Dispose of the concurrent access manager
+   */
+  async dispose(): Promise<void> {
+    await this.shutdown();
   }
 
   /**

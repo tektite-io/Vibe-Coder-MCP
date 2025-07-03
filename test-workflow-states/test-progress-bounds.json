@@ -1,0 +1,24 @@
+{
+  "workflowId": "test-progress-bounds",
+  "sessionId": "session-bounds",
+  "projectId": "project-bounds",
+  "currentPhase": "initialization",
+  "currentState": "pending",
+  "overallProgress": 0,
+  "startTime": "2025-07-02T18:29:18.568Z",
+  "phases": {
+    "initialization": {
+      "phase": "initialization",
+      "state": "pending",
+      "startTime": "2025-07-02T18:29:18.568Z",
+      "progress": 0,
+      "metadata": {},
+      "retryCount": 0,
+      "maxRetries": 3
+    }
+  },
+  "transitions": [],
+  "metadata": {},
+  "persistedAt": "2025-07-02T18:29:18.568Z",
+  "version": "1.0.0"
+}

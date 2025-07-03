@@ -1,8 +1,9 @@
 import { Dependency, DependencyType, DependencyGraph, DependencyNode } from '../../types/dependency.js';
-import { AtomicTask } from '../../types/task.js';
+// AtomicTask type imported but not used in this file
 import { getStorageManager } from '../storage/storage-manager.js';
 import { getIdGenerator } from '../../utils/id-generator.js';
 import { FileOperationResult } from '../../utils/file-utils.js';
+import { DependencyValidator } from '../../services/dependency-validator.js';
 import logger from '../../../../logger.js';
 
 /**
@@ -38,9 +39,12 @@ export interface DependencyValidationResult {
  * Dependency operations service
  */
 export class DependencyOperations {
-  private static instance: DependencyOperations;
+  private static instance: DependencyOperations | undefined;
+  private validator: DependencyValidator;
 
-  private constructor() {}
+  private constructor() {
+    this.validator = new DependencyValidator();
+  }
 
   /**
    * Get singleton instance
@@ -50,6 +54,13 @@ export class DependencyOperations {
       DependencyOperations.instance = new DependencyOperations();
     }
     return DependencyOperations.instance;
+  }
+
+  /**
+   * Reset singleton instance (for testing)
+   */
+  static resetInstance(): void {
+    DependencyOperations.instance = undefined;
   }
 
   /**
@@ -107,7 +118,38 @@ export class DependencyOperations {
         };
       }
 
-      // Check for circular dependencies
+      // Enhanced dependency validation using DependencyValidator
+      const enhancedValidation = await this.validator.validateDependencyBeforeCreation(
+        params.fromTaskId,
+        params.toTaskId,
+        'project-id' // TODO: Get actual project ID from task
+      );
+
+      if (!enhancedValidation.isValid) {
+        const criticalErrors = enhancedValidation.errors.filter(e => e.severity === 'critical' || e.severity === 'high');
+        if (criticalErrors.length > 0) {
+          return {
+            success: false,
+            error: `Dependency validation failed: ${criticalErrors.map(e => e.message).join(', ')}`,
+            metadata: {
+              filePath: 'dependency-operations',
+              operation: 'create_dependency',
+              timestamp: new Date()
+            }
+          };
+        }
+
+        // Log warnings for non-critical issues
+        if (enhancedValidation.warnings.length > 0) {
+          logger.warn({
+            fromTaskId: params.fromTaskId,
+            toTaskId: params.toTaskId,
+            warnings: enhancedValidation.warnings.map(w => w.message)
+          }, 'Dependency creation warnings detected');
+        }
+      }
+
+      // Check for circular dependencies (legacy check as fallback)
       const circularCheckResult = await this.checkCircularDependency(params.fromTaskId, params.toTaskId);
       if (!circularCheckResult.valid) {
         return {
@@ -520,6 +562,50 @@ export class DependencyOperations {
         metadata: {
           filePath: 'dependency-operations',
           operation: 'generate_dependency_graph',
+          timestamp: new Date()
+        }
+      };
+    }
+  }
+
+  /**
+   * Validate all dependencies for a project using enhanced validation
+   */
+  async validateProjectDependencies(projectId: string): Promise<FileOperationResult<Record<string, unknown>>> {
+    try {
+      logger.info({ projectId }, 'Starting enhanced dependency validation for project');
+
+      const validationResult = await this.validator.validateProjectDependencies(projectId);
+
+      logger.info({
+        projectId,
+        isValid: validationResult.isValid,
+        errorsFound: validationResult.errors.length,
+        warningsFound: validationResult.warnings.length,
+        suggestionsFound: validationResult.suggestions.length,
+        circularDependencies: validationResult.circularDependencies.length,
+        validationTime: validationResult.metadata.validationTime
+      }, 'Enhanced dependency validation completed');
+
+      return {
+        success: true,
+        data: validationResult as unknown as Record<string, unknown>,
+        metadata: {
+          filePath: 'dependency-operations',
+          operation: 'validate_project_dependencies',
+          timestamp: new Date()
+        }
+      };
+
+    } catch (error) {
+      logger.error({ err: error, projectId }, 'Failed to validate project dependencies');
+
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+        metadata: {
+          filePath: 'dependency-operations',
+          operation: 'validate_project_dependencies',
           timestamp: new Date()
         }
       };

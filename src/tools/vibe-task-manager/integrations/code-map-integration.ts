@@ -12,6 +12,7 @@ import logger from '../../../logger.js';
 import { executeCodeMapGeneration } from '../../code-map-generator/index.js';
 import type { CodeMapGeneratorConfig } from '../../code-map-generator/types.js';
 import type { ProjectContext } from '../types/project-context.js';
+import { OpenRouterConfigManager } from '../../../utils/openrouter-config-manager.js';
 
 /**
  * Code map information
@@ -239,16 +240,14 @@ export class CodeMapIntegrationService {
       // Generate job ID for tracking
       const jobId = `codemap-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
+      // Get proper OpenRouter configuration from centralized manager
+      const configManager = OpenRouterConfigManager.getInstance();
+      const openRouterConfig = await configManager.getOpenRouterConfig();
+
       // Execute code map generation
       const result = await executeCodeMapGeneration(
         params,
-        {
-          baseUrl: '',
-          apiKey: '',
-          geminiModel: '',
-          perplexityModel: '',
-          llm_mapping: {}
-        }, // Minimal OpenRouterConfig
+        openRouterConfig,
         {
           sessionId: `codemap-session-${Date.now()}`,
           transportType: 'stdio'
@@ -559,6 +558,9 @@ export class CodeMapIntegrationService {
   private async validateProjectPath(projectPath: string): Promise<void> {
     try {
       const stats = await fs.stat(projectPath);
+      if (!stats || typeof stats.isDirectory !== 'function') {
+        throw new Error(`Invalid file stats for path: ${projectPath}`);
+      }
       if (!stats.isDirectory()) {
         throw new Error(`Path is not a directory: ${projectPath}`);
       }
@@ -575,6 +577,8 @@ export class CodeMapIntegrationService {
       // Look for file path patterns in the result content
       const patterns = [
         /Generated code map: (.+\.md)/,
+        /Generated Markdown output: (.+\.md)/,  // Match actual output format
+        /\*\*Output saved to:\*\* (.+\.md)/,    // Match **Output saved to:** format
         /Output file: (.+\.md)/,
         /Saved to: (.+\.md)/,
         /File saved: (.+\.md)/,
@@ -648,14 +652,33 @@ export class CodeMapIntegrationService {
 
       // Find all .md files in the output directory
       const files = await fs.readdir(codeMapOutputDir, { withFileTypes: true });
+
+      // Validate files is an array
+      if (!Array.isArray(files)) {
+        logger.warn({ projectPath, filesType: typeof files }, 'readdir returned non-array');
+        return [];
+      }
+
       const codeMapFiles: CodeMapInfo[] = [];
 
       for (const file of files) {
+        // Validate file object has required methods
+        if (!file || typeof file.isFile !== 'function' || typeof file.name !== 'string') {
+          logger.warn({ projectPath, fileType: typeof file }, 'Invalid file object from readdir');
+          continue;
+        }
+
         if (file.isFile() && file.name.endsWith('.md')) {
           const filePath = path.join(codeMapOutputDir, file.name);
 
           try {
             const stats = await fs.stat(filePath);
+
+            // Validate stats object
+            if (!stats || typeof stats.mtime === 'undefined' || typeof stats.size === 'undefined') {
+              logger.warn({ filePath, statsType: typeof stats }, 'Invalid stats object from fs.stat');
+              continue;
+            }
 
             // Check if this code map is for the current project
             // This is a heuristic - we could improve this by reading the file content
@@ -691,6 +714,13 @@ export class CodeMapIntegrationService {
     try {
       // Read the first few lines of the file to check for project path
       const content = await fs.readFile(filePath, 'utf-8');
+
+      // Validate content is a string
+      if (typeof content !== 'string') {
+        logger.warn({ filePath, projectPath, contentType: typeof content }, 'Invalid content type from readFile');
+        return false;
+      }
+
       const lines = content.split('\n').slice(0, 20); // Check first 20 lines
 
       const absoluteProjectPath = path.resolve(projectPath);
@@ -723,6 +753,12 @@ export class CodeMapIntegrationService {
     };
 
     try {
+      // Validate content is a string
+      if (typeof content !== 'string') {
+        logger.warn({ projectPath: _projectPath, contentType: typeof content }, 'Invalid content type for parseArchitecturalInfo');
+        return info;
+      }
+
       const lines = content.split('\n');
       let currentSection = '';
 
@@ -805,6 +841,12 @@ export class CodeMapIntegrationService {
     const dependencies: DependencyInfo[] = [];
 
     try {
+      // Validate content is a string
+      if (typeof content !== 'string') {
+        logger.warn({ contentType: typeof content }, 'Invalid content type for parseDependencyInfo');
+        return dependencies;
+      }
+
       const lines = content.split('\n');
       let inDependencySection = false;
 

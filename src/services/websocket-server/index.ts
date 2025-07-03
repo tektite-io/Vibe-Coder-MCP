@@ -6,16 +6,51 @@
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
-import { createServer } from 'http';
+import { createServer, Server } from 'http';
+import { IncomingMessage } from 'http';
 import logger from '../../logger.js';
 import { AgentRegistry } from '../../tools/agent-registry/index.js';
+
+// WebSocket message data types
+interface RegisterData {
+  agentId: string;
+  capabilities: string[];
+  transportType: string;
+  maxConcurrentTasks: number;
+}
+
+interface TaskAssignmentData {
+  taskId: string;
+  task: unknown;
+  priority?: number;
+}
+
+interface TaskResponseData {
+  taskId: string;
+  status: 'DONE' | 'ERROR' | 'IN_PROGRESS';
+  response?: unknown;
+  error?: string;
+}
+
+interface HeartbeatData {
+  timestamp: number;
+  status?: string;
+}
+
+interface ErrorData {
+  message: string;
+  code?: string;
+  details?: unknown;
+}
+
+type MessageData = RegisterData | TaskAssignmentData | TaskResponseData | HeartbeatData | ErrorData;
 
 // WebSocket message types
 export interface WebSocketMessage {
   type: 'register' | 'task_assignment' | 'task_response' | 'heartbeat' | 'error';
   agentId?: string;
   sessionId?: string;
-  data?: any;
+  data?: MessageData;
   timestamp?: number;
 }
 
@@ -32,7 +67,7 @@ interface WebSocketConnection {
 class WebSocketServerManager {
   private static instance: WebSocketServerManager;
   private server?: WebSocketServer;
-  private httpServer?: any;
+  private httpServer?: Server;
   private connections = new Map<string, WebSocketConnection>(); // sessionId -> connection
   private agentConnections = new Map<string, string>(); // agentId -> sessionId
   private port: number = 8080;
@@ -45,9 +80,16 @@ class WebSocketServerManager {
     return WebSocketServerManager.instance;
   }
 
-  async start(port: number = 8080): Promise<void> {
+  async start(port: number): Promise<void> {
     try {
+      // Validate port parameter (should be pre-allocated by Transport Manager)
+      if (!port || port <= 0 || port > 65535) {
+        throw new Error(`Invalid port provided: ${port}. Port should be pre-allocated by Transport Manager.`);
+      }
+
       this.port = port;
+
+      logger.debug({ port }, 'Starting WebSocket server with pre-allocated port');
 
       // Create HTTP server for WebSocket upgrade
       this.httpServer = createServer();
@@ -62,11 +104,21 @@ class WebSocketServerManager {
       this.server.on('connection', this.handleConnection.bind(this));
       this.server.on('error', this.handleServerError.bind(this));
 
-      // Start HTTP server
+      // Start HTTP server with pre-allocated port
       await new Promise<void>((resolve, reject) => {
         this.httpServer!.listen(port, (err?: Error) => {
           if (err) {
-            reject(err);
+            // Enhanced error handling for port allocation failures
+            if (err.message.includes('EADDRINUSE')) {
+              const enhancedError = new Error(
+                `Port ${port} is already in use. This should not happen with pre-allocated ports. ` +
+                `Transport Manager port allocation may have failed.`
+              );
+              enhancedError.name = 'PortAllocationError';
+              reject(enhancedError);
+            } else {
+              reject(err);
+            }
           } else {
             resolve();
           }
@@ -76,10 +128,23 @@ class WebSocketServerManager {
       // Start heartbeat monitoring
       this.startHeartbeatMonitoring();
 
-      logger.info({ port, path: '/agent-ws' }, 'WebSocket server started');
+      logger.info({
+        port,
+        path: '/agent-ws',
+        note: 'Using pre-allocated port from Transport Manager'
+      }, 'WebSocket server started successfully');
 
     } catch (error) {
-      logger.error({ err: error, port }, 'Failed to start WebSocket server');
+      logger.error({
+        err: error,
+        port,
+        context: 'WebSocket server startup with pre-allocated port'
+      }, 'Failed to start WebSocket server');
+
+      // Re-throw with additional context for Transport Manager retry logic
+      if (error instanceof Error) {
+        error.message = `WebSocket server startup failed on pre-allocated port ${port}: ${error.message}`;
+      }
       throw error;
     }
   }
@@ -119,7 +184,7 @@ class WebSocketServerManager {
     }
   }
 
-  private handleConnection(ws: WebSocket, request: any): void {
+  private handleConnection(ws: WebSocket, request: IncomingMessage): void {
     const sessionId = this.generateSessionId();
     const connection: WebSocketConnection = {
       ws,
@@ -149,7 +214,7 @@ class WebSocketServerManager {
     });
   }
 
-  private async handleMessage(sessionId: string, data: any): Promise<void> {
+  private async handleMessage(sessionId: string, rawData: unknown): Promise<void> {
     try {
       const connection = this.connections.get(sessionId);
       if (!connection) {
@@ -163,7 +228,11 @@ class WebSocketServerManager {
       // Parse message
       let message: WebSocketMessage;
       try {
-        message = JSON.parse(data.toString());
+        if (typeof rawData !== 'string' && !Buffer.isBuffer(rawData)) {
+          this.sendError(sessionId, 'Invalid message data type');
+          return;
+        }
+        message = JSON.parse(rawData.toString());
       } catch {
         this.sendError(sessionId, 'Invalid JSON message format');
         return;
@@ -199,7 +268,8 @@ class WebSocketServerManager {
 
   private async handleAgentRegistration(sessionId: string, message: WebSocketMessage): Promise<void> {
     try {
-      const { agentId, capabilities, maxConcurrentTasks } = message.data || {};
+      const data = message.data as RegisterData;
+      const { agentId, capabilities, maxConcurrentTasks } = data || {};
 
       if (!agentId || !capabilities) {
         this.sendError(sessionId, 'Agent registration requires agentId and capabilities');
@@ -223,8 +293,8 @@ class WebSocketServerManager {
         capabilities,
         transportType: 'websocket',
         sessionId,
-        maxConcurrentTasks: maxConcurrentTasks || 1,
-        websocketConnection: connection.ws
+        maxConcurrentTasks: maxConcurrentTasks || 1
+        // Note: websocketConnection omitted due to type incompatibility between Node.js ws and DOM WebSocket
       });
 
       // Store agent connection mapping
@@ -235,10 +305,11 @@ class WebSocketServerManager {
         type: 'register',
         agentId,
         data: {
-          success: true,
-          message: 'Agent registered successfully via WebSocket',
-          timestamp: Date.now()
-        }
+          agentId,
+          capabilities: capabilities || [],
+          transportType: 'websocket',
+          maxConcurrentTasks: maxConcurrentTasks || 1
+        } as RegisterData
       });
 
       logger.info({ sessionId, agentId }, 'Agent registered via WebSocket');
@@ -262,12 +333,13 @@ class WebSocketServerManager {
       const responseProcessor = AgentResponseProcessor.getInstance();
 
       // Process the task response
+      const responseData = message.data as TaskResponseData;
       await responseProcessor.processResponse({
         agentId: connection.agentId,
-        taskId: message.data.taskId,
-        status: message.data.status,
-        response: message.data.response,
-        completionDetails: message.data.completionDetails,
+        taskId: responseData.taskId,
+        status: responseData.status === 'IN_PROGRESS' ? 'PARTIAL' : responseData.status,
+        response: String(responseData.response || ''),
+        completionDetails: responseData.error ? { errorDetails: responseData.error } : undefined,
         receivedAt: Date.now()
       });
 
@@ -276,17 +348,16 @@ class WebSocketServerManager {
         type: 'task_response',
         agentId: connection.agentId,
         data: {
-          success: true,
-          taskId: message.data.taskId,
-          acknowledged: true,
-          timestamp: Date.now()
-        }
+          taskId: responseData.taskId,
+          status: 'DONE',
+          response: 'acknowledged'
+        } as TaskResponseData
       });
 
       logger.info({
         sessionId,
         agentId: connection.agentId,
-        taskId: message.data.taskId
+        taskId: responseData.taskId
       }, 'Task response received via WebSocket');
 
     } catch (error) {
@@ -295,7 +366,7 @@ class WebSocketServerManager {
     }
   }
 
-  private async handleHeartbeat(sessionId: string, message: WebSocketMessage): Promise<void> {
+  private async handleHeartbeat(sessionId: string, _message: WebSocketMessage): Promise<void> {
     const connection = this.connections.get(sessionId);
     if (connection) {
       connection.lastSeen = Date.now();
@@ -358,7 +429,7 @@ class WebSocketServerManager {
   }
 
   // Public methods for sending messages to agents
-  async sendTaskToAgent(agentId: string, taskPayload: any): Promise<boolean> {
+  async sendTaskToAgent(agentId: string, taskPayload: TaskAssignmentData): Promise<boolean> {
     try {
       const sessionId = this.agentConnections.get(agentId);
       if (!sessionId) {

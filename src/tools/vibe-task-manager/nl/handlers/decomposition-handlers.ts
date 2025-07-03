@@ -10,13 +10,77 @@ import { CommandHandler, CommandExecutionContext, CommandExecutionResult } from 
 import { DecompositionService } from '../../services/decomposition-service.js';
 import { getTaskOperations } from '../../core/operations/task-operations.js';
 import { getProjectOperations } from '../../core/operations/project-operations.js';
-import { AtomicTask, TaskType, TaskPriority } from '../../types/task.js';
+import { AtomicTask } from '../../types/task.js';
+import { ProjectAnalyzer } from '../../utils/project-analyzer.js';
+import { getPathResolver } from '../../utils/path-resolver.js';
 import logger from '../../../../logger.js';
+
+/**
+ * Resolve epic ID for a task using epic context resolver
+ */
+async function resolveEpicIdForTask(partialTask: Partial<AtomicTask>): Promise<string> {
+  try {
+    if (partialTask.epicId && partialTask.epicId !== 'default-epic') {
+      return partialTask.epicId;
+    }
+
+    const { getEpicContextResolver } = await import('../../services/epic-context-resolver.js');
+    const contextResolver = getEpicContextResolver();
+
+    const taskContext = partialTask.title && partialTask.description ? {
+      title: partialTask.title,
+      description: partialTask.description,
+      type: partialTask.type || 'development',
+      tags: partialTask.tags || []
+    } : undefined;
+
+    const resolverParams = {
+      projectId: partialTask.projectId || 'default-project',
+      taskContext
+    };
+
+    const contextResult = await contextResolver.resolveEpicContext(resolverParams);
+    return contextResult.epicId;
+
+  } catch (error) {
+    logger.warn({ err: error, partialTask }, 'Failed to resolve epic ID for task, using fallback');
+    return `${partialTask.projectId || 'default-project'}-main-epic`;
+  }
+}
+
+/**
+ * Resolve epic ID for a project using epic context resolver
+ */
+async function resolveEpicIdForProject(projectId: string, projectName: string): Promise<string> {
+  try {
+    const { getEpicContextResolver } = await import('../../services/epic-context-resolver.js');
+    const contextResolver = getEpicContextResolver();
+
+    const taskContext = {
+      title: `Complete ${projectName}`,
+      description: `Project implementation for ${projectName}`,
+      type: 'development' as const,
+      tags: ['project-decomposition']
+    };
+
+    const resolverParams = {
+      projectId,
+      taskContext
+    };
+
+    const contextResult = await contextResolver.resolveEpicContext(resolverParams);
+    return contextResult.epicId;
+
+  } catch (error) {
+    logger.warn({ err: error, projectId, projectName }, 'Failed to resolve epic ID for project, using fallback');
+    return `${projectId}-main-epic`;
+  }
+}
 
 /**
  * Helper function to create a complete AtomicTask from partial data
  */
-function createCompleteAtomicTask(partialTask: Partial<AtomicTask> & { id: string; title: string; description: string }): AtomicTask {
+async function createCompleteAtomicTask(partialTask: Partial<AtomicTask> & { id: string; title: string; description: string }): Promise<AtomicTask> {
   const now = new Date();
 
   return {
@@ -28,7 +92,7 @@ function createCompleteAtomicTask(partialTask: Partial<AtomicTask> & { id: strin
     type: partialTask.type || 'development',
     estimatedHours: partialTask.estimatedHours || 4,
     actualHours: partialTask.actualHours,
-    epicId: partialTask.epicId || 'default-epic',
+    epicId: await resolveEpicIdForTask(partialTask),
     projectId: partialTask.projectId || 'default-project',
     dependencies: partialTask.dependencies || [],
     dependents: partialTask.dependents || [],
@@ -78,6 +142,14 @@ function createCompleteAtomicTask(partialTask: Partial<AtomicTask> & { id: strin
  */
 export class DecomposeTaskHandler implements CommandHandler {
   intent: Intent = 'decompose_task';
+
+  /**
+   * Resolve project path using centralized path resolver
+   */
+  private resolveProjectPath(context: CommandExecutionContext): string {
+    const pathResolver = getPathResolver();
+    return pathResolver.resolveProjectPathFromContext(context);
+  }
 
   async handle(
     recognizedIntent: RecognizedIntent,
@@ -130,9 +202,39 @@ export class DecomposeTaskHandler implements CommandHandler {
       // Initialize decomposition service
       const decompositionService = new DecompositionService(context.config);
 
+      // Get project analyzer for dynamic detection
+      const projectAnalyzer = ProjectAnalyzer.getInstance();
+      const projectPath = this.resolveProjectPath(context); // Use proper path resolution
+
+      // Detect project characteristics dynamically
+      let languages: string[];
+      let frameworks: string[];
+      let tools: string[];
+
+      try {
+        languages = await projectAnalyzer.detectProjectLanguages(projectPath);
+      } catch (error) {
+        logger.warn({ error, projectPath }, 'Language detection failed, using fallback');
+        languages = ['javascript']; // fallback
+      }
+
+      try {
+        frameworks = await projectAnalyzer.detectProjectFrameworks(projectPath);
+      } catch (error) {
+        logger.warn({ error, projectPath }, 'Framework detection failed, using fallback');
+        frameworks = ['node.js']; // fallback
+      }
+
+      try {
+        tools = await projectAnalyzer.detectProjectTools(projectPath);
+      } catch (error) {
+        logger.warn({ error, projectPath }, 'Tools detection failed, using fallback');
+        tools = ['git', 'npm']; // fallback
+      }
+
       // Create decomposition request
       const decompositionRequest = {
-        task: createCompleteAtomicTask({
+        task: await createCompleteAtomicTask({
           id: task.id,
           title: task.title,
           description: additionalContext || task.description,
@@ -151,13 +253,50 @@ export class DecomposeTaskHandler implements CommandHandler {
         }),
         context: {
           projectId: task.projectId,
-          languages: ['typescript', 'javascript'], // TODO: Extract from project
-          frameworks: ['react', 'node.js'], // TODO: Extract from project
-          tools: ['vscode', 'git'],
+          projectPath: process.cwd(),
+          projectName: task.projectId,
+          description: `Task decomposition context for ${task.title}`,
+          languages, // Dynamic detection using existing 35+ language infrastructure
+          frameworks, // Dynamic detection using existing language handler methods
+          buildTools: [],
+          tools, // Dynamic detection using Context Curator patterns
+          configFiles: [],
+          entryPoints: [],
+          architecturalPatterns: [],
           existingTasks: [],
           codebaseSize: 'medium' as const,
           teamSize: 1,
-          complexity: 'medium' as const
+          complexity: 'medium' as const,
+          codebaseContext: {
+            relevantFiles: [],
+            contextSummary: `Task decomposition context for ${task.title}`,
+            gatheringMetrics: {
+              searchTime: 0,
+              readTime: 0,
+              scoringTime: 0,
+              totalTime: 0,
+              cacheHitRate: 0
+            },
+            totalContextSize: 0,
+            averageRelevance: 0
+          },
+          structure: {
+            sourceDirectories: ['src'],
+            testDirectories: ['test', 'tests', '__tests__'],
+            docDirectories: ['docs', 'documentation'],
+            buildDirectories: ['dist', 'build', 'lib']
+          },
+          dependencies: {
+            production: [],
+            development: [],
+            external: []
+          },
+          metadata: {
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            version: '1.0.0',
+            source: 'manual' as const
+          }
         },
         sessionId: `nl-decompose-${context.sessionId}`,
         options: {
@@ -340,8 +479,8 @@ export class DecomposeTaskHandler implements CommandHandler {
   /**
    * Extract decomposition options from natural language input
    */
-  private extractDecompositionOptions(recognizedIntent: RecognizedIntent, toolParams: Record<string, unknown>): any {
-    const options: any = {};
+  private extractDecompositionOptions(recognizedIntent: RecognizedIntent, _toolParams: Record<string, unknown>): Record<string, unknown> {
+    const options: Record<string, unknown> = {};
 
     // Check for force decomposition
     if (recognizedIntent.originalInput.toLowerCase().includes('force') ||
@@ -373,6 +512,14 @@ export class DecomposeTaskHandler implements CommandHandler {
  */
 export class DecomposeProjectHandler implements CommandHandler {
   intent: Intent = 'decompose_project';
+
+  /**
+   * Resolve project path using centralized path resolver
+   */
+  private resolveProjectPath(context: CommandExecutionContext): string {
+    const pathResolver = getPathResolver();
+    return pathResolver.resolveProjectPathFromContext(context);
+  }
 
   async handle(
     recognizedIntent: RecognizedIntent,
@@ -425,7 +572,7 @@ export class DecomposeProjectHandler implements CommandHandler {
       const decompositionService = new DecompositionService(context.config);
 
       // Create high-level project task for decomposition
-      const projectTask = createCompleteAtomicTask({
+      const projectTask = await createCompleteAtomicTask({
         id: `project-${project.id}`,
         title: `Complete ${project.name}`,
         description: additionalContext || project.description,
@@ -436,21 +583,94 @@ export class DecomposeProjectHandler implements CommandHandler {
         tags: ['project-decomposition', ...project.metadata.tags],
         filePaths: [],
         projectId: project.id,
-        epicId: `epic-${project.id}`,
+        epicId: await resolveEpicIdForProject(project.id, project.name),
         createdBy: 'system'
       });
+
+      // Get project analyzer for dynamic detection
+      const projectAnalyzer = ProjectAnalyzer.getInstance();
+      const projectPath = this.resolveProjectPath(context); // Use proper path resolution
+
+      // Detect project characteristics dynamically with fallbacks
+      let languages: string[];
+      let frameworks: string[];
+      let tools: string[];
+
+      try {
+        languages = project.techStack.languages?.length
+          ? project.techStack.languages
+          : await projectAnalyzer.detectProjectLanguages(projectPath);
+      } catch (error) {
+        logger.warn({ error, projectPath }, 'Language detection failed for project, using fallback');
+        languages = ['typescript']; // fallback
+      }
+
+      try {
+        frameworks = project.techStack.frameworks?.length
+          ? project.techStack.frameworks
+          : await projectAnalyzer.detectProjectFrameworks(projectPath);
+      } catch (error) {
+        logger.warn({ error, projectPath }, 'Framework detection failed for project, using fallback');
+        frameworks = ['node.js']; // fallback
+      }
+
+      try {
+        tools = project.techStack.tools?.length
+          ? project.techStack.tools
+          : await projectAnalyzer.detectProjectTools(projectPath);
+      } catch (error) {
+        logger.warn({ error, projectPath }, 'Tools detection failed for project, using fallback');
+        tools = ['vscode', 'git']; // fallback
+      }
 
       const decompositionRequest = {
         task: projectTask,
         context: {
           projectId: project.id,
-          languages: project.techStack.languages || ['typescript'],
-          frameworks: project.techStack.frameworks || [],
-          tools: project.techStack.tools || ['vscode', 'git'],
+          projectPath: this.resolveProjectPath(context),
+          projectName: project.name,
+          description: additionalContext || project.description,
+          languages, // Dynamic detection with project techStack preference
+          frameworks, // Dynamic detection with project techStack preference
+          buildTools: [],
+          tools, // Dynamic detection with project techStack preference
+          configFiles: [],
+          entryPoints: [],
+          architecturalPatterns: [],
           existingTasks: [],
           codebaseSize: 'large' as const,
           teamSize: 1,
-          complexity: 'high' as const
+          complexity: 'high' as const,
+          codebaseContext: {
+            relevantFiles: [],
+            contextSummary: additionalContext || project.description,
+            gatheringMetrics: {
+              searchTime: 0,
+              readTime: 0,
+              scoringTime: 0,
+              totalTime: 0,
+              cacheHitRate: 0
+            },
+            totalContextSize: 0,
+            averageRelevance: 0
+          },
+          structure: {
+            sourceDirectories: ['src'],
+            testDirectories: ['test', 'tests', '__tests__'],
+            docDirectories: ['docs', 'documentation'],
+            buildDirectories: ['dist', 'build', 'lib']
+          },
+          dependencies: {
+            production: [],
+            development: [],
+            external: []
+          },
+          metadata: {
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            version: '1.0.0',
+            source: 'manual' as const
+          }
         },
         sessionId: `nl-project-decompose-${context.sessionId}`,
         options: {

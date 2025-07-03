@@ -27,7 +27,7 @@ describe('ImportResolverManager', () => {
     vi.clearAllMocks();
 
     // Reset the singleton instance
-    // @ts-ignore - Accessing private property for testing
+    // @ts-expect-error - Accessing private property for testing
     ImportResolverManager.instance = undefined;
   });
 
@@ -140,7 +140,7 @@ describe('ImportResolverManager', () => {
     // Simulate an error by making the spy throw an error
     // We'll just verify that the method was called
 
-    const result = manager.resolveImport(
+    manager.resolveImport(
       './module',
       '/path/to/file.js',
       'javascript',

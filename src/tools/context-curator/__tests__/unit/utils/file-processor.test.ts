@@ -1,21 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { 
-  FileContentProcessor,
-  ProcessedFileContent,
-  ContentSection,
-  FileProcessingOptions
-} from '../../../utils/file-processor.js';
 
-// Mock dependencies
-const mockReadFileSecure = vi.fn();
+// Mock dependencies first
+const mockReadFileSecure = vi.hoisted(() => vi.fn());
 
-vi.mock('../../../../../code-map-generator/fsUtils.js', () => ({
-  readFileSecure: mockReadFileSecure
-}));
+vi.mock('../../../../../code-map-generator/fsUtils.js', async () => {
+  return {
+    readFileSecure: mockReadFileSecure
+  };
+});
 
 vi.mock('../../../../../code-map-generator/optimization/universalClassOptimizer.js', () => ({
   UniversalClassOptimizer: vi.fn()
 }));
+
+// Import after mocking
+import {
+  FileContentProcessor,
+  FileProcessingOptions
+} from '../../../utils/file-processor.js';
 
 describe('FileContentProcessor', () => {
   const defaultOptions: FileProcessingOptions = {
@@ -28,6 +30,7 @@ describe('FileContentProcessor', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockReadFileSecure.mockReset();
   });
 
   describe('processFileContent', () => {
@@ -181,9 +184,8 @@ describe('FileContentProcessor', () => {
       const filePath = '/test/project/test-file.js';
       const fileContent = 'const x = 1;\nconsole.log(x);';
 
-      // Reset and setup mock
-      mockReadFileSecure.mockClear();
-      mockReadFileSecure.mockResolvedValue(fileContent);
+      // Setup mock
+      vi.mocked(mockReadFileSecure).mockResolvedValue(fileContent);
 
       const result = await FileContentProcessor.readAndProcessFile(filePath, defaultOptions);
 
@@ -195,9 +197,8 @@ describe('FileContentProcessor', () => {
     it('should handle file reading errors', async () => {
       const filePath = '/test/project/nonexistent.js';
 
-      // Reset and setup mock
-      mockReadFileSecure.mockClear();
-      mockReadFileSecure.mockRejectedValue(new Error('File not found'));
+      // Setup mock
+      vi.mocked(mockReadFileSecure).mockRejectedValue(new Error('File not found'));
 
       await expect(
         FileContentProcessor.readAndProcessFile(filePath, defaultOptions)

@@ -183,25 +183,27 @@ export class ContextCuratorConfigLoader {
    * Get LLM model for specific Context Curator operation
    */
   getLLMModel(operation: string): string {
+    // If no LLM config loaded, use environment fallback
     if (!this.llmConfig) {
-      return 'google/gemini-2.5-flash-preview-05-20'; // fallback
+      return this.getEnvironmentFallbackModel();
     }
 
-    // Context Curator specific operations
-    const contextCuratorOperations = [
-      'intent_analysis',
-      'prompt_refinement',
-      'file_discovery',
-      'relevance_ranking',
-      'meta_prompt_generation',
-      'task_decomposition'
-    ];
+    // Context Curator specific operations are checked via prefixed operation below
 
     // Try context curator prefixed operation first, then fallback to operation name
     const prefixedOperation = `context_curator_${operation}`;
     return this.llmConfig.llm_mapping[prefixedOperation] ||
            this.llmConfig.llm_mapping[operation] ||
            this.llmConfig.llm_mapping['default_generation'] ||
+           this.getEnvironmentFallbackModel();
+  }
+
+  /**
+   * Get fallback model from environment or final hardcoded default
+   */
+  private getEnvironmentFallbackModel(): string {
+    return process.env.GEMINI_MODEL ||
+           process.env.VIBE_DEFAULT_LLM_MODEL ||
            'google/gemini-2.5-flash-preview-05-20';
   }
 
@@ -234,7 +236,7 @@ export class ContextCuratorConfigLoader {
   /**
    * Get configuration summary for debugging
    */
-  getConfigSummary(): Record<string, any> {
+  getConfigSummary(): Record<string, unknown> {
     return {
       loaded: this.configLoaded,
       lastLoadTime: new Date(this.lastLoadTime).toISOString(),
@@ -279,7 +281,7 @@ export class ContextCuratorConfigLoader {
     const envConfig: Partial<ContextCuratorConfig> = {};
 
     // Content density settings
-    const contentDensity: any = {};
+    const contentDensity: Record<string, unknown> = {};
     if (process.env.VIBE_CONTEXT_CURATOR_MAX_CONTENT_LENGTH) {
       const parsed = parseInt(process.env.VIBE_CONTEXT_CURATOR_MAX_CONTENT_LENGTH, 10);
       if (!isNaN(parsed)) {
@@ -299,11 +301,16 @@ export class ContextCuratorConfigLoader {
       contentDensity.preserveTypes = process.env.VIBE_CONTEXT_CURATOR_PRESERVE_TYPES === 'true';
     }
     if (Object.keys(contentDensity).length > 0) {
-      envConfig.contentDensity = contentDensity;
+      envConfig.contentDensity = contentDensity as {
+        maxContentLength: number;
+        optimizationThreshold: number;
+        preserveComments: boolean;
+        preserveTypes: boolean;
+      };
     }
 
     // Relevance scoring settings
-    const relevanceScoring: any = {};
+    const relevanceScoring: Record<string, unknown> = {};
     if (process.env.VIBE_CONTEXT_CURATOR_KEYWORD_WEIGHT) {
       const parsed = parseFloat(process.env.VIBE_CONTEXT_CURATOR_KEYWORD_WEIGHT);
       if (!isNaN(parsed)) {
@@ -329,11 +336,16 @@ export class ContextCuratorConfigLoader {
       }
     }
     if (Object.keys(relevanceScoring).length > 0) {
-      envConfig.relevanceScoring = relevanceScoring;
+      envConfig.relevanceScoring = relevanceScoring as {
+        keywordWeight: number;
+        semanticWeight: number;
+        structuralWeight: number;
+        minRelevanceThreshold: number;
+      };
     }
 
     // Output format settings
-    const outputFormat: any = {};
+    const outputFormat: Record<string, unknown> = {};
     if (process.env.VIBE_CONTEXT_CURATOR_INCLUDE_META_PROMPT) {
       outputFormat.includeMetaPrompt = process.env.VIBE_CONTEXT_CURATOR_INCLUDE_META_PROMPT === 'true';
     }
@@ -350,11 +362,21 @@ export class ContextCuratorConfigLoader {
       outputFormat.xmlValidation = process.env.VIBE_CONTEXT_CURATOR_XML_VALIDATION === 'true';
     }
     if (Object.keys(outputFormat).length > 0) {
-      envConfig.outputFormat = outputFormat;
+      envConfig.outputFormat = outputFormat as {
+        format: "json" | "yaml" | "xml";
+        includeMetaPrompt: boolean;
+        includeFileContent: boolean;
+        validateOutput: boolean;
+        templateOptions: {
+          includeAtomicGuidelines: boolean;
+          includeArchitecturalPatterns: boolean;
+          customVariables: Record<string, string>;
+        };
+      };
     }
 
     // LLM integration settings
-    const llmIntegration: any = {};
+    const llmIntegration: Record<string, unknown> = {};
     if (process.env.VIBE_CONTEXT_CURATOR_MAX_RETRIES) {
       const parsed = parseInt(process.env.VIBE_CONTEXT_CURATOR_MAX_RETRIES, 10);
       if (!isNaN(parsed)) {
@@ -371,7 +393,11 @@ export class ContextCuratorConfigLoader {
       llmIntegration.fallbackModel = process.env.VIBE_CONTEXT_CURATOR_FALLBACK_MODEL;
     }
     if (Object.keys(llmIntegration).length > 0) {
-      envConfig.llmIntegration = llmIntegration;
+      envConfig.llmIntegration = llmIntegration as {
+        maxRetries: number;
+        timeoutMs: number;
+        fallbackModel: string;
+      };
     }
 
     if (Object.keys(envConfig).length > 0) {
@@ -413,8 +439,8 @@ export class ContextCuratorConfigLoader {
   private mergeConfigurations(
     envConfig: Partial<ContextCuratorConfig>,
     fileConfig: Partial<ContextCuratorConfig>
-  ): any {
-    const merged: any = {};
+  ): Record<string, unknown> {
+    const merged: Record<string, unknown> = {};
 
     // Merge content density - only include if there are values
     if (fileConfig.contentDensity || envConfig.contentDensity) {

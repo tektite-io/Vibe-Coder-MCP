@@ -3,13 +3,13 @@
  * Implements regex-based pattern matching for intent recognition
  */
 
-import { Intent, IntentPattern, RecognizedIntent, ConfidenceLevel } from '../types/nl.js';
+import { Intent, IntentPattern, ConfidenceLevel } from '../types/nl.js';
 import logger from '../../../logger.js';
 
 /**
  * Entity extractor function type
  */
-export type EntityExtractor = (text: string, match: RegExpMatchArray) => Record<string, any>;
+export type EntityExtractor = (text: string, match: RegExpMatchArray) => Record<string, unknown>;
 
 /**
  * Intent match result
@@ -18,7 +18,7 @@ export interface IntentMatch {
   intent: Intent;
   confidence: number;
   confidenceLevel: ConfidenceLevel;
-  entities: Record<string, any>;
+  entities: Record<string, unknown>;
   pattern: IntentPattern;
   matchedText: string;
   processingTime: number;
@@ -45,16 +45,21 @@ export class EntityExtractors {
   /**
    * Extract project name from text
    */
-  static projectName(text: string, match: RegExpMatchArray): Record<string, any> {
-    const entities: Record<string, any> = {};
+  static projectName(text: string, _match: RegExpMatchArray): Record<string, unknown> {
+    const entities: Record<string, unknown> = {};
 
     // Look for project name in quotes or after keywords
     const projectPatterns = [
+      // Quoted patterns (highest priority)
       /called\s+["']([^"']+)["']/i,
       /project\s+["']([^"']+)["']/i,
       /["']([^"']+)["']\s+project/i,
       /for\s+["']([^"']+)["']/i,
-      // Patterns without quotes
+      // Multi-word patterns without quotes (capture until end of string or common stop words)
+      /called\s+([A-Za-z0-9\s\-_]+?)(?:\s+(?:project|task|file|document|prd|tasks?|list|into|with|for|using|through|via|detailed|comprehensive|development)|\s*$)/i,
+      /project\s+([A-Za-z0-9\s\-_]+?)(?:\s+(?:project|task|file|document|prd|tasks?|list|into|with|for|using|through|via|detailed|comprehensive|development)|\s*$)/i,
+      /for\s+(?:the\s+)?([A-Za-z0-9\s\-_]+?)(?:\s+(?:project|task|file|document|prd|tasks?|list|into|with|for|using|through|via|detailed|comprehensive|development)|\s*$)/i,
+      // Single word patterns (fallback)
       /called\s+(\w+)/i,
       /project\s+(\w+)/i,
       /for\s+(\w+)/i
@@ -63,8 +68,16 @@ export class EntityExtractors {
     for (const pattern of projectPatterns) {
       const projectMatch = text.match(pattern);
       if (projectMatch) {
-        entities.projectName = projectMatch[1].trim();
-        break;
+        let projectName = projectMatch[1].trim();
+
+        // Clean up common artifacts
+        projectName = projectName.replace(/\s+/g, ' '); // Normalize whitespace
+        projectName = projectName.replace(/\s+(project|task|file|document|prd|tasks?|list|into|with|for|using|through|via|detailed|comprehensive|development)$/i, ''); // Remove trailing keywords
+
+        if (projectName.length > 0) {
+          entities.projectName = projectName;
+          break;
+        }
       }
     }
 
@@ -74,8 +87,8 @@ export class EntityExtractors {
   /**
    * Extract task information from text
    */
-  static taskInfo(text: string, match: RegExpMatchArray): Record<string, any> {
-    const entities: Record<string, any> = {};
+  static taskInfo(text: string, _match: RegExpMatchArray): Record<string, unknown> {
+    const entities: Record<string, unknown> = {};
 
     // Extract task title - try patterns with and without quotes
     const titlePatterns = [
@@ -118,8 +131,8 @@ export class EntityExtractors {
   /**
    * Extract status information from text
    */
-  static statusInfo(text: string, match: RegExpMatchArray): Record<string, any> {
-    const entities: Record<string, any> = {};
+  static statusInfo(text: string, _match: RegExpMatchArray): Record<string, unknown> {
+    const entities: Record<string, unknown> = {};
 
     // Extract status
     const statusMatch = text.match(/\b(pending|in_progress|completed|blocked|cancelled)\b/i);
@@ -148,8 +161,8 @@ export class EntityExtractors {
   /**
    * Extract agent information from text
    */
-  static agentInfo(text: string, match: RegExpMatchArray): Record<string, any> {
-    const entities: Record<string, any> = {};
+  static agentInfo(text: string, _match: RegExpMatchArray): Record<string, unknown> {
+    const entities: Record<string, unknown> = {};
 
     // Extract agent name
     const agentPatterns = [
@@ -173,8 +186,8 @@ export class EntityExtractors {
   /**
    * Extract description information from text
    */
-  static descriptionInfo(text: string, match: RegExpMatchArray): Record<string, any> {
-    const entities: Record<string, any> = {};
+  static descriptionInfo(text: string, _match: RegExpMatchArray): Record<string, unknown> {
+    const entities: Record<string, unknown> = {};
 
     // Extract description from various patterns
     const descriptionPatterns = [
@@ -200,8 +213,8 @@ export class EntityExtractors {
   /**
    * Extract search information from text
    */
-  static searchInfo(text: string, match: RegExpMatchArray): Record<string, any> {
-    const entities: Record<string, any> = {};
+  static searchInfo(text: string, _match: RegExpMatchArray): Record<string, unknown> {
+    const entities: Record<string, unknown> = {};
 
     // Extract search pattern from various formats
     const searchPatterns = [
@@ -236,8 +249,8 @@ export class EntityExtractors {
   /**
    * Extract content search information from text
    */
-  static contentInfo(text: string, match: RegExpMatchArray): Record<string, any> {
-    const entities: Record<string, any> = {};
+  static contentInfo(text: string, _match: RegExpMatchArray): Record<string, unknown> {
+    const entities: Record<string, unknown> = {};
 
     // Extract search query from various patterns
     const contentPatterns = [
@@ -271,10 +284,61 @@ export class EntityExtractors {
   }
 
   /**
+   * Extract artifact information from text
+   */
+  static artifactInfo(text: string, _match: RegExpMatchArray): Record<string, unknown> {
+    const entities: Record<string, unknown> = {};
+
+    // Extract artifact type
+    const artifactTypePatterns = [
+      /\b(prd|product\s+requirements?\s+document)\b/i,
+      /\b(task\s+list|tasks?)\b/i,
+      /\b(task\s+breakdown)\b/i,
+      /\b(artifact|document|file)\b/i
+    ];
+
+    for (const pattern of artifactTypePatterns) {
+      const typeMatch = text.match(pattern);
+      if (typeMatch) {
+        let artifactType = typeMatch[1].toLowerCase();
+        // Normalize artifact types
+        if (artifactType.includes('prd') || artifactType.includes('product') || artifactType.includes('requirements')) {
+          artifactType = 'prd';
+        } else if (artifactType.includes('task')) {
+          artifactType = 'tasks';
+        } else if (artifactType.includes('artifact') || artifactType.includes('document') || artifactType.includes('file')) {
+          artifactType = 'artifact';
+        }
+        entities.artifactType = artifactType;
+        break;
+      }
+    }
+
+    // Extract file path
+    const filePathPatterns = [
+      /from\s+["']([^"']+)["']/i,
+      /from\s+(\S+\.(?:md|txt|json|yaml|yml))/i,
+      /from\s+(\S+)/i,
+      /["']([^"']*\.(?:md|txt|json|yaml|yml))["']/i,
+      /(\S+\.(?:md|txt|json|yaml|yml))/i
+    ];
+
+    for (const pattern of filePathPatterns) {
+      const pathMatch = text.match(pattern);
+      if (pathMatch) {
+        entities.filePath = pathMatch[1].trim();
+        break;
+      }
+    }
+
+    return entities;
+  }
+
+  /**
    * Extract general entities from text
    */
-  static general(text: string, match: RegExpMatchArray): Record<string, any> {
-    const entities: Record<string, any> = {};
+  static general(text: string, _match: RegExpMatchArray): Record<string, unknown> {
+    const entities: Record<string, unknown> = {};
 
     // Extract tags
     const tagMatches = text.match(/#(\w+)/g);
@@ -314,7 +378,7 @@ export class IntentPatternEngine {
    * Initialize default patterns for common intents
    */
   private initializeDefaultPatterns(): void {
-    // Project creation patterns
+    // Project creation patterns - Enhanced with more diverse variations
     this.addPattern('create_project', {
       id: 'create_project_basic',
       intent: 'create_project',
@@ -324,9 +388,22 @@ export class IntentPatternEngine {
         'set\\s+up\\s+(?:a\\s+)?(?:new\\s+)?project',
         'initialize\\s+(?:a\\s+)?(?:new\\s+)?project',
         'create\\s+(?:something\\s+)?(?:new\\s+)?(?:for\\s+the\\s+)?project',
-        'make\\s+(?:a\\s+)?(?:new\\s+)?project'
+        'make\\s+(?:a\\s+)?(?:new\\s+)?project',
+        // Enhanced patterns for diverse commands
+        'build\\s+(?:a\\s+)?(?:new\\s+)?project',
+        'develop\\s+(?:a\\s+)?(?:new\\s+)?project',
+        'generate\\s+(?:a\\s+)?(?:new\\s+)?project',
+        'setup\\s+(?:a\\s+)?(?:new\\s+)?project',
+        'begin\\s+(?:a\\s+)?(?:new\\s+)?project',
+        'launch\\s+(?:a\\s+)?(?:new\\s+)?project',
+        'establish\\s+(?:a\\s+)?(?:new\\s+)?project',
+        'initiate\\s+(?:a\\s+)?(?:new\\s+)?project',
+        // Natural variations
+        '(?:let\'s\\s+)?(?:create|start|build|make)\\s+(?:a\\s+)?(?:new\\s+)?project',
+        'i\\s+(?:want\\s+to\\s+|need\\s+to\\s+)?(?:create|start|build|make)\\s+(?:a\\s+)?(?:new\\s+)?project',
+        'can\\s+(?:you\\s+)?(?:create|start|build|make)\\s+(?:a\\s+)?(?:new\\s+)?project'
       ],
-      keywords: ['create', 'start', 'setup', 'initialize', 'project', 'new', 'make', 'something'],
+      keywords: ['create', 'start', 'setup', 'initialize', 'project', 'new', 'make', 'build', 'develop', 'generate', 'launch'],
       requiredEntities: [],
       optionalEntities: ['projectName', 'description'],
       priority: 10,
@@ -335,7 +412,10 @@ export class IntentPatternEngine {
         'Create a new project called "Web App"',
         'Start a project for the mobile app',
         'Set up a new project',
-        'Create something new for the project'
+        'Build a new project for streaming platform',
+        'Let\'s create a new project',
+        'I want to create a project',
+        'Can you make a new project?'
       ]
     });
 
@@ -499,7 +579,7 @@ export class IntentPatternEngine {
       ]
     });
 
-    // Project decomposition patterns
+    // Project decomposition patterns - Enhanced with more natural variations
     this.addPattern('decompose_project', {
       id: 'decompose_project_basic',
       intent: 'decompose_project',
@@ -510,9 +590,22 @@ export class IntentPatternEngine {
         'divide\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
         'breakdown\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
         'decompose\\s+project\\s+\\w+',
-        'break\\s+down\\s+project\\s+\\w+'
+        'break\\s+down\\s+project\\s+\\w+',
+        // Enhanced natural language variations
+        'analyze\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'plan\\s+(?:out\\s+)?(?:the\\s+)?(?:\\w+\\s+)?project',
+        'organize\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'structure\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'outline\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        // Conversational patterns
+        '(?:can\\s+you\\s+)?(?:decompose|break\\s+down|analyze)\\s+(?:this\\s+|the\\s+)?project',
+        'i\\s+(?:want\\s+to\\s+|need\\s+to\\s+)?(?:decompose|break\\s+down|analyze)\\s+(?:this\\s+|the\\s+)?project',
+        '(?:let\'s\\s+)?(?:decompose|break\\s+down|analyze)\\s+(?:this\\s+|the\\s+)?project',
+        // Task-oriented patterns
+        'create\\s+tasks\\s+for\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'generate\\s+tasks\\s+for\\s+(?:the\\s+)?(?:\\w+\\s+)?project'
       ],
-      keywords: ['decompose', 'break down', 'split', 'divide', 'breakdown', 'project'],
+      keywords: ['decompose', 'break down', 'split', 'divide', 'breakdown', 'project', 'analyze', 'plan', 'organize', 'tasks'],
       requiredEntities: [],
       optionalEntities: ['projectId', 'projectName', 'description'],
       priority: 10,
@@ -520,8 +613,10 @@ export class IntentPatternEngine {
       examples: [
         'Decompose project PID-WEBAPP-001',
         'Break down the web app project',
-        'Split up this project',
-        'Decompose the entire project'
+        'Analyze this project',
+        'Can you decompose the project?',
+        'I need to break down this project',
+        'Create tasks for the streaming project'
       ]
     });
 
@@ -574,6 +669,174 @@ export class IntentPatternEngine {
         'Search for authentication code',
         'Locate all instances of "login"',
         'Find content containing API'
+      ]
+    });
+
+    // PRD parsing patterns
+    this.addPattern('parse_prd', {
+      id: 'parse_prd_basic',
+      intent: 'parse_prd',
+      patterns: [
+        'parse\\s+(?:the\\s+)?(?:prd|product\\s+requirements?\\s+document)',
+        'load\\s+(?:the\\s+)?(?:prd|product\\s+requirements?\\s+document)',
+        'read\\s+(?:the\\s+)?(?:prd|product\\s+requirements?\\s+document)',
+        'process\\s+(?:the\\s+)?(?:prd|product\\s+requirements?\\s+document)',
+        'analyze\\s+(?:the\\s+)?(?:prd|product\\s+requirements?\\s+document)',
+        'import\\s+(?:the\\s+)?(?:prd|product\\s+requirements?\\s+document)',
+        'open\\s+(?:the\\s+)?(?:prd|product\\s+requirements?\\s+document)',
+        // With project context
+        'parse\\s+(?:the\\s+)?(?:prd|product\\s+requirements?\\s+document)\\s+for\\s+(?:the\\s+)?(?:project\\s+)?\\w+',
+        'load\\s+(?:the\\s+)?(?:prd|product\\s+requirements?\\s+document)\\s+for\\s+(?:the\\s+)?(?:project\\s+)?\\w+',
+        'parse\\s+(?:prd|product\\s+requirements?\\s+document)\\s+for\\s+["\'](.*?)["\']',
+        // Shortened forms
+        'parse\\s+prd',
+        'load\\s+prd',
+        'read\\s+prd',
+        'process\\s+prd',
+        'analyze\\s+prd',
+        'import\\s+prd',
+        'open\\s+prd'
+      ],
+      keywords: ['parse', 'load', 'read', 'process', 'analyze', 'import', 'open', 'prd', 'product', 'requirements', 'document'],
+      requiredEntities: [],
+      optionalEntities: ['projectName', 'filePath'],
+      priority: 10,
+      active: true,
+      examples: [
+        'Parse the PRD',
+        'Load PRD for my project',
+        'Read the product requirements document',
+        'Process PRD file',
+        'Analyze the PRD',
+        'Parse PRD for "E-commerce Platform"',
+        'Load the product requirements document for the web app'
+      ]
+    });
+
+    // Project update patterns
+    this.addPattern('update_project', {
+      id: 'update_project_basic',
+      intent: 'update_project',
+      patterns: [
+        'update\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'modify\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'change\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'edit\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'configure\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'update\\s+project\\s+\\w+',
+        'modify\\s+project\\s+\\w+',
+        'change\\s+project\\s+\\w+',
+        // Enhanced natural language variations
+        'update\\s+(?:the\\s+)?(?:\\w+\\s+)?project\\s+(?:settings|configuration|config|properties)',
+        'modify\\s+(?:the\\s+)?(?:\\w+\\s+)?project\\s+(?:settings|configuration|config|properties)',
+        'change\\s+(?:the\\s+)?(?:\\w+\\s+)?project\\s+(?:settings|configuration|config|properties)',
+        'configure\\s+(?:the\\s+)?(?:\\w+\\s+)?project\\s+(?:settings|configuration|config|properties)',
+        'update\\s+(?:the\\s+)?(?:\\w+\\s+)?project\\s+(?:details|info|information)',
+        'edit\\s+(?:the\\s+)?(?:\\w+\\s+)?project\\s+(?:details|info|information|settings|configuration)'
+      ],
+      keywords: ['update', 'modify', 'change', 'edit', 'configure', 'project', 'settings', 'configuration', 'config', 'properties', 'details'],
+      requiredEntities: [],
+      optionalEntities: ['projectName', 'property', 'value'],
+      priority: 10,
+      active: true,
+      examples: [
+        'Update project configuration',
+        'Modify the project settings',
+        'Change project properties',
+        'Edit the project details',
+        'Configure the project',
+        'Update project MyApp',
+        'Modify project settings for WebApp'
+      ]
+    });
+
+    // Task list parsing patterns
+    this.addPattern('parse_tasks', {
+      id: 'parse_tasks_basic',
+      intent: 'parse_tasks',
+      patterns: [
+        'parse\\s+(?:the\\s+)?(?:task\\s+list|tasks?)',
+        'load\\s+(?:the\\s+)?(?:task\\s+list|tasks?)',
+        'read\\s+(?:the\\s+)?(?:task\\s+list|tasks?)',
+        'process\\s+(?:the\\s+)?(?:task\\s+list|tasks?)',
+        'analyze\\s+(?:the\\s+)?(?:task\\s+list|tasks?)',
+        'import\\s+(?:the\\s+)?(?:task\\s+list|tasks?)',
+        'open\\s+(?:the\\s+)?(?:task\\s+list|tasks?)',
+        // With project context
+        'parse\\s+(?:the\\s+)?(?:task\\s+list|tasks?)\\s+for\\s+(?:the\\s+)?(?:project\\s+)?\\w+',
+        'load\\s+(?:the\\s+)?(?:task\\s+list|tasks?)\\s+for\\s+(?:the\\s+)?(?:project\\s+)?\\w+',
+        'parse\\s+(?:task\\s+list|tasks?)\\s+for\\s+["\'](.*?)["\']',
+        // Alternative forms
+        'parse\\s+(?:the\\s+)?(?:task\\s+breakdown|task\\s+file)',
+        'load\\s+(?:the\\s+)?(?:task\\s+breakdown|task\\s+file)',
+        'read\\s+(?:the\\s+)?(?:task\\s+breakdown|task\\s+file)',
+        'process\\s+(?:the\\s+)?(?:task\\s+breakdown|task\\s+file)',
+        'analyze\\s+(?:the\\s+)?(?:task\\s+breakdown|task\\s+file)'
+      ],
+      keywords: ['parse', 'load', 'read', 'process', 'analyze', 'import', 'open', 'task', 'tasks', 'list', 'breakdown', 'file'],
+      requiredEntities: [],
+      optionalEntities: ['projectName', 'filePath'],
+      priority: 10,
+      active: true,
+      examples: [
+        'Parse the task list',
+        'Load task list for project',
+        'Read the tasks file',
+        'Process task list',
+        'Analyze the task breakdown',
+        'Parse tasks for "Mobile App"',
+        'Load the task list for the web application'
+      ]
+    });
+
+    // Artifact import patterns
+    this.addPattern('import_artifact', {
+      id: 'import_artifact_basic',
+      intent: 'import_artifact',
+      patterns: [
+        'import\\s+(?:prd|product\\s+requirements?\\s+document)\\s+from\\s+\\S+',
+        'import\\s+(?:task\\s+list|tasks?)\\s+from\\s+\\S+',
+        'import\\s+(?:artifact|document|file)\\s+from\\s+\\S+',
+        'load\\s+(?:prd|product\\s+requirements?\\s+document)\\s+from\\s+\\S+',
+        'load\\s+(?:task\\s+list|tasks?)\\s+from\\s+\\S+',
+        'load\\s+(?:artifact|document|file)\\s+from\\s+\\S+',
+        // With file paths
+        'import\\s+(?:prd|product\\s+requirements?\\s+document)\\s+from\\s+["\'](.*?)["\']',
+        'import\\s+(?:task\\s+list|tasks?)\\s+from\\s+["\'](.*?)["\']',
+        'import\\s+(?:artifact|document|file)\\s+from\\s+["\'](.*?)["\']',
+        'load\\s+(?:prd|product\\s+requirements?\\s+document)\\s+from\\s+["\'](.*?)["\']',
+        'load\\s+(?:task\\s+list|tasks?)\\s+from\\s+["\'](.*?)["\']',
+        'load\\s+(?:artifact|document|file)\\s+from\\s+["\'](.*?)["\']',
+        // Simplified forms
+        'import\\s+prd\\s+from\\s+\\S+',
+        'import\\s+tasks?\\s+from\\s+\\S+',
+        'load\\s+prd\\s+from\\s+\\S+',
+        'load\\s+tasks?\\s+from\\s+\\S+',
+        'import\\s+from\\s+\\S+',
+        'load\\s+from\\s+\\S+',
+        // Forms without explicit "from"
+        'load\\s+(?:prd|product\\s+requirements?\\s+document)\\s+file',
+        'load\\s+(?:task\\s+list|tasks?)\\s+file',
+        'import\\s+(?:prd|product\\s+requirements?\\s+document)\\s+file',
+        'import\\s+(?:task\\s+list|tasks?)\\s+file',
+        'load\\s+prd\\s+file',
+        'load\\s+tasks?\\s+file',
+        'import\\s+prd\\s+file',
+        'import\\s+tasks?\\s+file'
+      ],
+      keywords: ['import', 'load', 'from', 'prd', 'product', 'requirements', 'document', 'task', 'tasks', 'list', 'artifact', 'file'],
+      requiredEntities: [],
+      optionalEntities: ['artifactType', 'filePath', 'projectName'],
+      priority: 10,
+      active: true,
+      examples: [
+        'Import PRD from file.md',
+        'Load task list from path/to/file.md',
+        'Import artifact from document.md',
+        'Load PRD file',
+        'Import tasks from file',
+        'Import PRD from "/path/to/requirements.md"',
+        'Load task list from "project-tasks.md"'
       ]
     });
 
@@ -630,7 +893,7 @@ export class IntentPatternEngine {
     const matches: IntentMatch[] = [];
     const normalizedText = text.toLowerCase().trim();
 
-    for (const [intent, intentPatterns] of this.patterns) {
+    for (const [intent, intentPatterns] of Array.from(this.patterns.entries())) {
       for (const pattern of intentPatterns) {
         if (!pattern.active) continue;
 
@@ -670,7 +933,7 @@ export class IntentPatternEngine {
    */
   private matchPattern(text: string, pattern: IntentPattern, originalText: string): {
     confidence: number;
-    entities: Record<string, any>;
+    entities: Record<string, unknown>;
     matchedText: string;
   } | null {
     let bestMatch: RegExpMatchArray | null = null;
@@ -738,8 +1001,8 @@ export class IntentPatternEngine {
   /**
    * Extract entities from matched text
    */
-  private extractEntities(originalText: string, match: RegExpMatchArray, pattern: IntentPattern): Record<string, any> {
-    const entities: Record<string, any> = {};
+  private extractEntities(originalText: string, match: RegExpMatchArray, pattern: IntentPattern): Record<string, unknown> {
+    const entities: Record<string, unknown> = {};
 
     // Apply built-in entity extractors based on intent using original text to preserve case
     switch (pattern.intent) {
@@ -781,6 +1044,18 @@ export class IntentPatternEngine {
         Object.assign(entities, EntityExtractors.searchInfo(originalText, match));
         Object.assign(entities, EntityExtractors.contentInfo(originalText, match));
         break;
+      case 'parse_prd':
+        Object.assign(entities, EntityExtractors.projectName(originalText, match));
+        Object.assign(entities, EntityExtractors.artifactInfo(originalText, match));
+        break;
+      case 'parse_tasks':
+        Object.assign(entities, EntityExtractors.projectName(originalText, match));
+        Object.assign(entities, EntityExtractors.artifactInfo(originalText, match));
+        break;
+      case 'import_artifact':
+        Object.assign(entities, EntityExtractors.projectName(originalText, match));
+        Object.assign(entities, EntityExtractors.artifactInfo(originalText, match));
+        break;
     }
 
     // Always apply general extractors
@@ -805,7 +1080,7 @@ export class IntentPatternEngine {
    */
   getTotalPatternCount(): number {
     let total = 0;
-    for (const patterns of this.patterns.values()) {
+    for (const patterns of Array.from(this.patterns.values())) {
       total += patterns.length;
     }
     return total;
@@ -853,7 +1128,7 @@ export class IntentPatternEngine {
    */
   exportPatterns(): Record<string, IntentPattern[]> {
     const exported: Record<string, IntentPattern[]> = {};
-    for (const [intent, patterns] of this.patterns) {
+    for (const [intent, patterns] of Array.from(this.patterns.entries())) {
       exported[intent] = patterns;
     }
     return exported;

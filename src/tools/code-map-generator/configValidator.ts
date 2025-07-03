@@ -8,7 +8,6 @@ import fsSync from 'fs';
 import path from 'path';
 import logger from '../../logger.js';
 import { CodeMapGeneratorConfig, CacheConfig, ProcessingConfig, OutputConfig, FeatureFlagsConfig, ImportResolverConfig, DebugConfig } from './types.js';
-import { getFeatureFlags } from './config/featureFlags.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
 
 /**
@@ -141,7 +140,7 @@ export async function validateAllowedMappingDirectory(dirPath: string): Promise<
   // Check if the directory is readable
   try {
     await fs.access(normalizedPath, fsSync.constants.R_OK);
-  } catch (error) {
+  } catch {
     throw new Error(`allowedMappingDirectory is not readable: ${normalizedPath}`);
   }
 
@@ -158,6 +157,26 @@ export function validateCacheConfig(config?: Partial<CacheConfig>): CacheConfig 
 
   if (!config) {
     return defaultCache;
+  }
+
+  // Validate cacheDir if provided and caching is enabled
+  if (config.cacheDir && (config.enabled !== false)) {
+    if (!path.isAbsolute(config.cacheDir)) {
+      logger.warn(`cacheDir should be an absolute path. Received: ${config.cacheDir}. Using relative to current working directory.`);
+    }
+    
+    // Normalize the cache directory path
+    const normalizedCacheDir = path.resolve(config.cacheDir);
+    
+    // Check if parent directory exists (cache dir will be created if it doesn't exist)
+    const parentDir = path.dirname(normalizedCacheDir);
+    try {
+      if (!fsSync.existsSync(parentDir)) {
+        logger.warn(`Parent directory of cacheDir does not exist: ${parentDir}. Cache operations may fail.`);
+      }
+    } catch (error) {
+      logger.warn(`Unable to validate cacheDir parent directory: ${parentDir}. Error: ${error}`);
+    }
   }
 
   // Start with defaults and override with provided values

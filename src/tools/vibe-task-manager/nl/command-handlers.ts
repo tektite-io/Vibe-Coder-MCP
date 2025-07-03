@@ -3,12 +3,16 @@
  * Implements handlers for each recognized intent
  */
 
-import { Intent, RecognizedIntent, CommandProcessingResult, NLResponse } from '../types/nl.js';
+import { Intent, RecognizedIntent } from '../types/nl.js';
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { OpenRouterConfig } from '../../../types/workflow.js';
-import { ConfigLoader, VibeTaskManagerConfig } from '../utils/config-loader.js';
+import { Project } from '../types/task.js';
+import { VibeTaskManagerConfig } from '../utils/config-loader.js';
+import { extractProjectFromContext, extractEpicFromContext } from '../utils/context-extractor.js';
 import { DecomposeTaskHandler, DecomposeProjectHandler } from './handlers/decomposition-handlers.js';
 import { SearchFilesHandler, SearchContentHandler } from './handlers/search-handlers.js';
+import { ParsePRDHandler, ParseTasksHandler, ImportArtifactHandler } from './handlers/artifact-handlers.js';
+import { getPathResolver } from '../utils/path-resolver.js';
 import logger from '../../../logger.js';
 
 /**
@@ -86,6 +90,11 @@ export class CommandHandlers {
     // Register new search handlers
     this.registerHandler(new SearchFilesHandler());
     this.registerHandler(new SearchContentHandler());
+
+    // Register new artifact handlers
+    this.registerHandler(new ParsePRDHandler());
+    this.registerHandler(new ParseTasksHandler());
+    this.registerHandler(new ImportArtifactHandler());
 
     logger.info({ handlerCount: this.handlers.size }, 'Command handlers initialized');
   }
@@ -279,17 +288,27 @@ export class CreateTaskHandler implements CommandHandler {
       const { getTaskOperations } = await import('../core/operations/task-operations.js');
       const taskOps = getTaskOperations();
 
-      // Create task using real TaskOperations
+      // Extract project and epic context dynamically
+      const projectContext = await extractProjectFromContext(context);
+      const epicContext = await extractEpicFromContext(context, projectContext.projectId);
+
+      logger.debug({
+        projectContext,
+        epicContext,
+        sessionId: context.sessionId
+      }, 'Extracted context for task creation');
+
+      // Create task using real TaskOperations with dynamic context
       const createResult = await taskOps.createTask({
         title: taskTitle,
         description: `Task created via natural language: "${recognizedIntent.originalInput}"`,
         type: 'development',
         priority: 'medium',
-        projectId: 'default-project', // TODO: Extract from context or user input
-        epicId: 'default-epic', // TODO: Extract from context or user input
+        projectId: projectContext.projectId, // Dynamic extraction from context
+        epicId: epicContext.epicId, // Dynamic extraction from context
         estimatedHours: 2, // Default estimation
         acceptanceCriteria: [`Task "${taskTitle}" should be completed successfully`],
-        tags: ['natural-language', 'user-created']
+        tags: ['natural-language', 'user-created', `source-${projectContext.source}`, `epic-${epicContext.source}`]
       }, context.sessionId);
 
       if (!createResult.success) {
@@ -396,7 +415,7 @@ export class ListProjectsHandler implements CommandHandler {
       const projectOps = getProjectOperations();
 
       // Build query parameters from options
-      const queryParams: any = {};
+      const queryParams: Record<string, unknown> = {};
       if (options.status) queryParams.status = options.status as string;
       if (options.tags) queryParams.tags = options.tags as string[];
       if (options.limit) queryParams.limit = options.limit as number;
@@ -440,7 +459,7 @@ export class ListProjectsHandler implements CommandHandler {
       }
 
       const projectList = projects
-        .map((p: any) => `• **${p.name}** (${p.status}) - ID: ${p.id}\n  ${p.description || 'No description'}\n  Created: ${p.metadata.createdAt.toLocaleDateString()}`)
+        .map((p: Project) => `• **${p.name}** (${p.status}) - ID: ${p.id}\n  ${p.description || 'No description'}\n  Created: ${p.metadata?.createdAt ? new Date(p.metadata.createdAt).toLocaleDateString() : 'Unknown'}`)
         .join('\n\n');
 
       const result: CallToolResult = {
@@ -503,7 +522,7 @@ export class ListTasksHandler implements CommandHandler {
       const taskOps = getTaskOperations();
 
       // Build query parameters from options
-      const queryParams: any = {};
+      const queryParams: Record<string, unknown> = {};
       if (options.status) queryParams.status = options.status as string;
       if (options.project) queryParams.projectId = options.project as string;
       if (options.priority) queryParams.priority = options.priority as string;
@@ -617,6 +636,14 @@ export class ListTasksHandler implements CommandHandler {
 export class RunTaskHandler implements CommandHandler {
   intent: Intent = 'run_task';
 
+  /**
+   * Resolve project path using centralized path resolver
+   */
+  private resolveProjectPath(context: CommandExecutionContext): string {
+    const pathResolver = getPathResolver();
+    return pathResolver.resolveProjectPathFromContext(context);
+  }
+
   async handle(
     recognizedIntent: RecognizedIntent,
     toolParams: Record<string, unknown>,
@@ -655,17 +682,67 @@ export class RunTaskHandler implements CommandHandler {
 
       const task = taskResult.data!;
 
-      // Create a basic project context for task assignment
+      // Create dynamic project context for task execution using ProjectAnalyzer
+      const { ProjectAnalyzer } = await import('../utils/project-analyzer.js');
+      const projectAnalyzer = ProjectAnalyzer.getInstance();
+      const projectPath = this.resolveProjectPath(context);
+
+      // Detect project characteristics dynamically
+      let languages: string[];
+      let frameworks: string[];
+      let tools: string[];
+
+      try {
+        languages = await projectAnalyzer.detectProjectLanguages(projectPath);
+      } catch (error) {
+        logger.warn({ error, taskId }, 'Language detection failed for task execution, using fallback');
+        languages = ['typescript']; // fallback
+      }
+
+      try {
+        frameworks = await projectAnalyzer.detectProjectFrameworks(projectPath);
+      } catch (error) {
+        logger.warn({ error, taskId }, 'Framework detection failed for task execution, using fallback');
+        frameworks = ['node.js']; // fallback
+      }
+
+      try {
+        tools = await projectAnalyzer.detectProjectTools(projectPath);
+      } catch (error) {
+        logger.warn({ error, taskId }, 'Tools detection failed for task execution, using fallback');
+        tools = ['npm']; // fallback
+      }
+
+      // Create dynamic project context for task assignment
       const projectContext = {
-        projectPath: process.cwd(),
+        projectId: task.projectId || 'unknown',
+        projectPath,
         projectName: task.projectId || 'unknown',
-        description: 'Task execution context',
-        languages: ['typescript'],
-        frameworks: ['node.js'],
-        buildTools: ['npm'],
+        description: 'Task execution context with dynamic detection',
+        languages, // Dynamic detection using existing 35+ language infrastructure
+        frameworks, // Dynamic detection using existing language handler methods
+        buildTools: tools, // Dynamic detection using Context Curator patterns
+        tools: [],
         configFiles: ['package.json'],
         entryPoints: ['src/index.ts'],
         architecturalPatterns: ['mvc'],
+        existingTasks: [],
+        codebaseSize: 'medium' as const,
+        teamSize: 1,
+        complexity: 'medium' as const,
+        codebaseContext: {
+          relevantFiles: [],
+          contextSummary: 'Task execution context with dynamic detection',
+          gatheringMetrics: {
+            searchTime: 0,
+            readTime: 0,
+            scoringTime: 0,
+            totalTime: 0,
+            cacheHitRate: 0
+          },
+          totalContextSize: 0,
+          averageRelevance: 0
+        },
         structure: {
           sourceDirectories: ['src'],
           testDirectories: ['tests'],
@@ -681,7 +758,7 @@ export class RunTaskHandler implements CommandHandler {
           createdAt: new Date(),
           updatedAt: new Date(),
           version: '1.0.0',
-          source: 'manual' as const
+          source: 'auto-detected' as const
         }
       };
 
@@ -795,7 +872,6 @@ export class CheckStatusHandler implements CommandHandler {
   ): Promise<CommandExecutionResult> {
     const projectName = toolParams.projectName as string;
     const taskId = toolParams.taskId as string;
-    const options = toolParams.options as Record<string, unknown> || {};
 
     logger.info({
       projectName,
@@ -830,7 +906,7 @@ export class CheckStatusHandler implements CommandHandler {
 
         // Get execution status from ExecutionCoordinator
         const { ExecutionCoordinator } = await import('../services/execution-coordinator.js');
-        const coordinator = ExecutionCoordinator.getInstance();
+        const coordinator = await ExecutionCoordinator.getInstance();
 
         // Get execution status for the task
         const executionStatus = await coordinator.getTaskExecutionStatus(taskId);

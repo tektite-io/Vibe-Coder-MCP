@@ -131,7 +131,7 @@ export class IdGenerator {
         };
       }
 
-      // Find unique epic ID within project
+      // Find unique epic ID (simple format: E001)
       for (let counter = 1; counter <= this.config.maxRetries; counter++) {
         const epicId = `${this.config.epicPrefix}${counter.toString().padStart(this.config.epicIdLength, '0')}`;
 

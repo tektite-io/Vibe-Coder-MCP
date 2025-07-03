@@ -1,10 +1,60 @@
 import { performResearchQuery } from '../../../utils/researchHelper.js';
 import { performFormatAwareLlmCall } from '../../../utils/llmHelper.js';
-import { getVibeTaskManagerConfig } from '../utils/config-loader.js';
+import { OpenRouterConfigManager } from '../../../utils/openrouter-config-manager.js';
 import type { OpenRouterConfig } from '../../../types/workflow.js';
-import type { AtomicTask } from '../types/task.js';
 import logger from '../../../logger.js';
 import { EventEmitter } from 'events';
+import crypto from 'crypto';
+
+/**
+ * Circuit breaker for research operations
+ */
+class ResearchCircuitBreaker {
+  private failures = new Map<string, number>();
+  private lastFailure = new Map<string, number>();
+  private readonly maxFailures: number;
+  private readonly cooldownPeriod: number; // milliseconds
+
+  constructor(maxFailures = 3, cooldownPeriod = 300000) { // 5 minutes cooldown
+    this.maxFailures = maxFailures;
+    this.cooldownPeriod = cooldownPeriod;
+  }
+
+  canAttempt(operation: string): boolean {
+    const failures = this.failures.get(operation) || 0;
+    const lastFailure = this.lastFailure.get(operation) || 0;
+    const now = Date.now();
+
+    // If we haven't exceeded max failures, allow attempt
+    if (failures < this.maxFailures) {
+      return true;
+    }
+
+    // If we've exceeded max failures, check if cooldown period has passed
+    return now - lastFailure > this.cooldownPeriod;
+  }
+
+  recordFailure(operation: string): void {
+    const failures = (this.failures.get(operation) || 0) + 1;
+    this.failures.set(operation, failures);
+    this.lastFailure.set(operation, Date.now());
+  }
+
+  recordSuccess(operation: string): void {
+    this.failures.delete(operation);
+    this.lastFailure.delete(operation);
+  }
+
+  getFailureCount(operation: string): number {
+    return this.failures.get(operation) || 0;
+  }
+
+  getTimeUntilRetry(operation: string): number {
+    const lastFailure = this.lastFailure.get(operation) || 0;
+    const timeSinceFailure = Date.now() - lastFailure;
+    return Math.max(0, this.cooldownPeriod - timeSinceFailure);
+  }
+}
 
 /**
  * Task decomposition request interface for research integration
@@ -13,7 +63,7 @@ export interface TaskDecompositionRequest {
   taskDescription: string;
   projectPath?: string;
   domain?: string;
-  context?: any;
+  context?: Record<string, unknown>;
 }
 
 /**
@@ -117,6 +167,19 @@ export type ResearchProgressCallback = (stage: string, progress: number, message
 export type ResearchCompleteCallback = (result: EnhancedResearchResult) => void;
 
 /**
+ * Performance metrics for research operations
+ */
+export interface ResearchPerformanceMetrics {
+  query: string;
+  totalTime: number;
+  qualityScore: number;
+  cacheHit: boolean;
+  timestamp: number;
+  memoryUsage?: number;
+  apiCalls?: number;
+}
+
+/**
  * Research integration configuration
  */
 export interface ResearchIntegrationConfig {
@@ -158,8 +221,9 @@ export class ResearchIntegration extends EventEmitter {
   private researchCache = new Map<string, EnhancedResearchResult>();
   private progressSubscriptions = new Map<string, ResearchProgressCallback[]>();
   private completeSubscriptions = new Map<string, ResearchCompleteCallback[]>();
-  private performanceMetrics = new Map<string, any>();
+  private performanceMetrics = new Map<string, ResearchPerformanceMetrics>();
   private cleanupInterval?: NodeJS.Timeout;
+  private circuitBreaker = new ResearchCircuitBreaker();
 
   private constructor(config?: Partial<ResearchIntegrationConfig>) {
     super();
@@ -222,7 +286,15 @@ export class ResearchIntegration extends EventEmitter {
         const cachedResult = this.getCachedResearch(requestId, request.optimization.cacheStrategy);
         if (cachedResult) {
           logger.debug({ requestId, cacheStrategy: request.optimization.cacheStrategy }, 'Returning cached research result');
-          return cachedResult;
+          // Mark as cache hit
+          const cachedResultWithHit = {
+            ...cachedResult,
+            performance: {
+              ...cachedResult.performance,
+              cacheHit: true
+            }
+          };
+          return cachedResultWithHit;
         }
       }
 
@@ -281,9 +353,23 @@ export class ResearchIntegration extends EventEmitter {
       const researchResults: EnhancedResearchResult[] = [];
 
       if (this.config.performance.enableParallelQueries && researchQueries.length > 1) {
-        // Execute queries in parallel
-        const researchPromises = researchQueries.map(query =>
-          this.performEnhancedResearch({
+        // Execute queries in parallel with circuit breaker protection
+        const researchPromises = researchQueries.map((query, index) => {
+          const operationKey = `research_query_${index}`;
+          
+          // Check circuit breaker before attempting
+          if (!this.circuitBreaker.canAttempt(operationKey)) {
+            const timeUntilRetry = this.circuitBreaker.getTimeUntilRetry(operationKey);
+            logger.warn({ 
+              query, 
+              operationKey,
+              timeUntilRetry,
+              failureCount: this.circuitBreaker.getFailureCount(operationKey)
+            }, 'Research query blocked by circuit breaker');
+            return Promise.reject(new Error(`Circuit breaker open for ${operationKey}. Retry in ${Math.ceil(timeUntilRetry / 1000)}s`));
+          }
+
+          return this.performEnhancedResearch({
             query,
             taskContext: {
               taskDescription: decompositionRequest.taskDescription,
@@ -309,21 +395,49 @@ export class ResearchIntegration extends EventEmitter {
               extractActionItems: true,
               createKnowledgeBase: true
             }
-          })
-        );
+          });
+        });
 
         const results = await Promise.allSettled(researchPromises);
         results.forEach((result, index) => {
+          const operationKey = `research_query_${index}`;
+          
           if (result.status === 'fulfilled') {
             researchResults.push(result.value);
+            this.circuitBreaker.recordSuccess(operationKey);
           } else {
-            logger.warn({ query: researchQueries[index], error: result.reason }, 'Research query failed');
+            // Record failure in circuit breaker
+            this.circuitBreaker.recordFailure(operationKey);
+            
+            // Enhanced error capture with proper error serialization
+            const errorDetails = this.extractErrorDetails(result.reason);
+            logger.warn({ 
+              query: researchQueries[index], 
+              error: errorDetails,
+              queryIndex: index,
+              operation: 'parallel_research_query',
+              circuitBreakerFailures: this.circuitBreaker.getFailureCount(operationKey)
+            }, 'Research query failed');
           }
         });
       } else {
-        // Execute queries sequentially
-        for (const query of researchQueries) {
+        // Execute queries sequentially with circuit breaker protection
+        for (let i = 0; i < researchQueries.length; i++) {
+          const query = researchQueries[i];
+          const operationKey = `research_query_sequential_${i}`;
+          
           try {
+            // Check circuit breaker before attempting
+            if (!this.circuitBreaker.canAttempt(operationKey)) {
+              const timeUntilRetry = this.circuitBreaker.getTimeUntilRetry(operationKey);
+              logger.warn({ 
+                query, 
+                operationKey,
+                timeUntilRetry,
+                failureCount: this.circuitBreaker.getFailureCount(operationKey)
+              }, 'Research query blocked by circuit breaker');
+              continue; // Skip this query
+            }
             const result = await this.performEnhancedResearch({
               query,
               taskContext: {
@@ -352,17 +466,27 @@ export class ResearchIntegration extends EventEmitter {
               }
             });
             researchResults.push(result);
+            this.circuitBreaker.recordSuccess(operationKey);
           } catch (error) {
-            logger.warn({ query, error }, 'Research query failed');
+            // Record failure in circuit breaker
+            this.circuitBreaker.recordFailure(operationKey);
+            
+            // Enhanced error capture with proper error serialization
+            const errorDetails = this.extractErrorDetails(error);
+            logger.warn({ 
+              query, 
+              error: errorDetails,
+              operation: 'sequential_research_query',
+              circuitBreakerFailures: this.circuitBreaker.getFailureCount(operationKey)
+            }, 'Research query failed');
           }
         }
       }
 
-      // Integrate research insights into decomposition request
-      const enhancedRequest = this.integrateResearchIntoDecomposition(
-        decompositionRequest,
-        researchResults
-      );
+      // Integrate research insights into decomposition request with graceful degradation
+      const enhancedRequest = researchResults.length > 0 
+        ? this.integrateResearchIntoDecomposition(decompositionRequest, researchResults)
+        : this.createDegradedDecompositionRequest(decompositionRequest, 'All research queries failed');
 
       const integrationMetrics = {
         researchTime: Date.now() - startTime,
@@ -700,26 +824,29 @@ Return only the queries, one per line, without numbering or formatting.
   // Private helper methods
 
   /**
-   * Initialize OpenRouter configuration
+   * Initialize OpenRouter configuration using centralized manager
    */
   private async initializeConfig(): Promise<void> {
     try {
-      const config = await getVibeTaskManagerConfig();
-      if (config?.llm) {
-        this.openRouterConfig = {
-          baseUrl: 'https://openrouter.ai/api/v1',
-          apiKey: process.env.OPENROUTER_API_KEY || '',
-          geminiModel: 'gemini-pro',
-          perplexityModel: 'perplexity/sonar-deep-research'
-        };
-      }
+      const configManager = OpenRouterConfigManager.getInstance();
+      this.openRouterConfig = await configManager.getOpenRouterConfig();
+
+      logger.debug({
+        hasApiKey: Boolean(this.openRouterConfig.apiKey),
+        baseUrl: this.openRouterConfig.baseUrl,
+        mappingCount: Object.keys(this.openRouterConfig.llm_mapping || {}).length
+      }, 'Research integration initialized with centralized OpenRouter config');
+
     } catch (error) {
-      logger.warn({ err: error }, 'Failed to initialize OpenRouter config, using defaults');
+      logger.warn({ err: error }, 'Failed to initialize OpenRouter config with centralized manager, using fallback');
+
+      // Fallback to basic configuration if centralized manager fails
       this.openRouterConfig = {
-        baseUrl: 'https://openrouter.ai/api/v1',
+        baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
         apiKey: process.env.OPENROUTER_API_KEY || '',
-        geminiModel: 'gemini-pro',
-        perplexityModel: 'perplexity/sonar-deep-research'
+        geminiModel: process.env.GEMINI_MODEL || process.env.VIBE_DEFAULT_LLM_MODEL || 'google/gemini-2.5-flash-preview-05-20',
+        perplexityModel: process.env.PERPLEXITY_MODEL || 'perplexity/llama-3.1-sonar-small-128k-online',
+        llm_mapping: {}
       };
     }
   }
@@ -729,7 +856,6 @@ Return only the queries, one per line, without numbering or formatting.
    */
   private generateRequestId(request: ResearchRequest): string {
     const key = `${request.query}-${request.scope.depth}-${request.scope.focus}-${request.optimization.qualityThreshold}`;
-    const crypto = require('crypto');
     return crypto.createHash('md5').update(key).digest('hex').slice(0, 16);
   }
 
@@ -1052,7 +1178,7 @@ Always provide clear recommendations and highlight potential risks or challenges
   /**
    * Extract insights from research content
    */
-  private async extractInsights(content: string, request: ResearchRequest): Promise<EnhancedResearchResult['insights']> {
+  private async extractInsights(content: string, _request: ResearchRequest): Promise<EnhancedResearchResult['insights']> {
     // Simple extraction based on content analysis
     const lines = content.split('\n').filter(line => line.trim().length > 0);
 
@@ -1344,6 +1470,143 @@ Always provide clear recommendations and highlight potential risks or challenges
     });
 
     return Array.from(areas).slice(0, 5);
+  }
+
+  /**
+   * Create a degraded decomposition request when research fails
+   */
+  private createDegradedDecompositionRequest(
+    originalRequest: TaskDecompositionRequest,
+    reason: string
+  ): TaskDecompositionRequest {
+    logger.info({ 
+      originalTask: originalRequest.taskDescription,
+      reason 
+    }, 'Creating degraded decomposition request due to research failure');
+
+    // Add fallback context to help with decomposition
+    const fallbackContext = {
+      ...originalRequest.context,
+      researchStatus: 'unavailable',
+      fallbackReason: reason,
+      degradationApplied: true,
+      suggestedApproach: 'Use standard best practices and conventional patterns',
+      recommendedTechnologies: this.inferTechnologiesFromDescription(originalRequest.taskDescription),
+      estimatedComplexity: this.inferComplexityFromDescription(originalRequest.taskDescription)
+    };
+
+    return {
+      ...originalRequest,
+      context: fallbackContext
+    };
+  }
+
+  /**
+   * Infer likely technologies from task description for degraded mode
+   */
+  private inferTechnologiesFromDescription(description: string): string[] {
+    const tech: string[] = [];
+    const lowerDesc = description.toLowerCase();
+
+    // Common technology patterns
+    const techPatterns = [
+      { pattern: /react|jsx/i, tech: 'React' },
+      { pattern: /vue/i, tech: 'Vue.js' },
+      { pattern: /angular/i, tech: 'Angular' },
+      { pattern: /node|express/i, tech: 'Node.js' },
+      { pattern: /python|django|flask/i, tech: 'Python' },
+      { pattern: /java|spring/i, tech: 'Java' },
+      { pattern: /typescript|ts/i, tech: 'TypeScript' },
+      { pattern: /javascript|js/i, tech: 'JavaScript' },
+      { pattern: /database|sql|mongodb/i, tech: 'Database' },
+      { pattern: /api|rest|graphql/i, tech: 'API' },
+      { pattern: /docker|kubernetes/i, tech: 'Container' },
+      { pattern: /aws|azure|gcp/i, tech: 'Cloud' }
+    ];
+
+    techPatterns.forEach(({ pattern, tech: techName }) => {
+      if (pattern.test(lowerDesc)) {
+        tech.push(techName);
+      }
+    });
+
+    return tech.length > 0 ? tech : ['Web Development'];
+  }
+
+  /**
+   * Infer complexity level from task description for degraded mode
+   */
+  private inferComplexityFromDescription(description: string): 'low' | 'medium' | 'high' {
+    const lowerDesc = description.toLowerCase();
+    
+    // High complexity indicators
+    if (lowerDesc.includes('architecture') || lowerDesc.includes('system') || 
+        lowerDesc.includes('framework') || lowerDesc.includes('integration') ||
+        lowerDesc.includes('migration') || lowerDesc.includes('performance')) {
+      return 'high';
+    }
+    
+    // Medium complexity indicators
+    if (lowerDesc.includes('api') || lowerDesc.includes('database') || 
+        lowerDesc.includes('component') || lowerDesc.includes('service') ||
+        lowerDesc.includes('optimization') || lowerDesc.includes('security')) {
+      return 'medium';
+    }
+    
+    return 'low';
+  }
+
+  /**
+   * Extract detailed error information for logging
+   */
+  private extractErrorDetails(error: unknown): Record<string, unknown> {
+    if (error instanceof Error) {
+      const baseError = {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      };
+
+      // Include any additional error properties safely
+      const additionalProps: Record<string, unknown> = {};
+      
+      if ('cause' in error && error.cause) {
+        additionalProps.cause = this.extractErrorDetails(error.cause);
+      }
+      
+      // For API errors, include response data if available
+      if ('response' in error && error.response) {
+        const response = error.response as Record<string, unknown>;
+        additionalProps.response = {
+          status: response.status,
+          statusText: response.statusText,
+          data: response.data
+        };
+      }
+      
+      // For AxiosError, include request details
+      if ('config' in error && error.config) {
+        const config = error.config as Record<string, unknown>;
+        additionalProps.request = {
+          method: config.method,
+          url: config.url,
+          timeout: config.timeout
+        };
+      }
+
+      return { ...baseError, ...additionalProps };
+    } else if (typeof error === 'object' && error !== null) {
+      return {
+        type: 'object',
+        value: JSON.stringify(error),
+        properties: Object.keys(error)
+      };
+    } else {
+      return {
+        type: typeof error,
+        value: String(error)
+      };
+    }
   }
 }
 

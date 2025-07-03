@@ -1,7 +1,17 @@
 import path from 'path';
-import { readFile } from 'fs/promises';
 import { FileUtils, FileOperationResult } from './file-utils.js';
 import { OpenRouterConfig } from '../../../types/workflow.js';
+import {
+  ConfigurationError,
+  ValidationError,
+  createErrorContext
+} from './enhanced-errors.js';
+import {
+  ENVIRONMENT_VARIABLES,
+  DEFAULT_PERFORMANCE_CONFIG,
+  getEnvironmentValue,
+  validateAllEnvironmentVariables
+} from './config-defaults.js';
 import logger from '../../../logger.js';
 import { getProjectRoot } from '../../code-map-generator/utils/pathUtils.enhanced.js';
 
@@ -88,6 +98,25 @@ export interface VibeTaskManagerConfig {
       minConfidence: number;
       maxProcessingTime: number; // ms
     };
+    // Timeout and retry configuration
+    timeouts: {
+      taskExecution: number; // ms
+      taskDecomposition: number; // ms
+      recursiveTaskDecomposition: number; // ms
+      taskRefinement: number; // ms
+      agentCommunication: number; // ms
+      llmRequest: number; // ms
+      fileOperations: number; // ms
+      databaseOperations: number; // ms
+      networkOperations: number; // ms
+    };
+    retryPolicy: {
+      maxRetries: number;
+      backoffMultiplier: number;
+      initialDelayMs: number;
+      maxDelayMs: number;
+      enableExponentialBackoff: boolean;
+    };
     // Performance optimization settings
     performance: {
       memoryManagement: {
@@ -143,22 +172,17 @@ export class ConfigLoader {
   private initializationPromise: Promise<void> | null = null;
   private loadingStartTime: number = 0;
 
+  // Cache hit rate tracking
+  private cacheHits: number = 0;
+  private cacheRequests: number = 0;
+
   private constructor() {
     const projectRoot = getProjectRoot();
     this.llmConfigPath = path.join(projectRoot, 'llm_config.json');
     this.mcpConfigPath = path.join(projectRoot, 'mcp-config.json');
 
-    // Performance configuration with <50ms targets
-    this.performanceConfig = {
-      enableConfigCache: true,
-      configCacheTTL: 300000, // 5 minutes
-      lazyLoadServices: true,
-      preloadCriticalServices: ['execution-coordinator', 'agent-orchestrator'],
-      connectionPoolSize: 10,
-      maxStartupTime: 50, // <50ms target
-      asyncInitialization: true,
-      batchConfigLoading: true
-    };
+    // Performance configuration from defaults
+    this.performanceConfig = { ...DEFAULT_PERFORMANCE_CONFIG };
   }
 
   /**
@@ -203,13 +227,20 @@ export class ConfigLoader {
    * Get configuration from cache
    */
   private getCachedConfig(cacheKey: string): VibeTaskManagerConfig | null {
+    this.cacheRequests++;
+
     if (!this.isCacheValid(cacheKey)) {
       this.configCache.delete(cacheKey);
       return null;
     }
 
     const cached = this.configCache.get(cacheKey);
-    return cached ? { ...cached.config } : null;
+    if (cached) {
+      this.cacheHits++;
+      return { ...cached.config };
+    }
+
+    return null;
   }
 
   /**
@@ -231,41 +262,95 @@ export class ConfigLoader {
    * Load configuration files in batch for better performance
    */
   private async batchLoadConfigs(): Promise<{ llm: LLMConfig; mcp: MCPConfig }> {
-    if (this.performanceConfig.batchConfigLoading) {
-      // Load both files concurrently
-      const [llmResult, mcpResult] = await Promise.all([
-        FileUtils.readJsonFile<LLMConfig>(this.llmConfigPath),
-        FileUtils.readJsonFile<MCPConfig>(this.mcpConfigPath)
-      ]);
+    const context = createErrorContext('ConfigLoader', 'batchLoadConfigs')
+      .metadata({
+        llmConfigPath: this.llmConfigPath,
+        mcpConfigPath: this.mcpConfigPath,
+        batchLoading: this.performanceConfig.batchConfigLoading
+      })
+      .build();
 
-      if (!llmResult.success) {
-        throw new Error(`Failed to load LLM config: ${llmResult.error}`);
+    try {
+      if (this.performanceConfig.batchConfigLoading) {
+        // Load both files concurrently
+        const [llmResult, mcpResult] = await Promise.all([
+          FileUtils.readJsonFile<LLMConfig>(this.llmConfigPath),
+          FileUtils.readJsonFile<MCPConfig>(this.mcpConfigPath)
+        ]);
+
+        if (!llmResult.success) {
+          throw new ConfigurationError(
+            `Failed to load LLM configuration file: ${llmResult.error}`,
+            context,
+            {
+              configKey: 'llm_config',
+              expectedValue: 'Valid JSON file with LLM mappings',
+              actualValue: llmResult.error
+            }
+          );
+        }
+
+        if (!mcpResult.success) {
+          throw new ConfigurationError(
+            `Failed to load MCP configuration file: ${mcpResult.error}`,
+            context,
+            {
+              configKey: 'mcp_config',
+              expectedValue: 'Valid JSON file with MCP tool definitions',
+              actualValue: mcpResult.error
+            }
+          );
+        }
+
+        return {
+          llm: llmResult.data!,
+          mcp: mcpResult.data!
+        };
+      } else {
+        // Sequential loading (fallback)
+        const llmResult = await FileUtils.readJsonFile<LLMConfig>(this.llmConfigPath);
+        if (!llmResult.success) {
+          throw new ConfigurationError(
+            `Failed to load LLM configuration file: ${llmResult.error}`,
+            context,
+            {
+              configKey: 'llm_config',
+              expectedValue: 'Valid JSON file with LLM mappings',
+              actualValue: llmResult.error
+            }
+          );
+        }
+
+        const mcpResult = await FileUtils.readJsonFile<MCPConfig>(this.mcpConfigPath);
+        if (!mcpResult.success) {
+          throw new ConfigurationError(
+            `Failed to load MCP configuration file: ${mcpResult.error}`,
+            context,
+            {
+              configKey: 'mcp_config',
+              expectedValue: 'Valid JSON file with MCP tool definitions',
+              actualValue: mcpResult.error
+            }
+          );
+        }
+
+        return {
+          llm: llmResult.data!,
+          mcp: mcpResult.data!
+        };
+      }
+    } catch (error) {
+      if (error instanceof ConfigurationError) {
+        throw error;
       }
 
-      if (!mcpResult.success) {
-        throw new Error(`Failed to load MCP config: ${mcpResult.error}`);
-      }
-
-      return {
-        llm: llmResult.data!,
-        mcp: mcpResult.data!
-      };
-    } else {
-      // Sequential loading (fallback)
-      const llmResult = await FileUtils.readJsonFile<LLMConfig>(this.llmConfigPath);
-      if (!llmResult.success) {
-        throw new Error(`Failed to load LLM config: ${llmResult.error}`);
-      }
-
-      const mcpResult = await FileUtils.readJsonFile<MCPConfig>(this.mcpConfigPath);
-      if (!mcpResult.success) {
-        throw new Error(`Failed to load MCP config: ${mcpResult.error}`);
-      }
-
-      return {
-        llm: llmResult.data!,
-        mcp: mcpResult.data!
-      };
+      throw new ConfigurationError(
+        `Unexpected error during configuration loading: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          cause: error instanceof Error ? error : undefined
+        }
+      );
     }
   }
 
@@ -302,30 +387,72 @@ export class ConfigLoader {
       // Batch load configuration files
       const { llm, mcp } = await this.batchLoadConfigs();
 
-      // Combine configurations with optimized task manager defaults
+      // Validate environment variables first
+      const envValidation = validateAllEnvironmentVariables();
+      if (!envValidation.valid) {
+        const errorContext = createErrorContext('ConfigLoader', 'loadConfig')
+          .metadata({ errors: envValidation.errors })
+          .build();
+
+        throw new ConfigurationError(
+          `Environment variable validation failed: ${envValidation.errors.join(', ')}`,
+          errorContext,
+          {
+            configKey: 'environment_variables',
+            expectedValue: 'Valid environment configuration',
+            actualValue: envValidation.errors.join(', ')
+          }
+        );
+      }
+
+      // Log warnings for non-critical environment variable issues
+      if (envValidation.warnings.length > 0) {
+        logger.warn({ warnings: envValidation.warnings }, 'Environment variable warnings (using defaults)');
+      }
+
+      // Combine configurations with environment-based task manager settings
       this.config = {
         llm,
         mcp,
         taskManager: {
-          maxConcurrentTasks: 10,
-          defaultTaskTemplate: 'development',
+          maxConcurrentTasks: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_MAX_CONCURRENT_TASKS),
+          defaultTaskTemplate: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_DEFAULT_TASK_TEMPLATE),
           dataDirectory: this.getVibeTaskManagerOutputDirectory(),
           performanceTargets: {
-            maxResponseTime: 50, // <50ms target for Epic 6.2
-            maxMemoryUsage: 500,
-            minTestCoverage: 90
+            maxResponseTime: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_MAX_RESPONSE_TIME),
+            maxMemoryUsage: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_MAX_MEMORY_USAGE),
+            minTestCoverage: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_MIN_TEST_COVERAGE)
           },
           agentSettings: {
-            maxAgents: 10,
-            defaultAgent: 'default-agent',
-            coordinationStrategy: 'capability_based',
-            healthCheckInterval: 30
+            maxAgents: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_MAX_AGENTS),
+            defaultAgent: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_DEFAULT_AGENT),
+            coordinationStrategy: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_COORDINATION_STRATEGY),
+            healthCheckInterval: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_HEALTH_CHECK_INTERVAL)
           },
           nlpSettings: {
-            primaryMethod: 'hybrid',
-            fallbackMethod: 'pattern',
-            minConfidence: 0.7,
-            maxProcessingTime: 50 // Reduced to 50ms for Epic 6.2
+            primaryMethod: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_PRIMARY_NLP_METHOD),
+            fallbackMethod: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_FALLBACK_NLP_METHOD),
+            minConfidence: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_MIN_CONFIDENCE),
+            maxProcessingTime: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_MAX_NLP_PROCESSING_TIME)
+          },
+          // Environment-based timeout and retry settings
+          timeouts: {
+            taskExecution: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_TASK_EXECUTION_TIMEOUT),
+            taskDecomposition: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_TASK_DECOMPOSITION_TIMEOUT),
+            recursiveTaskDecomposition: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_RECURSIVE_TASK_DECOMPOSITION_TIMEOUT),
+            taskRefinement: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_TASK_REFINEMENT_TIMEOUT),
+            agentCommunication: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_AGENT_COMMUNICATION_TIMEOUT),
+            llmRequest: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_LLM_REQUEST_TIMEOUT),
+            fileOperations: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_FILE_OPERATIONS_TIMEOUT),
+            databaseOperations: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_DATABASE_OPERATIONS_TIMEOUT),
+            networkOperations: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_NETWORK_OPERATIONS_TIMEOUT)
+          },
+          retryPolicy: {
+            maxRetries: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_MAX_RETRIES),
+            backoffMultiplier: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_BACKOFF_MULTIPLIER),
+            initialDelayMs: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_INITIAL_DELAY_MS),
+            maxDelayMs: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_MAX_DELAY_MS),
+            enableExponentialBackoff: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_ENABLE_EXPONENTIAL_BACKOFF)
           },
           // Enhanced performance optimization for <50ms target
           performance: {
@@ -396,10 +523,24 @@ export class ConfigLoader {
 
     } catch (error) {
       const loadTime = performance.now() - this.loadingStartTime;
-      logger.error({
-        err: error,
-        loadTime
-      }, 'Failed to load Vibe Task Manager configuration');
+
+      // Enhanced error logging with context
+      if (error instanceof ConfigurationError || error instanceof ValidationError) {
+        logger.error({
+          err: error,
+          loadTime,
+          category: error.category,
+          severity: error.severity,
+          retryable: error.retryable,
+          recoveryActions: error.recoveryActions.length
+        }, 'Configuration loading failed with enhanced error');
+      } else {
+        logger.error({
+          err: error,
+          loadTime,
+          errorType: error instanceof Error ? error.constructor.name : 'Unknown'
+        }, 'Configuration loading failed with unexpected error');
+      }
 
       return {
         success: false,
@@ -425,13 +566,15 @@ export class ConfigLoader {
    * Get LLM model for specific operation
    */
   getLLMModel(operation: string): string {
+    const fallbackModel = getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_DEFAULT_LLM_MODEL) as string;
+
     if (!this.config) {
-      return 'google/gemini-2.5-flash-preview-05-20'; // fallback
+      return fallbackModel;
     }
 
     return this.config.llm.llm_mapping[operation] ||
            this.config.llm.llm_mapping['default_generation'] ||
-           'google/gemini-2.5-flash-preview-05-20';
+           fallbackModel;
   }
 
   /**
@@ -573,7 +716,18 @@ export class ConfigLoader {
    */
   clearCache(): void {
     this.configCache.clear();
-    logger.debug('Configuration cache cleared');
+    this.cacheHits = 0;
+    this.cacheRequests = 0;
+    logger.debug('Configuration cache and statistics cleared');
+  }
+
+  /**
+   * Reset cache statistics without clearing cache
+   */
+  resetCacheStats(): void {
+    this.cacheHits = 0;
+    this.cacheRequests = 0;
+    logger.debug('Cache statistics reset');
   }
 
   /**
@@ -583,12 +737,18 @@ export class ConfigLoader {
     size: number;
     entries: string[];
     hitRate: number;
+    totalRequests: number;
+    totalHits: number;
   } {
     const entries = Array.from(this.configCache.keys());
+    const hitRate = this.cacheRequests > 0 ? (this.cacheHits / this.cacheRequests) : 0;
+
     return {
       size: this.configCache.size,
       entries,
-      hitRate: 0 // TODO: Implement hit rate tracking
+      hitRate: Math.round(hitRate * 100) / 100, // Round to 2 decimal places
+      totalRequests: this.cacheRequests,
+      totalHits: this.cacheHits
     };
   }
 
@@ -602,6 +762,14 @@ export class ConfigLoader {
 
     const startTime = performance.now();
     await this.loadConfig();
+
+    // Pre-load frequently accessed configurations
+    this.getLLMModel('task_decomposition');
+    this.getLLMModel('atomic_task_detection');
+    this.getLLMModel('intent_recognition');
+    this.getMCPToolConfig('vibe-task-manager');
+    this.getTaskManagerConfig();
+
     const warmupTime = performance.now() - startTime;
 
     logger.debug({ warmupTime }, 'Configuration cache warmed up');
@@ -668,10 +836,10 @@ export function extractVibeTaskManagerSecurityConfig(config?: OpenRouterConfig):
 
   if (config) {
     // Try to extract from tools['vibe-task-manager'] first
-    const toolConfig = config.tools?.['vibe-task-manager'] as any;
+    const toolConfig = config.tools?.['vibe-task-manager'] as Partial<VibeTaskManagerSecurityConfig> | undefined;
 
     // If not found, try config['vibe-task-manager']
-    const configSection = config.config?.['vibe-task-manager'] as any;
+    const configSection = config.config?.['vibe-task-manager'] as Partial<VibeTaskManagerSecurityConfig> | undefined;
 
     // Merge configurations if they exist
     if (toolConfig || configSection) {
@@ -722,4 +890,62 @@ export function extractVibeTaskManagerSecurityConfig(config?: OpenRouterConfig):
     allowedWriteDirectory: resolvedWriteDir,
     securityMode
   };
+}
+
+/**
+ * Create AgentOrchestrator configuration from centralized config
+ */
+export async function getOrchestratorConfig(): Promise<unknown> {
+  try {
+    const config = await getVibeTaskManagerConfig();
+    if (!config) {
+      logger.debug('No config found, using AgentOrchestrator defaults');
+      return null;
+    }
+
+    const agentSettings = config.taskManager?.agentSettings;
+    const timeouts = config.taskManager?.timeouts;
+
+    if (!agentSettings) {
+      logger.debug('No agent settings found in config, using AgentOrchestrator defaults');
+      return null;
+    }
+
+    // Map centralized config to OrchestratorConfig
+    const orchestratorConfig = {
+      heartbeatInterval: (agentSettings.healthCheckInterval || 30) * 1000, // Convert seconds to ms
+      taskTimeout: timeouts?.taskExecution || 300000, // 5 minutes default
+      maxRetries: 3, // Default, could be made configurable
+      loadBalancingStrategy: mapCoordinationStrategy(agentSettings.coordinationStrategy),
+      enableHealthChecks: true,
+      conflictResolutionStrategy: 'queue' as const, // Could be made configurable
+      heartbeatTimeoutMultiplier: 3, // Could be made configurable
+      enableAdaptiveTimeouts: true, // Could be made configurable  
+      maxHeartbeatMisses: 5 // Could be made configurable
+    };
+
+    logger.debug({ orchestratorConfig }, 'Created OrchestratorConfig from centralized config');
+    return orchestratorConfig;
+
+  } catch (error) {
+    logger.warn({ err: error }, 'Failed to load centralized config for AgentOrchestrator, using defaults');
+    return null;
+  }
+}
+
+/**
+ * Map coordination strategy from centralized config to orchestrator strategy
+ */
+function mapCoordinationStrategy(strategy?: string): 'round_robin' | 'capability_based' | 'performance_based' {
+  switch (strategy) {
+    case 'round_robin':
+      return 'round_robin';
+    case 'capability_based':
+      return 'capability_based';
+    case 'priority_based':
+    case 'least_loaded':
+      return 'performance_based';
+    default:
+      return 'capability_based';
+  }
 }

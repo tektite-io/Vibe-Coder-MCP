@@ -3,6 +3,7 @@ import { getStorageManager } from '../core/storage/storage-manager.js';
 import { getTaskOperations } from '../core/operations/task-operations.js';
 import { getIdGenerator } from '../utils/id-generator.js';
 import { FileOperationResult } from '../utils/file-utils.js';
+import { InitializationMonitor } from '../../../utils/initialization-monitor.js';
 import logger from '../../../logger.js';
 
 /**
@@ -65,7 +66,7 @@ export interface EpicProgress {
  * Epic service for managing epic-level task organization
  */
 export class EpicService {
-  private static instance: EpicService;
+  private static instance: EpicService | undefined;
 
   private constructor() {}
 
@@ -74,9 +75,33 @@ export class EpicService {
    */
   static getInstance(): EpicService {
     if (!EpicService.instance) {
-      EpicService.instance = new EpicService();
+      const monitor = InitializationMonitor.getInstance();
+      monitor.startServiceInitialization('EpicService', [
+        'StorageManager',
+        'TaskOperations',
+        'IdGenerator'
+      ]);
+
+      try {
+        monitor.startPhase('EpicService', 'constructor');
+        EpicService.instance = new EpicService();
+        monitor.endPhase('EpicService', 'constructor');
+
+        monitor.endServiceInitialization('EpicService');
+      } catch (error) {
+        monitor.endPhase('EpicService', 'constructor', error as Error);
+        monitor.endServiceInitialization('EpicService', error as Error);
+        throw error;
+      }
     }
     return EpicService.instance;
+  }
+
+  /**
+   * Reset singleton instance (for testing)
+   */
+  static resetInstance(): void {
+    EpicService.instance = undefined;
   }
 
   /**
@@ -238,7 +263,7 @@ export class EpicService {
       }
 
       // Prepare update object
-      const updates: any = {
+      const updates: Record<string, unknown> = {
         ...params,
         metadata: {
           updatedAt: new Date(),

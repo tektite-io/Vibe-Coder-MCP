@@ -96,14 +96,21 @@ describe('AgentOrchestrator - executeTask', () => {
       process.env.NODE_ENV = 'test';
 
       // Mock the communication channel methods directly
-      const originalSendTask = (orchestrator as any).communicationChannel.sendTask;
-      const originalReceiveResponse = (orchestrator as any).communicationChannel.receiveResponse;
+      interface OrchestratorWithChannel {
+        communicationChannel: {
+          sendTask: unknown;
+          receiveResponse: unknown;
+        };
+      }
+      const orchestratorWithChannel = orchestrator as unknown as OrchestratorWithChannel;
+      const originalSendTask = orchestratorWithChannel.communicationChannel.sendTask;
+      const originalReceiveResponse = orchestratorWithChannel.communicationChannel.receiveResponse;
 
       // Mock sendTask to return success
-      (orchestrator as any).communicationChannel.sendTask = vi.fn().mockResolvedValue(true);
+      orchestratorWithChannel.communicationChannel.sendTask = vi.fn().mockResolvedValue(true);
 
       // Mock receiveResponse to return a successful completion response in Sentinel Protocol format
-      (orchestrator as any).communicationChannel.receiveResponse = vi.fn().mockResolvedValue(`VIBE_STATUS: DONE
+      orchestratorWithChannel.communicationChannel.receiveResponse = vi.fn().mockResolvedValue(`VIBE_STATUS: DONE
 Task completed successfully
 
 Files modified: []
@@ -125,8 +132,8 @@ Notes: Task completed successfully`);
 
       // Restore environment and communication channel methods
       process.env.NODE_ENV = originalEnv;
-      (orchestrator as any).communicationChannel.sendTask = originalSendTask;
-      (orchestrator as any).communicationChannel.receiveResponse = originalReceiveResponse;
+      orchestratorWithChannel.communicationChannel.sendTask = originalSendTask;
+      orchestratorWithChannel.communicationChannel.receiveResponse = originalReceiveResponse;
 
       // With mocked communication channel, should succeed
       expect(result.success).toBe(true);
@@ -154,8 +161,15 @@ Notes: Task completed successfully`);
 
     it('should handle task delivery failure', async () => {
       // Mock communication channel to fail delivery
-      const originalChannel = (orchestrator as any).communicationChannel;
-      (orchestrator as any).communicationChannel = {
+      interface OrchestratorWithChannel {
+        communicationChannel: {
+          sendTask: unknown;
+          receiveResponse: unknown;
+        };
+      }
+      const orchestratorWithChannel = orchestrator as unknown as OrchestratorWithChannel;
+      const originalChannel = orchestratorWithChannel.communicationChannel;
+      orchestratorWithChannel.communicationChannel = {
         ...originalChannel,
         sendTask: vi.fn().mockResolvedValue(false)
       };
@@ -304,6 +318,85 @@ Notes: Task completed successfully`);
 
       // Stats should be updated (assignments may increase)
       expect(statsAfter.totalAssignments).toBeGreaterThanOrEqual(statsBefore.totalAssignments);
+    });
+  });
+
+  describe('Agent Module Loading', () => {
+    it('should load agent modules with corrected import paths', async () => {
+      // Test that the communication channel initializes properly with corrected paths
+      interface OrchestratorWithChannel {
+        communicationChannel: {
+          agentRegistry: {
+            getAgent: (agentId: string) => Promise<unknown>;
+          };
+          taskQueue: {
+            addTask: (agentId: string, task: unknown) => Promise<unknown>;
+          };
+          responseProcessor: {
+            getAgentResponses: (agentId: string) => Promise<unknown>;
+          };
+        };
+      }
+      const orchestratorWithChannel = orchestrator as unknown as OrchestratorWithChannel;
+      const communicationChannel = orchestratorWithChannel.communicationChannel;
+
+      // Verify that the communication channel is initialized
+      expect(communicationChannel).toBeDefined();
+
+      // Test that agent modules can be accessed (they should not be fallback implementations)
+      const agentRegistry = communicationChannel.agentRegistry;
+      const taskQueue = communicationChannel.taskQueue;
+      const responseProcessor = communicationChannel.responseProcessor;
+
+      expect(agentRegistry).toBeDefined();
+      expect(taskQueue).toBeDefined();
+      expect(responseProcessor).toBeDefined();
+
+      // Verify these are not fallback implementations by checking for specific methods
+      expect(typeof agentRegistry.getAgent).toBe('function');
+      expect(typeof taskQueue.addTask).toBe('function');
+      expect(typeof responseProcessor.getAgentResponses).toBe('function');
+    });
+
+    it('should handle agent module import failures gracefully', async () => {
+      // This test verifies that if agent modules fail to load, fallback implementations are used
+      // The system should continue to function even with fallback implementations
+
+      interface OrchestratorWithChannel {
+        communicationChannel: unknown;
+      }
+      const orchestratorWithChannel = orchestrator as unknown as OrchestratorWithChannel;
+      const communicationChannel = orchestratorWithChannel.communicationChannel;
+      expect(communicationChannel).toBeDefined();
+
+      // Even with potential import failures, the orchestrator should still be functional
+      const agents = orchestrator.getAgents();
+      expect(Array.isArray(agents)).toBe(true);
+
+      // Should be able to register agents even with fallback implementations
+      const testAgentId = 'fallback-test-agent';
+      orchestrator.registerAgent({
+        id: testAgentId,
+        name: 'Fallback Test Agent',
+        capabilities: ['general'],
+        status: 'available',
+        maxConcurrentTasks: 1,
+        currentTasks: [],
+        performance: {
+          tasksCompleted: 0,
+          successRate: 1.0,
+          averageCompletionTime: 300000,
+          lastTaskCompletedAt: new Date()
+        },
+        lastHeartbeat: new Date(),
+        metadata: {
+          version: '1.0.0',
+          registeredAt: new Date()
+        }
+      });
+
+      const registeredAgent = orchestrator.getAgents().find(a => a.id === testAgentId);
+      expect(registeredAgent).toBeDefined();
     });
   });
 });

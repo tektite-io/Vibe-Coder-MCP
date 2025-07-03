@@ -102,8 +102,13 @@ export interface ProgressConfig {
   updateIntervalMinutes: number;
   enableRealTimeUpdates: boolean;
   enableCompletionEstimation: boolean;
+  enableDependencyTracking: boolean;
+  enableCriticalPathMonitoring: boolean;
+  enableScheduleDeviationAlerts: boolean;
   complexityWeights: Record<string, number>;
   statusWeights: Record<string, number>;
+  deviationThresholdPercentage: number;
+  criticalPathUpdateInterval: number;
 }
 
 /**
@@ -114,11 +119,27 @@ export type ProgressEvent =
   | 'task_progress_updated'
   | 'task_completed'
   | 'task_blocked'
+  | 'task_failed'
+  | 'task_dependency_resolved'
+  | 'task_dependency_blocked'
   | 'epic_progress_updated'
   | 'epic_completed'
   | 'project_progress_updated'
   | 'project_completed'
-  | 'milestone_reached';
+  | 'milestone_reached'
+  | 'critical_path_updated'
+  | 'schedule_deviation_detected'
+  | 'decomposition_started'
+  | 'decomposition_progress'
+  | 'decomposition_completed'
+  | 'validation_started'
+  | 'validation_completed'
+  | 'research_triggered'
+  | 'research_completed'
+  | 'context_gathering_started'
+  | 'context_gathering_completed'
+  | 'dependency_detection_started'
+  | 'dependency_detection_completed';
 
 /**
  * Progress event data
@@ -131,7 +152,32 @@ export interface ProgressEventData {
   progressPercentage?: number;
   estimatedCompletion?: Date;
   timestamp: Date;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
+  // Enhanced properties for dependency tracking
+  dependencyId?: string;
+  // Enhanced properties for schedule deviation
+  deviationPercentage?: number;
+  actualHours?: number;
+  estimatedHours?: number;
+  status?: string;
+  // Enhanced properties for critical path monitoring
+  criticalPathTasks?: Array<{
+    id: string;
+    title: string;
+    estimatedHours: number;
+    status: string;
+  }>;
+  // Enhanced properties for vibe task manager components
+  componentName?: string;
+  stepName?: string;
+  currentStep?: number;
+  totalSteps?: number;
+  message?: string;
+  decompositionProgress?: {
+    phase: 'research' | 'context_gathering' | 'decomposition' | 'validation' | 'dependency_detection';
+    progress: number;
+    message: string;
+  };
 }
 
 /**
@@ -151,6 +197,9 @@ export class ProgressTracker {
       updateIntervalMinutes: 5,
       enableRealTimeUpdates: true,
       enableCompletionEstimation: true,
+      enableDependencyTracking: true,
+      enableCriticalPathMonitoring: true,
+      enableScheduleDeviationAlerts: true,
       complexityWeights: {
         'simple': 1,
         'medium': 2,
@@ -164,6 +213,8 @@ export class ProgressTracker {
         'blocked': 0,
         'failed': 0
       },
+      deviationThresholdPercentage: 20,
+      criticalPathUpdateInterval: 10,
       ...config
     };
 
@@ -393,7 +444,7 @@ export class ProgressTracker {
     }
 
     // Check for blockers
-    const blockers = task.dependencies?.filter(dep =>
+    const blockers = task.dependencies?.filter(_dep =>
       // In a real implementation, check if dependencies are blocking
       false // Placeholder
     ) || [];
@@ -414,34 +465,72 @@ export class ProgressTracker {
   }
 
   /**
-   * Update task progress
+   * Enhanced task status update with dependency tracking
+   */
+  async updateTaskStatus(
+    taskId: string,
+    newStatus: string,
+    progressPercentage?: number,
+    actualHours?: number,
+    dependencyUpdates?: { resolvedDependencies?: string[], blockedDependencies?: string[] }
+  ): Promise<void> {
+    try {
+      logger.debug({
+        taskId,
+        newStatus,
+        progressPercentage,
+        actualHours,
+        dependencyUpdates
+      }, 'Enhanced task status update requested');
+
+      // Emit appropriate status events
+      switch (newStatus) {
+        case 'in_progress':
+          this.emitProgressEvent('task_started', { taskId });
+          break;
+        case 'completed':
+          this.emitProgressEvent('task_completed', { taskId, progressPercentage: 100 });
+          break;
+        case 'blocked':
+          this.emitProgressEvent('task_blocked', { taskId });
+          break;
+        case 'failed':
+          this.emitProgressEvent('task_failed', { taskId });
+          break;
+        default:
+          this.emitProgressEvent('task_progress_updated', { taskId, progressPercentage });
+      }
+
+      // Handle dependency updates if enabled
+      if (this.config.enableDependencyTracking && dependencyUpdates) {
+        await this.handleDependencyUpdates(taskId, dependencyUpdates);
+      }
+
+      // Check for schedule deviations if enabled
+      if (this.config.enableScheduleDeviationAlerts) {
+        await this.checkScheduleDeviation(taskId, newStatus, actualHours);
+      }
+
+      // Invalidate cached progress for affected project
+      this.progressCache.clear();
+
+      logger.debug({ taskId, newStatus }, 'Enhanced task status updated');
+
+    } catch (error) {
+      logger.error({ err: error, taskId, newStatus }, 'Failed to update task status');
+      throw new AppError('Task status update failed', { cause: error });
+    }
+  }
+
+  /**
+   * Update task progress (legacy method for backward compatibility)
    */
   async updateTaskProgress(
     taskId: string,
     progressPercentage: number,
     actualHours?: number
   ): Promise<void> {
-    try {
-      // Placeholder implementation - in real implementation, this would update storage
-      logger.debug({ taskId, progressPercentage, actualHours }, 'Task progress update requested');
-
-      // Emit progress event
-      this.emitProgressEvent('task_progress_updated', {
-        taskId,
-        progressPercentage
-      });
-
-      // Invalidate cached progress for affected project
-      // In real implementation, would fetch task to get projectId
-      // For now, just clear all cache
-      this.progressCache.clear();
-
-      logger.debug({ taskId, progressPercentage, actualHours }, 'Task progress updated');
-
-    } catch (error) {
-      logger.error({ err: error, taskId }, 'Failed to update task progress');
-      throw new AppError('Task progress update failed', { cause: error });
-    }
+    await this.updateTaskStatus(taskId, 'in_progress', progressPercentage, actualHours);
   }
 
   /**
@@ -501,17 +590,19 @@ export class ProgressTracker {
     if (items.length === 0) return 0;
 
     switch (this.config.method) {
-      case 'task_count':
+      case 'task_count': {
         const totalTasks = items.reduce((sum, item) => sum + item.total, 0);
         const completedTasks = items.reduce((sum, item) => sum + item.completed, 0);
         return totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 0;
+      }
 
-      case 'estimated_hours':
+      case 'estimated_hours': {
         const totalHours = items.reduce((sum, item) => sum + (item.estimatedHours || 0), 0);
         const actualHours = items.reduce((sum, item) => sum + (item.actualHours || 0), 0);
         return totalHours > 0 ? Math.min((actualHours / totalHours) * 100, 100) : 0;
+      }
 
-      case 'weighted':
+      case 'weighted': {
         // Combine task count and hours with weights
         const taskProgress = this.calculateProgressPercentage(items.map(item => ({
           completed: item.completed,
@@ -522,6 +613,7 @@ export class ProgressTracker {
           total: item.estimatedHours || 0
         })));
         return (taskProgress * 0.6) + (hourProgress * 0.4);
+      }
 
       default:
         return this.calculateProgressPercentage(items.map(item => ({
@@ -578,7 +670,7 @@ export class ProgressTracker {
   /**
    * Emit progress event
    */
-  private emitProgressEvent(event: ProgressEvent, data: Partial<ProgressEventData>): void {
+  emitProgressEvent(event: ProgressEvent, data: Partial<ProgressEventData>): void {
     const eventData: ProgressEventData = {
       event,
       timestamp: new Date(),
@@ -595,6 +687,470 @@ export class ProgressTracker {
         }
       });
     }
+  }
+
+  /**
+   * Handle dependency updates and emit appropriate events
+   */
+  private async handleDependencyUpdates(
+    taskId: string,
+    dependencyUpdates: { resolvedDependencies?: string[], blockedDependencies?: string[] }
+  ): Promise<void> {
+    try {
+      if (dependencyUpdates.resolvedDependencies?.length) {
+        for (const depId of dependencyUpdates.resolvedDependencies) {
+          this.emitProgressEvent('task_dependency_resolved', {
+            taskId,
+            dependencyId: depId,
+            timestamp: new Date()
+          });
+        }
+        logger.debug({
+          taskId,
+          resolvedDependencies: dependencyUpdates.resolvedDependencies
+        }, 'Task dependencies resolved');
+      }
+
+      if (dependencyUpdates.blockedDependencies?.length) {
+        for (const depId of dependencyUpdates.blockedDependencies) {
+          this.emitProgressEvent('task_dependency_blocked', {
+            taskId,
+            dependencyId: depId,
+            timestamp: new Date()
+          });
+        }
+        logger.warn({
+          taskId,
+          blockedDependencies: dependencyUpdates.blockedDependencies
+        }, 'Task dependencies blocked');
+      }
+
+    } catch (error) {
+      logger.error({ err: error, taskId }, 'Failed to handle dependency updates');
+    }
+  }
+
+  /**
+   * Check for schedule deviations and emit alerts
+   */
+  private async checkScheduleDeviation(
+    taskId: string,
+    status: string,
+    actualHours?: number
+  ): Promise<void> {
+    try {
+      // In a real implementation, this would:
+      // 1. Fetch the task's estimated hours and scheduled completion
+      // 2. Compare actual progress vs. expected progress
+      // 3. Calculate deviation percentage
+      // 4. Emit alerts if deviation exceeds threshold
+
+      // Placeholder implementation
+      if (actualHours && actualHours > 0) {
+        // Simulate estimated hours (in real implementation, fetch from task)
+        const estimatedHours = 8; // Placeholder
+        const deviationPercentage = ((actualHours - estimatedHours) / estimatedHours) * 100;
+
+        if (Math.abs(deviationPercentage) > this.config.deviationThresholdPercentage) {
+          this.emitProgressEvent('schedule_deviation_detected', {
+            taskId,
+            deviationPercentage,
+            actualHours,
+            estimatedHours,
+            status,
+            timestamp: new Date()
+          });
+
+          logger.warn({
+            taskId,
+            deviationPercentage,
+            actualHours,
+            estimatedHours,
+            threshold: this.config.deviationThresholdPercentage
+          }, 'Schedule deviation detected');
+        }
+      }
+
+    } catch (error) {
+      logger.error({ err: error, taskId }, 'Failed to check schedule deviation');
+    }
+  }
+
+  /**
+   * Monitor critical path changes
+   */
+  async monitorCriticalPath(projectId: string, tasks: AtomicTask[]): Promise<void> {
+    try {
+      if (!this.config.enableCriticalPathMonitoring) {
+        return;
+      }
+
+      // In a real implementation, this would:
+      // 1. Calculate the current critical path
+      // 2. Compare with previous critical path
+      // 3. Emit events if critical path has changed
+      // 4. Update estimated project completion time
+
+      // Placeholder implementation
+      const criticalPathTasks = tasks
+        .filter(task => task.priority === 'high' || task.dependencies.length > 0)
+        .sort((a, b) => b.estimatedHours - a.estimatedHours)
+        .slice(0, 5); // Top 5 critical tasks
+
+      this.emitProgressEvent('critical_path_updated', {
+        projectId,
+        criticalPathTasks: criticalPathTasks.map(t => ({
+          id: t.id,
+          title: t.title,
+          estimatedHours: t.estimatedHours,
+          status: t.status
+        })),
+        timestamp: new Date()
+      });
+
+      logger.debug({
+        projectId,
+        criticalPathTaskCount: criticalPathTasks.length
+      }, 'Critical path monitoring updated');
+
+    } catch (error) {
+      logger.error({ err: error, projectId }, 'Failed to monitor critical path');
+    }
+  }
+
+  /**
+   * Get real-time task status summary
+   */
+  async getTaskStatusSummary(projectId: string): Promise<{
+    total: number;
+    pending: number;
+    inProgress: number;
+    completed: number;
+    blocked: number;
+    failed: number;
+    progressPercentage: number;
+  }> {
+    try {
+      // In a real implementation, this would fetch actual task data
+      // Placeholder implementation
+      const summary = {
+        total: 10,
+        pending: 2,
+        inProgress: 3,
+        completed: 4,
+        blocked: 1,
+        failed: 0,
+        progressPercentage: 40
+      };
+
+      logger.debug({ projectId, summary }, 'Task status summary generated');
+      return summary;
+
+    } catch (error) {
+      logger.error({ err: error, projectId }, 'Failed to get task status summary');
+      throw new AppError('Task status summary generation failed', { cause: error });
+    }
+  }
+
+  /**
+   * Track decomposition progress with detailed steps
+   */
+  async trackDecompositionProgress(
+    taskId: string,
+    projectId: string,
+    onProgress?: (progress: ProgressEventData) => void
+  ): Promise<void> {
+    const steps = [
+      { phase: 'research', message: 'Evaluating research needs and gathering insights', weight: 20 },
+      { phase: 'context_gathering', message: 'Collecting relevant codebase context', weight: 25 },
+      { phase: 'decomposition', message: 'Breaking down task into atomic components', weight: 30 },
+      { phase: 'validation', message: 'Validating task quality and atomicity', weight: 15 },
+      { phase: 'dependency_detection', message: 'Detecting intelligent dependencies', weight: 10 }
+    ];
+
+    let currentProgress = 0;
+
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      
+      this.emitProgressEvent('decomposition_progress', {
+        taskId,
+        projectId,
+        currentStep: i + 1,
+        totalSteps: steps.length,
+        progressPercentage: currentProgress,
+        componentName: 'DecompositionService',
+        stepName: step.phase,
+        message: step.message,
+        decompositionProgress: {
+          phase: step.phase as 'research' | 'context_gathering' | 'decomposition' | 'validation' | 'dependency_detection',
+          progress: currentProgress,
+          message: step.message
+        }
+      });
+
+      if (onProgress) {
+        onProgress({
+          event: 'decomposition_progress',
+          taskId,
+          projectId,
+          currentStep: i + 1,
+          totalSteps: steps.length,
+          progressPercentage: currentProgress,
+          timestamp: new Date(),
+          decompositionProgress: {
+            phase: step.phase as 'research' | 'context_gathering' | 'decomposition' | 'validation' | 'dependency_detection',
+            progress: currentProgress,
+            message: step.message
+          }
+        });
+      }
+
+      // Simulate step completion time (in real implementation, this would be triggered by actual progress)
+      await new Promise(resolve => setTimeout(resolve, 500));
+      currentProgress += step.weight;
+    }
+
+    this.emitProgressEvent('decomposition_completed', {
+      taskId,
+      projectId,
+      progressPercentage: 100,
+      componentName: 'DecompositionService',
+      message: 'Task decomposition completed successfully'
+    });
+  }
+
+  /**
+   * Track validation progress for atomic tasks
+   */
+  async trackValidationProgress(
+    taskIds: string[],
+    projectId: string,
+    onProgress?: (progress: ProgressEventData) => void
+  ): Promise<void> {
+    this.emitProgressEvent('validation_started', {
+      projectId,
+      message: `Starting validation for ${taskIds.length} tasks`,
+      totalSteps: taskIds.length
+    });
+
+    for (let i = 0; i < taskIds.length; i++) {
+      const taskId = taskIds[i];
+      const progress = Math.round(((i + 1) / taskIds.length) * 100);
+
+      this.emitProgressEvent('validation_started', {
+        taskId,
+        projectId,
+        currentStep: i + 1,
+        totalSteps: taskIds.length,
+        progressPercentage: progress,
+        componentName: 'AtomicTaskDetector',
+        message: `Validating task ${i + 1} of ${taskIds.length}`
+      });
+
+      if (onProgress) {
+        onProgress({
+          event: 'validation_started',
+          taskId,
+          projectId,
+          currentStep: i + 1,
+          totalSteps: taskIds.length,
+          progressPercentage: progress,
+          timestamp: new Date(),
+          componentName: 'AtomicTaskDetector',
+          message: `Validating task ${i + 1} of ${taskIds.length}`
+        });
+      }
+
+      // Simulate validation time
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+
+    this.emitProgressEvent('validation_completed', {
+      projectId,
+      progressPercentage: 100,
+      componentName: 'AtomicTaskDetector',
+      message: `Validation completed for all ${taskIds.length} tasks`
+    });
+  }
+
+  /**
+   * Track research integration progress
+   */
+  async trackResearchProgress(
+    taskId: string,
+    projectId: string,
+    researchQueries: string[],
+    onProgress?: (progress: ProgressEventData) => void
+  ): Promise<void> {
+    this.emitProgressEvent('research_triggered', {
+      taskId,
+      projectId,
+      componentName: 'AutoResearchDetector',
+      message: `Research triggered for complex task: ${researchQueries.length} queries`,
+      totalSteps: researchQueries.length
+    });
+
+    for (let i = 0; i < researchQueries.length; i++) {
+      const progress = Math.round(((i + 1) / researchQueries.length) * 100);
+
+      this.emitProgressEvent('decomposition_progress', {
+        taskId,
+        projectId,
+        currentStep: i + 1,
+        totalSteps: researchQueries.length,
+        progressPercentage: progress,
+        componentName: 'AutoResearchDetector',
+        message: `Processing research query: ${researchQueries[i].substring(0, 50)}...`
+      });
+
+      if (onProgress) {
+        onProgress({
+          event: 'decomposition_progress',
+          taskId,
+          projectId,
+          currentStep: i + 1,
+          totalSteps: researchQueries.length,
+          progressPercentage: progress,
+          timestamp: new Date(),
+          componentName: 'AutoResearchDetector',
+          message: `Processing research query: ${researchQueries[i].substring(0, 50)}...`
+        });
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    this.emitProgressEvent('research_completed', {
+      taskId,
+      projectId,
+      progressPercentage: 100,
+      componentName: 'AutoResearchDetector',
+      message: 'Research integration completed'
+    });
+  }
+
+  /**
+   * Track context gathering progress
+   */
+  async trackContextProgress(
+    taskId: string,
+    projectId: string,
+    filesAnalyzed: number,
+    totalFiles: number,
+    onProgress?: (progress: ProgressEventData) => void
+  ): Promise<void> {
+    const progress = Math.round((filesAnalyzed / totalFiles) * 100);
+
+    this.emitProgressEvent('context_gathering_started', {
+      taskId,
+      projectId,
+      currentStep: filesAnalyzed,
+      totalSteps: totalFiles,
+      progressPercentage: progress,
+      componentName: 'ContextEnrichmentService',
+      message: `Analyzing file ${filesAnalyzed} of ${totalFiles}`
+    });
+
+    if (onProgress) {
+      onProgress({
+        event: 'context_gathering_started',
+        taskId,
+        projectId,
+        currentStep: filesAnalyzed,
+        totalSteps: totalFiles,
+        progressPercentage: progress,
+        timestamp: new Date(),
+        componentName: 'ContextEnrichmentService',
+        message: `Analyzing file ${filesAnalyzed} of ${totalFiles}`
+      });
+    }
+
+    if (filesAnalyzed >= totalFiles) {
+      this.emitProgressEvent('context_gathering_completed', {
+        taskId,
+        projectId,
+        progressPercentage: 100,
+        componentName: 'ContextEnrichmentService',
+        message: `Context gathering completed: ${totalFiles} files analyzed`
+      });
+    }
+  }
+
+  /**
+   * Track dependency detection progress
+   */
+  async trackDependencyDetectionProgress(
+    taskIds: string[],
+    projectId: string,
+    dependenciesDetected: number,
+    onProgress?: (progress: ProgressEventData) => void
+  ): Promise<void> {
+    this.emitProgressEvent('dependency_detection_started', {
+      projectId,
+      componentName: 'OptimizedDependencyGraph',
+      message: `Starting dependency detection for ${taskIds.length} tasks`,
+      totalSteps: taskIds.length
+    });
+
+    const progress = Math.round((dependenciesDetected / (taskIds.length * taskIds.length)) * 100);
+
+    this.emitProgressEvent('dependency_detection_started', {
+      projectId,
+      progressPercentage: progress,
+      componentName: 'OptimizedDependencyGraph',
+      message: `Detected ${dependenciesDetected} dependencies so far`
+    });
+
+    if (onProgress) {
+      onProgress({
+        event: 'dependency_detection_started',
+        projectId,
+        progressPercentage: progress,
+        timestamp: new Date(),
+        componentName: 'OptimizedDependencyGraph',
+        message: `Detected ${dependenciesDetected} dependencies so far`
+      });
+    }
+  }
+
+  /**
+   * Complete dependency detection tracking
+   */
+  async completeDependencyDetectionProgress(
+    projectId: string,
+    finalDependencyCount: number,
+    appliedDependencies: number
+  ): Promise<void> {
+    this.emitProgressEvent('dependency_detection_completed', {
+      projectId,
+      progressPercentage: 100,
+      componentName: 'OptimizedDependencyGraph',
+      message: `Dependency detection completed: ${finalDependencyCount} suggestions, ${appliedDependencies} applied`
+    });
+  }
+
+  /**
+   * Get real-time progress for a specific component
+   */
+  async getComponentProgress(
+    _componentName: string,
+    _projectId?: string
+  ): Promise<{
+    isActive: boolean;
+    currentStep?: number;
+    totalSteps?: number;
+    progressPercentage: number;
+    message?: string;
+    lastUpdate: Date;
+  }> {
+    // In a real implementation, this would track active operations
+    // For now, return a placeholder implementation
+    return {
+      isActive: false,
+      progressPercentage: 0,
+      lastUpdate: new Date()
+    };
   }
 
   /**

@@ -6,13 +6,39 @@
  */
 
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { AgentRegistry } from '../agent-registry/index.js';
-import { AgentTaskQueue } from '../agent-tasks/index.js';
 import { sseNotifier } from '../../services/sse-notifier/index.js';
 import { jobManager } from '../../services/job-manager/index.js';
 import { getTaskOperations } from '../vibe-task-manager/core/operations/task-operations.js';
 import { registerTool, ToolDefinition } from '../../services/routing/toolRegistry.js';
+import { dependencyContainer } from '../../services/dependency-container.js';
 import { z } from 'zod';
+
+// Interfaces for cached objects
+interface AgentLike {
+  agentId?: string;
+  lastSeen?: number;
+  currentTasks?: string[];
+  maxConcurrentTasks?: number;
+  status?: string;
+  transportType?: string;
+  sessionId?: string;
+}
+
+interface TaskLike {
+  agentId?: string;
+  [key: string]: unknown;
+}
+
+interface AgentRegistryLike {
+  getAgent(agentId: string): Promise<AgentLike | null>;
+  updateAgentStatus(agentId: string, status: string): Promise<void>;
+}
+
+interface TaskQueueLike {
+  getTask(taskId: string): Promise<TaskLike | null>;
+  removeTask(taskId: string): Promise<void>;
+  getQueueLength(agentId: string): Promise<number>;
+}
 
 // Agent response interface
 export interface AgentResponse {
@@ -29,19 +55,77 @@ export interface AgentResponse {
     partialProgress?: number;
   };
   receivedAt?: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 // Response processor singleton
 class AgentResponseProcessor {
   private static instance: AgentResponseProcessor;
+  private static isInitializing = false; // Initialization guard to prevent circular initialization
   private responseHistory = new Map<string, AgentResponse>(); // taskId -> response
+  private agentRegistryCache: AgentRegistryLike | null = null; // Cache for safe agent registry access
+  private agentTaskQueueCache: TaskQueueLike | null = null; // Cache for safe agent task queue access
 
   static getInstance(): AgentResponseProcessor {
+    if (AgentResponseProcessor.isInitializing) {
+      console.warn('Circular initialization detected in AgentResponseProcessor, using safe fallback');
+      return AgentResponseProcessor.createSafeFallback();
+    }
+
     if (!AgentResponseProcessor.instance) {
-      AgentResponseProcessor.instance = new AgentResponseProcessor();
+      AgentResponseProcessor.isInitializing = true;
+      try {
+        AgentResponseProcessor.instance = new AgentResponseProcessor();
+      } finally {
+        AgentResponseProcessor.isInitializing = false;
+      }
     }
     return AgentResponseProcessor.instance;
+  }
+
+  /**
+   * Create safe fallback instance to prevent recursion
+   */
+  private static createSafeFallback(): AgentResponseProcessor {
+    const fallback = Object.create(AgentResponseProcessor.prototype);
+
+    // Initialize with minimal safe properties
+    fallback.responseHistory = new Map();
+
+    // Provide safe no-op methods
+    fallback.processResponse = async () => {
+      console.warn('AgentResponseProcessor fallback: processResponse called during initialization');
+    };
+    fallback.getResponse = async () => {
+      console.warn('AgentResponseProcessor fallback: getResponse called during initialization');
+      return undefined;
+    };
+    fallback.getAllResponses = async () => {
+      console.warn('AgentResponseProcessor fallback: getAllResponses called during initialization');
+      return [];
+    };
+
+    return fallback;
+  }
+
+  /**
+   * Get AgentRegistry instance using dependency container
+   */
+  private async getAgentRegistry(): Promise<AgentRegistryLike | null> {
+    if (!this.agentRegistryCache) {
+      this.agentRegistryCache = await dependencyContainer.getAgentRegistry() as AgentRegistryLike;
+    }
+    return this.agentRegistryCache;
+  }
+
+  /**
+   * Get AgentTaskQueue instance using dependency container
+   */
+  private async getAgentTaskQueue(): Promise<TaskQueueLike | null> {
+    if (!this.agentTaskQueueCache) {
+      this.agentTaskQueueCache = await dependencyContainer.getAgentTaskQueue() as TaskQueueLike;
+    }
+    return this.agentTaskQueueCache;
   }
 
   async processResponse(response: AgentResponse): Promise<void> {
@@ -75,15 +159,15 @@ class AgentResponseProcessor {
 
   private async validateResponse(response: AgentResponse): Promise<void> {
     // Verify agent exists
-    const agentRegistry = AgentRegistry.getInstance();
-    const agent = await agentRegistry.getAgent(response.agentId);
+    const agentRegistry = await this.getAgentRegistry();
+    const agent = agentRegistry ? await agentRegistry.getAgent(response.agentId) : null;
     if (!agent) {
       throw new Error(`Agent ${response.agentId} not found`);
     }
 
     // Verify task exists
-    const taskQueue = AgentTaskQueue.getInstance();
-    const task = await taskQueue.getTask(response.taskId);
+    const taskQueue = await this.getAgentTaskQueue();
+    const task = taskQueue ? await taskQueue.getTask(response.taskId) : null;
     if (!task) {
       throw new Error(`Task ${response.taskId} not found`);
     }
@@ -174,15 +258,17 @@ class AgentResponseProcessor {
 
   private async updateAgentStatus(response: AgentResponse): Promise<void> {
     try {
-      const agentRegistry = AgentRegistry.getInstance();
-      const taskQueue = AgentTaskQueue.getInstance();
+      const agentRegistry = await this.getAgentRegistry();
+      const taskQueue = await this.getAgentTaskQueue();
 
       // Remove completed task from queue
-      await taskQueue.removeTask(response.taskId);
+      if (taskQueue) {
+        await taskQueue.removeTask(response.taskId);
+      }
 
       // Update agent last seen and task count
-      const agent = await agentRegistry.getAgent(response.agentId);
-      if (agent) {
+      const agent = agentRegistry ? await agentRegistry.getAgent(response.agentId) : null;
+      if (agent && agentRegistry && taskQueue) {
         agent.lastSeen = Date.now();
 
         // Update current tasks list
@@ -216,8 +302,8 @@ class AgentResponseProcessor {
       });
 
       // Send specific notification to agent's session if SSE transport
-      const agentRegistry = AgentRegistry.getInstance();
-      const agent = await agentRegistry.getAgent(response.agentId);
+      const agentRegistry = await this.getAgentRegistry();
+      const agent = agentRegistry ? await agentRegistry.getAgent(response.agentId) : null;
 
       if (agent?.transportType === 'sse' && agent.sessionId) {
         await sseNotifier.sendEvent(agent.sessionId, 'responseReceived', {
@@ -336,14 +422,21 @@ export const submitTaskResponseTool = {
 };
 
 // Tool Handler
-export async function handleSubmitTaskResponse(args: any): Promise<CallToolResult> {
+export async function handleSubmitTaskResponse(args: Record<string, unknown>): Promise<CallToolResult> {
   try {
     const response: AgentResponse = {
-      agentId: args.agentId,
-      taskId: args.taskId,
-      status: args.status,
-      response: args.response,
-      completionDetails: args.completionDetails
+      agentId: args.agentId as string,
+      taskId: args.taskId as string,
+      status: args.status as 'DONE' | 'ERROR' | 'PARTIAL',
+      response: args.response as string,
+      completionDetails: args.completionDetails as {
+        filesModified?: string[];
+        testsPass?: boolean;
+        buildSuccessful?: boolean;
+        executionTime?: number;
+        errorDetails?: string;
+        partialProgress?: number;
+      } | undefined
     };
 
     // Process the response
