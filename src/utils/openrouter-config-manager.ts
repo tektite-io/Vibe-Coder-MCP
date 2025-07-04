@@ -135,7 +135,7 @@ export class OpenRouterConfigManager {
         baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
         apiKey: process.env.OPENROUTER_API_KEY || '',
         geminiModel: process.env.GEMINI_MODEL || 'google/gemini-2.5-flash-preview-05-20',
-        perplexityModel: process.env.PERPLEXITY_MODEL || 'perplexity/llama-3.1-sonar-small-128k-online',
+        perplexityModel: process.env.PERPLEXITY_MODEL || 'perplexity/sonar',
         llm_mapping: this.llmConfig?.llm_mapping || {}
       };
 
@@ -677,7 +677,7 @@ export class OpenRouterConfigManager {
       }
 
       if (!process.env.PERPLEXITY_MODEL) {
-        process.env.PERPLEXITY_MODEL = 'perplexity/llama-3.1-sonar-small-128k-online';
+        process.env.PERPLEXITY_MODEL = 'perplexity/sonar';
         warnings.push('PERPLEXITY_MODEL set to CI-safe default');
       }
     } else {

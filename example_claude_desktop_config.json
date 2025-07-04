@@ -1,0 +1,32 @@
+{
+  "mcpServers": {
+    "vibe-coder-mcp": {
+      "command": "node",
+      "args": ["/path/to/your/vibe-coder-mcp/build/index.js"],
+      "cwd": "/path/to/your/vibe-coder-mcp",
+      "transport": "stdio",
+      "env": {
+        "LLM_CONFIG_PATH": "/path/to/your/vibe-coder-mcp/llm_config.json",
+        "LOG_LEVEL": "debug",
+        "NODE_ENV": "production",
+        "VIBE_CODER_OUTPUT_DIR": "/path/to/your/vibe-coder-mcp/VibeCoderOutput",
+        "CODE_MAP_ALLOWED_DIR": "/path/to/your/vibe-coder-mcp",
+        "VIBE_TASK_MANAGER_READ_DIR": "/path/to/your/vibe-coder-mcp"
+      },
+      "disabled": false,
+      "autoApprove": [
+        "research",
+        "generate-rules",
+        "generate-user-stories",
+        "generate-task-list",
+        "generate-prd",
+        "generate-fullstack-starter-kit",
+        "run-workflow",
+        "get-job-result",
+        "process-request",
+        "map-codebase",
+        "curate-context"
+      ]
+    }
+  }
+}

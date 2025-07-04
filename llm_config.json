@@ -1,6 +1,6 @@
 {
   "llm_mapping": {
-    "research_query": "perplexity/llama-3.1-sonar-small-128k-online",
+    "research_query": "perplexity/sonar",
     "sequential_thought_generation": "google/gemini-2.5-flash-preview-05-20",
     "task_list_initial_generation": "google/gemini-2.5-flash-preview-05-20",
     "task_list_decomposition": "google/gemini-2.5-flash-preview-05-20",
