@@ -2,16 +2,16 @@
   "mcpServers": {
     "vibe-coder-mcp": {
       "command": "node",
-      "args": ["--max-old-space-size=4096", "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP/build/index.js"],
-      "cwd": "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP",
+      "args": ["/path/to/your/vibe-coder-mcp/build/index.js"],
+      "cwd": "/path/to/your/vibe-coder-mcp",
       "transport": "stdio",
       "env": {
-        "LLM_CONFIG_PATH": "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP/llm_config.json",
+        "LLM_CONFIG_PATH": "/path/to/your/vibe-coder-mcp/llm_config.json",
         "LOG_LEVEL": "debug",
         "NODE_ENV": "production",
-        "VIBE_CODER_OUTPUT_DIR": "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP/VibeCoderOutput",
-        "CODE_MAP_ALLOWED_DIR": "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP",
-        "VIBE_TASK_MANAGER_READ_DIR": "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP"
+        "VIBE_CODER_OUTPUT_DIR": "/path/to/your/vibe-coder-mcp/VibeCoderOutput",
+        "CODE_MAP_ALLOWED_DIR": "/path/to/your/vibe-coder-mcp",
+        "VIBE_TASK_MANAGER_READ_DIR": "/path/to/your/vibe-coder-mcp"
       },
       "disabled": false,
       "autoApprove": [

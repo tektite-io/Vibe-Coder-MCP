@@ -21,7 +21,7 @@ export async function performResearchQuery(query: string, config: OpenRouterConf
   }
 
   // Select the model using the utility function
-  const defaultModel = config.perplexityModel || "perplexity/sonar-deep-research"; // Use configured perplexity model as default
+  const defaultModel = config.perplexityModel || "perplexity/sonar"; // Use configured perplexity model as default
   const modelToUse = selectModelForTask(config, logicalTaskName, defaultModel);
 
   try {
