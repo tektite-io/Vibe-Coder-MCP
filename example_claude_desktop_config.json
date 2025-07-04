@@ -1,0 +1,32 @@
+{
+  "mcpServers": {
+    "vibe-coder-mcp": {
+      "command": "node",
+      "args": ["--max-old-space-size=4096", "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP/build/index.js"],
+      "cwd": "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP",
+      "transport": "stdio",
+      "env": {
+        "LLM_CONFIG_PATH": "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP/llm_config.json",
+        "LOG_LEVEL": "debug",
+        "NODE_ENV": "production",
+        "VIBE_CODER_OUTPUT_DIR": "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP/VibeCoderOutput",
+        "CODE_MAP_ALLOWED_DIR": "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP",
+        "VIBE_TASK_MANAGER_READ_DIR": "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP"
+      },
+      "disabled": false,
+      "autoApprove": [
+        "research",
+        "generate-rules",
+        "generate-user-stories",
+        "generate-task-list",
+        "generate-prd",
+        "generate-fullstack-starter-kit",
+        "run-workflow",
+        "get-job-result",
+        "process-request",
+        "map-codebase",
+        "curate-context"
+      ]
+    }
+  }
+}
