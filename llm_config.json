@@ -38,6 +38,7 @@
     "error_recovery_analysis": "google/gemini-2.5-flash-preview-05-20",
     "project_analysis": "google/gemini-2.5-flash-preview-05-20",
     "epic_generation": "google/gemini-2.5-flash-preview-05-20",
+    "epic_decomposition": "google/gemini-2.5-flash-preview-05-20",
     "task_validation": "google/gemini-2.5-flash-preview-05-20",
     "session_persistence": "google/gemini-2.5-flash-preview-05-20",
     "orchestration_workflow": "google/gemini-2.5-flash-preview-05-20",

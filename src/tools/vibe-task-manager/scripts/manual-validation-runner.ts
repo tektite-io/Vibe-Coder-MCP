@@ -16,7 +16,7 @@ import { ContextEnrichmentService } from '../services/context-enrichment-service
 import { OpenRouterConfig } from '../../../types/workflow.js';
 import { getDependencyGraph } from '../core/dependency-graph.js';
 import { getOpenRouterConfig } from '../../../utils/openrouter-config-manager.js';
-import { AtomicTask, TaskPriority } from '../types/task.js';
+import type { AtomicTask, TaskPriority } from '../types/task.js';
 import { ProjectContext } from '../types/project-context.js';
 
 // Colors for console output
@@ -47,6 +47,7 @@ class ValidationRunner {
       status: partial.status || 'pending',
       priority: partial.priority || 'medium',
       type: partial.type || 'development',
+      functionalArea: partial.functionalArea || 'data-management',
       estimatedHours: partial.estimatedHours || 1,
       actualHours: partial.actualHours,
       epicId: partial.epicId || 'default-epic',

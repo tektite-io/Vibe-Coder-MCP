@@ -240,6 +240,13 @@ export class CodeMapIntegrationService {
       // Generate job ID for tracking
       const jobId = `codemap-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
+      // Import job manager to properly register the job
+      const { jobManager } = await import('../../../services/job-manager/index.js');
+      
+      // Register the job in job manager with the generated ID
+      jobManager.createJobWithId(jobId, 'code-map-generation', params);
+      logger.debug({ jobId, projectPath }, 'Registered job in job manager for code map integration');
+
       // Get proper OpenRouter configuration from centralized manager
       const configManager = OpenRouterConfigManager.getInstance();
       const openRouterConfig = await configManager.getOpenRouterConfig();

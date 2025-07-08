@@ -85,49 +85,78 @@ export class JobManagerIntegrationService extends EventEmitter {
   private runningJobs = new Set<string>();
   private jobSubscriptions = new Map<string, JobEventCallback[]>();
   private progressSubscriptions = new Map<string, JobProgressCallback[]>();
-  private config: JobQueueConfig;
+  private config: JobQueueConfig | null = null;
+  private userConfig: Partial<JobQueueConfig> | undefined;
   private processingInterval?: NodeJS.Timeout;
+  private initialized = false;
 
   private constructor(config?: Partial<JobQueueConfig>) {
     super();
 
-    // Get timeout manager for configurable timeout values
-    const timeoutManager = getTimeoutManager();
+    // Store user config for lazy initialization
+    this.userConfig = config;
 
-    this.config = {
-      maxConcurrentJobs: 5,
-      priorityWeights: {
-        'critical': 4,
-        'high': 3,
-        'medium': 2,
-        'low': 1
-      },
-      retryPolicy: {
-        maxRetries: 3,
-        backoffMultiplier: 2,
-        initialDelayMs: 1000
-      },
-      timeoutPolicy: {
-        defaultTimeoutMs: timeoutManager.getTimeout('taskExecution'), // Configurable default
-        operationTimeouts: {
-          'decomposition': timeoutManager.getTimeout('taskDecomposition'), // Configurable
-          'execution': timeoutManager.getTimeout('taskExecution'), // Configurable
-          'validation': timeoutManager.getTimeout('databaseOperations'), // Configurable
-          'analysis': timeoutManager.getTimeout('taskRefinement'), // Configurable
-          'codemap': timeoutManager.getTimeout('fileOperations'), // Configurable
-          'context_enrichment': timeoutManager.getTimeout('taskRefinement') // Configurable
-        }
-      },
-      resourceLimits: {
-        maxMemoryMB: 2048,
-        maxCpuWeight: 8,
-        maxDiskSpaceMB: 1024
-      },
-      ...config
-    };
+    logger.info('Job Manager Integration Service initialized (job processor deferred)');
+  }
 
-    this.startJobProcessor();
-    logger.info({ config: this.config }, 'Job Manager Integration Service initialized');
+  /**
+   * Lazy configuration getter - initializes timeout values only when first accessed
+   */
+  private getConfig(): JobQueueConfig {
+    if (!this.config) {
+      // Get timeout manager for configurable timeout values at runtime
+      const timeoutManager = getTimeoutManager();
+
+      this.config = {
+        maxConcurrentJobs: 5,
+        priorityWeights: {
+          'critical': 4,
+          'high': 3,
+          'medium': 2,
+          'low': 1
+        },
+        retryPolicy: {
+          maxRetries: 3,
+          backoffMultiplier: 2,
+          initialDelayMs: 1000
+        },
+        timeoutPolicy: {
+          defaultTimeoutMs: timeoutManager.getTimeout('taskExecution'), // Configurable default
+          operationTimeouts: {
+            'decomposition': timeoutManager.getTimeout('taskDecomposition'), // Configurable
+            'execution': timeoutManager.getTimeout('taskExecution'), // Configurable
+            'validation': timeoutManager.getTimeout('databaseOperations'), // Configurable
+            'analysis': timeoutManager.getTimeout('taskRefinement'), // Configurable
+            'codemap': timeoutManager.getTimeout('fileOperations'), // Configurable
+            'context_enrichment': timeoutManager.getTimeout('taskRefinement') // Configurable
+          }
+        },
+        resourceLimits: {
+          maxMemoryMB: 2048,
+          maxCpuWeight: 8,
+          maxDiskSpaceMB: 1024
+        },
+        ...this.userConfig
+      };
+
+      logger.debug('Job Manager configuration initialized with timeout values');
+      
+      // Trigger deferred initialization on first config access
+      this.ensureInitialized();
+    }
+
+    return this.config;
+  }
+
+  /**
+   * Ensure job processor is initialized (deferred from constructor)
+   */
+  private ensureInitialized(): void {
+    if (!this.initialized) {
+      this.initialized = true;
+      this.startJobProcessor();
+      logger.debug('Job Manager Integration Service job processor started');
+    }
   }
 
   /**
@@ -176,7 +205,7 @@ export class JobManagerIntegrationService extends EventEmitter {
         dependencies: options.dependencies || [],
         metadata: {
           retryCount: 0,
-          maxRetries: this.config.retryPolicy.maxRetries,
+          maxRetries: this.getConfig().retryPolicy.maxRetries,
           ...options.metadata
         }
       };
@@ -357,15 +386,15 @@ export class JobManagerIntegrationService extends EventEmitter {
 
       // Check if we should retry
       if (shouldRetry && taskJob && metrics) {
-        const maxRetries = taskJob.metadata?.maxRetries || this.config.retryPolicy.maxRetries;
+        const maxRetries = taskJob.metadata?.maxRetries || this.getConfig().retryPolicy.maxRetries;
         const currentRetries = metrics.retryCount;
 
         if (currentRetries < maxRetries) {
           metrics.retryCount++;
 
           // Calculate backoff delay
-          const delay = this.config.retryPolicy.initialDelayMs *
-            Math.pow(this.config.retryPolicy.backoffMultiplier, currentRetries);
+          const delay = this.getConfig().retryPolicy.initialDelayMs *
+            Math.pow(this.getConfig().retryPolicy.backoffMultiplier, currentRetries);
 
           logger.info({ jobId, retryCount: metrics.retryCount, delay }, 'Scheduling job retry');
 
@@ -618,7 +647,8 @@ export class JobManagerIntegrationService extends EventEmitter {
    * Update configuration
    */
   updateConfig(newConfig: Partial<JobQueueConfig>): void {
-    this.config = { ...this.config, ...newConfig };
+    const currentConfig = this.getConfig();
+    this.config = { ...currentConfig, ...newConfig };
     logger.info({ config: this.config }, 'Job manager configuration updated');
     this.emit('config_updated', this.config);
   }
@@ -689,13 +719,13 @@ export class JobManagerIntegrationService extends EventEmitter {
    * Process the job queue
    */
   private async processJobQueue(): Promise<void> {
-    if (this.jobQueue.length === 0 || this.runningJobs.size >= this.config.maxConcurrentJobs) {
+    if (this.jobQueue.length === 0 || this.runningJobs.size >= this.getConfig().maxConcurrentJobs) {
       return;
     }
 
     // Sort queue by priority and creation time
     this.jobQueue.sort((a, b) => {
-      const priorityDiff = this.config.priorityWeights[b.priority] - this.config.priorityWeights[a.priority];
+      const priorityDiff = this.getConfig().priorityWeights[b.priority] - this.getConfig().priorityWeights[a.priority];
       if (priorityDiff !== 0) return priorityDiff;
       return a.createdAt - b.createdAt; // FIFO for same priority
     });
@@ -704,7 +734,7 @@ export class JobManagerIntegrationService extends EventEmitter {
     const readyJobs = this.jobQueue.filter(job => this.areDependenciesSatisfied(job));
 
     // Start jobs up to concurrent limit
-    const jobsToStart = readyJobs.slice(0, this.config.maxConcurrentJobs - this.runningJobs.size);
+    const jobsToStart = readyJobs.slice(0, this.getConfig().maxConcurrentJobs - this.runningJobs.size);
 
     for (const job of jobsToStart) {
       await this.startJob(job);
@@ -749,8 +779,8 @@ export class JobManagerIntegrationService extends EventEmitter {
       }
 
       // Check for timeout
-      const timeoutMs = this.config.timeoutPolicy.operationTimeouts[job.operationType] ||
-                       this.config.timeoutPolicy.defaultTimeoutMs;
+      const timeoutMs = this.getConfig().timeoutPolicy.operationTimeouts[job.operationType] ||
+                       this.getConfig().timeoutPolicy.defaultTimeoutMs;
 
       setTimeout(() => {
         if (this.runningJobs.has(job.id)) {

@@ -9,7 +9,7 @@ import { OpenRouterConfig } from '../../../types/workflow.js';
 import { Project } from '../types/task.js';
 import { VibeTaskManagerConfig } from '../utils/config-loader.js';
 import { extractProjectFromContext, extractEpicFromContext } from '../utils/context-extractor.js';
-import { DecomposeTaskHandler, DecomposeProjectHandler } from './handlers/decomposition-handlers.js';
+import { DecomposeTaskHandler, DecomposeEpicHandler, DecomposeProjectHandler } from './handlers/decomposition-handlers.js';
 import { SearchFilesHandler, SearchContentHandler } from './handlers/search-handlers.js';
 import { ParsePRDHandler, ParseTasksHandler, ImportArtifactHandler } from './handlers/artifact-handlers.js';
 import { getPathResolver } from '../utils/path-resolver.js';
@@ -85,6 +85,7 @@ export class CommandHandlers {
 
     // Register new decomposition handlers
     this.registerHandler(new DecomposeTaskHandler());
+    this.registerHandler(new DecomposeEpicHandler());
     this.registerHandler(new DecomposeProjectHandler());
 
     // Register new search handlers

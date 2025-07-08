@@ -69,16 +69,12 @@ export function validatePathSecurity(
   allowedDirectory: string
 ): PathValidationResult {
   try {
-    // Handle empty allowedDirectory - use environment variable or process.cwd() as fallback
-    if (!allowedDirectory || allowedDirectory.trim() === '') {
-      const envAllowedDir = process.env.CODE_MAP_ALLOWED_DIR || process.env.VIBE_TASK_MANAGER_READ_DIR;
-      if (envAllowedDir) {
-        logger.debug('Empty allowedDirectory provided, using environment variable as fallback');
-        allowedDirectory = envAllowedDir;
-      } else {
-        logger.warn('Empty allowedDirectory provided, using current working directory as fallback');
-        allowedDirectory = process.cwd();
-      }
+    // Validate allowedDirectory parameter - no fallbacks allowed
+    if (!allowedDirectory || typeof allowedDirectory !== 'string' || allowedDirectory.trim() === '') {
+      return {
+        isValid: false,
+        error: 'Security boundary violation: allowedDirectory must be explicitly provided by centralized configuration'
+      };
     }
 
     // Normalize both paths
@@ -118,16 +114,22 @@ export function createSecurePath(
   inputPath: string,
   allowedDirectory: string
 ): string {
-  // Handle empty allowedDirectory - use environment variable or process.cwd() as fallback
-  if (!allowedDirectory || allowedDirectory.trim() === '') {
-    const envAllowedDir = process.env.CODE_MAP_ALLOWED_DIR || process.env.VIBE_TASK_MANAGER_READ_DIR;
-    if (envAllowedDir) {
-      logger.debug('Empty allowedDirectory provided in createSecurePath, using environment variable as fallback');
-      allowedDirectory = envAllowedDir;
-    } else {
-      logger.warn('Empty allowedDirectory provided in createSecurePath, using current working directory as fallback');
-      allowedDirectory = process.cwd();
-    }
+  // Validate input parameters with explicit error handling
+  if (!inputPath || typeof inputPath !== 'string') {
+    throw new Error('createSecurePath: inputPath must be a non-empty string');
+  }
+  
+  if (!allowedDirectory || typeof allowedDirectory !== 'string' || allowedDirectory.trim() === '') {
+    logger.error({
+      inputPath,
+      allowedDirectory,
+      function: 'createSecurePath'
+    }, 'Security boundary violation: allowedDirectory must be explicitly provided by centralized configuration');
+    
+    throw new Error(
+      'Security boundary violation: allowedDirectory must be explicitly provided by centralized configuration. ' +
+      'Services must use centralized config-loader.ts to provide security boundaries.'
+    );
   }
 
   const validationResult = validatePathSecurity(inputPath, allowedDirectory);
@@ -160,16 +162,12 @@ export function resolveSecurePath(
     throw new Error('Path cannot be empty or undefined');
   }
 
-  // Handle empty allowedDirectory - use environment variable or process.cwd() as fallback
-  if (!allowedDirectory || allowedDirectory.trim() === '') {
-    const envAllowedDir = process.env.CODE_MAP_ALLOWED_DIR || process.env.VIBE_TASK_MANAGER_READ_DIR;
-    if (envAllowedDir) {
-      logger.debug('Empty allowedDirectory provided in resolveSecurePath, using environment variable as fallback');
-      allowedDirectory = envAllowedDir;
-    } else {
-      logger.warn('Empty allowedDirectory provided in resolveSecurePath, using current working directory as fallback');
-      allowedDirectory = process.cwd();
-    }
+  // Validate allowedDirectory parameter - no fallbacks allowed
+  if (!allowedDirectory || typeof allowedDirectory !== 'string' || allowedDirectory.trim() === '') {
+    throw new Error(
+      'Security boundary violation: allowedDirectory must be explicitly provided by centralized configuration. ' +
+      'Services must use centralized config-loader.ts to provide security boundaries.'
+    );
   }
 
   // If the path is already absolute, validate it directly
@@ -194,16 +192,12 @@ export function getRelativePath(
   absolutePath: string,
   allowedDirectory: string
 ): string {
-  // Handle empty allowedDirectory - use environment variable or process.cwd() as fallback
-  if (!allowedDirectory || allowedDirectory.trim() === '') {
-    const envAllowedDir = process.env.CODE_MAP_ALLOWED_DIR || process.env.VIBE_TASK_MANAGER_READ_DIR;
-    if (envAllowedDir) {
-      logger.debug('Empty allowedDirectory provided in getRelativePath, using environment variable as fallback');
-      allowedDirectory = envAllowedDir;
-    } else {
-      logger.warn('Empty allowedDirectory provided in getRelativePath, using current working directory as fallback');
-      allowedDirectory = process.cwd();
-    }
+  // Validate allowedDirectory parameter - no fallbacks allowed  
+  if (!allowedDirectory || typeof allowedDirectory !== 'string' || allowedDirectory.trim() === '') {
+    throw new Error(
+      'Security boundary violation: allowedDirectory must be explicitly provided by centralized configuration. ' +
+      'Services must use centralized config-loader.ts to provide security boundaries.'
+    );
   }
 
   // Validate the path first

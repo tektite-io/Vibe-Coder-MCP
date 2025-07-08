@@ -11,6 +11,7 @@ import { ConcurrentAccessConfig } from './concurrent-access.js';
 import { SecurityMiddlewareConfig } from './security-middleware.js';
 import { getUnifiedSecurityConfig } from './unified-security-config.js';
 import logger from '../../../logger.js';
+import { logWorkingDirectorySafety } from '../../../utils/safe-path-resolver.js';
 
 /**
  * Unified security configuration
@@ -52,15 +53,10 @@ const DEFAULT_SECURITY_CONFIG: UnifiedSecurityConfig = {
   logViolations: true,
   blockOnCriticalViolations: true,
 
-  // Path security
+  // Path security - NOTE: These are fallback defaults only
+  // The centralized unified security config should override these values
   pathSecurity: {
-    allowedDirectories: [
-      process.cwd(),
-      'VibeCoderOutput',
-      'data',
-      'temp',
-      'logs'
-    ].map(dir => dir.startsWith('/') ? dir : `${process.cwd()}/${dir}`),
+    allowedDirectories: [], // Will be populated by unified security config
     allowedExtensions: [
       '.json', '.yaml', '.yml', '.txt', '.md', '.log', '.gz',
       '.js', '.ts', '.jsx', '.tsx', '.vue', '.svelte',
@@ -186,6 +182,9 @@ export class SecurityConfigManager {
   private lastCacheUpdate = 0;
 
   private constructor() {
+    // SECURITY CHECK: Verify working directory safety before loading configuration
+    logWorkingDirectorySafety();
+    
     this.config = this.loadConfiguration();
     logger.info({
       environment: this.config.environment,

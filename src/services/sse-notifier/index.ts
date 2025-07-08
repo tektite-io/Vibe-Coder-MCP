@@ -161,10 +161,39 @@ class SseNotifier {
 
     // For stdio transport, just update the job status
     if (sessionId === 'stdio-session' || sessionId === 'placeholder-session-id' || sessionId === 'unknown-session') {
-      // Just update the job status in the job manager
-      jobManager.updateJobStatus(jobId, status, message);
-      logger.debug({ jobId, status, message, sessionId }, "Updated job status for stdio session");
-      return;
+      const updateStartTime = Date.now();
+      try {
+        // Just update the job status in the job manager
+        jobManager.updateJobStatus(jobId, status, message);
+        const updateTime = Date.now() - updateStartTime;
+        
+        logger.info({ 
+          jobId, 
+          status, 
+          message, 
+          sessionId,
+          updateTime,
+          performance: {
+            jobUpdateLatency: updateTime,
+            timestamp: new Date().toISOString(),
+            statusType: status
+          }
+        }, "Job status update: successful stdio session update");
+        return;
+      } catch (error) {
+        const updateTime = Date.now() - updateStartTime;
+        logger.error({
+          err: error,
+          jobId,
+          status,
+          message,
+          sessionId,
+          updateTime,
+          errorType: error instanceof Error ? error.constructor.name : 'Unknown',
+          errorMessage: error instanceof Error ? error.message : String(error)
+        }, "Job status update: failed to update job status for stdio session");
+        return;
+      }
     }
 
     // For SSE transport, send the update via SSE

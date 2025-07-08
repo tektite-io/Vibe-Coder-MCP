@@ -48,8 +48,29 @@ describe('JobManager Singleton', () => {
     expect(job?.params).toEqual(params);
     expect(job?.status).toBe(JobStatus.PENDING);
     expect(job?.result).toBeUndefined();
-    expect(job?.createdAt).toBeInstanceOf(Date);
-    expect(job?.updatedAt).toBeInstanceOf(Date);
+    expect(typeof job?.createdAt).toBe('number');
+    expect(typeof job?.updatedAt).toBe('number');
+    expect(job?.createdAt).toEqual(job?.updatedAt); // Initially they should be the same
+  });
+
+  it('should create a new job with specific ID and return that ID', () => {
+    const toolName = 'code-map-generation';
+    const params = { allowedMappingDirectory: '/test/path' };
+    const customJobId = 'codemap-1234567890-abc123';
+    
+    const returnedJobId = jobManager.createJobWithId(customJobId, toolName, params);
+
+    expect(returnedJobId).toBe(customJobId);
+
+    const job = jobManager.getJob(customJobId);
+    expect(job).toBeDefined();
+    expect(job?.id).toBe(customJobId);
+    expect(job?.toolName).toBe(toolName);
+    expect(job?.params).toEqual(params);
+    expect(job?.status).toBe(JobStatus.PENDING);
+    expect(job?.result).toBeUndefined();
+    expect(typeof job?.createdAt).toBe('number');
+    expect(typeof job?.updatedAt).toBe('number');
     expect(job?.createdAt).toEqual(job?.updatedAt); // Initially they should be the same
   });
 

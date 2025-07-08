@@ -190,6 +190,7 @@ export class SemanticIntentMatcher {
     // Context-specific scoring rules
     switch (intent) {
       case 'decompose_task':
+      case 'decompose_epic':
       case 'decompose_project':
         if (context.currentTask || context.currentProject) {
           score += 0.3;
@@ -296,6 +297,7 @@ export class SemanticIntentMatcher {
     // Initialize intent keywords
     this.intentKeywords = new Map([
       ['decompose_task', ['decompose', 'break down', 'split', 'divide', 'breakdown', 'task']],
+      ['decompose_epic', ['decompose', 'break down', 'split', 'divide', 'breakdown', 'epic']],
       ['decompose_project', ['decompose', 'break down', 'split', 'divide', 'breakdown', 'project']],
       ['search_files', ['find', 'search', 'locate', 'files', 'file']],
       ['search_content', ['find', 'search', 'locate', 'content', 'code', 'text']],
@@ -342,6 +344,7 @@ export class SemanticIntentMatcher {
   private getRelevantEntities(intent: Intent): string[] {
     const entityMap: Record<Intent, string[]> = {
       'decompose_task': ['taskId'],
+      'decompose_epic': ['epicId'],
       'decompose_project': ['projectId'],
       'search_files': ['fileName', 'searchPattern'],
       'search_content': ['searchPattern'],
@@ -372,7 +375,7 @@ export class SemanticIntentMatcher {
    */
   private isRelatedIntent(intent: Intent, recentIntents: Intent[]): boolean {
     const relatedGroups = [
-      ['decompose_task', 'decompose_project', 'create_task'],
+      ['decompose_task', 'decompose_epic', 'decompose_project', 'create_task'],
       ['search_files', 'search_content'],
       ['list_tasks', 'list_projects', 'check_status'],
       ['create_task', 'create_project', 'run_task']

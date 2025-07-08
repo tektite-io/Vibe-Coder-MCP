@@ -81,7 +81,9 @@ describe('IdGenerator', () => {
       const result = await idGenerator.generateProjectId(longName);
 
       expect(result.success).toBe(false);
+      expect(result.error).toContain('Project name is too long');
       expect(result.error).toContain('50 characters or less');
+      expect(result.error).toContain('file system compatibility');
     });
 
     it('should reject project names with invalid characters', async () => {

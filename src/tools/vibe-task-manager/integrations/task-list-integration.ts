@@ -767,6 +767,7 @@ export class TaskListIntegrationService {
             status: 'pending',
             priority: taskItem.priority,
             type: this.inferTaskType(taskItem.title, taskItem.description),
+            functionalArea: 'data-management',
             estimatedHours: this.extractHoursFromEffort(taskItem.estimatedEffort),
             epicId,
             projectId,

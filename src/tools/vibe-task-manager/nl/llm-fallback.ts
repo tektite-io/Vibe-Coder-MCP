@@ -350,7 +350,7 @@ export class LLMFallbackSystem {
     const validIntents = [
       'create_project', 'list_projects', 'open_project', 'update_project', 'archive_project',
       'create_task', 'list_tasks', 'run_task', 'check_status',
-      'decompose_task', 'decompose_project', 'search_files', 'search_content',
+      'decompose_task', 'decompose_epic', 'decompose_project', 'search_files', 'search_content',
       'refine_task', 'assign_task', 'get_help', 'parse_prd', 'parse_tasks',
       'import_artifact', 'unrecognized_intent', 'clarification_needed', 'unknown'
     ];

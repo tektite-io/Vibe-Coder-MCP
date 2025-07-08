@@ -13,7 +13,7 @@ import { ProjectAnalyzer } from '../../utils/project-analyzer.js';
 import { CLIUtils } from './index.js';
 import { ValidationError } from '../../../../utils/errors.js';
 import { OpenRouterConfigManager } from '../../../../utils/openrouter-config-manager.js';
-import { AtomicTask } from '../../types/task.js';
+import type { AtomicTask } from '../../types/task.js';
 import logger from '../../../../logger.js';
 
 /**
@@ -91,6 +91,7 @@ async function createCompleteAtomicTask(partialTask: Partial<AtomicTask> & { id:
     status: partialTask.status || 'pending',
     priority: partialTask.priority || 'medium',
     type: partialTask.type || 'development',
+    functionalArea: partialTask.functionalArea || 'data-management',
     estimatedHours: partialTask.estimatedHours || 4,
     actualHours: partialTask.actualHours,
     epicId: await resolveEpicIdForTask(partialTask),

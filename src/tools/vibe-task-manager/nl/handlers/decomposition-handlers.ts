@@ -10,10 +10,39 @@ import { CommandHandler, CommandExecutionContext, CommandExecutionResult } from 
 import { DecompositionService } from '../../services/decomposition-service.js';
 import { getTaskOperations } from '../../core/operations/task-operations.js';
 import { getProjectOperations } from '../../core/operations/project-operations.js';
-import { AtomicTask } from '../../types/task.js';
+import { getEpicService } from '../../services/epic-service.js';
+import type { AtomicTask } from '../../types/task.js';
 import { ProjectAnalyzer } from '../../utils/project-analyzer.js';
 import { getPathResolver } from '../../utils/path-resolver.js';
+import { getVibeTaskManagerConfig } from '../../utils/config-loader.js';
 import logger from '../../../../logger.js';
+
+/**
+ * Epic decomposition options interface
+ * Provides type-safe configuration for epic decomposition operations
+ */
+interface EpicDecompositionOptions {
+  maxDepth: number;
+  maxSubTasks: number;
+  minConfidence: number;
+  enableParallelDecomposition: boolean;
+  epicTimeLimit: number;
+  minHours: number;
+  maxHours: number;
+  force: boolean;
+  timeouts: {
+    readonly taskDecomposition: number;
+    readonly recursiveTaskDecomposition: number;
+    readonly llmRequest: number;
+  };
+  retryPolicy: {
+    readonly maxRetries: number;
+    readonly backoffMultiplier: number;
+    readonly initialDelayMs: number;
+    readonly maxDelayMs: number;
+    readonly enableExponentialBackoff: boolean;
+  };
+}
 
 /**
  * Resolve epic ID for a task using epic context resolver
@@ -90,6 +119,7 @@ async function createCompleteAtomicTask(partialTask: Partial<AtomicTask> & { id:
     status: partialTask.status || 'pending',
     priority: partialTask.priority || 'medium',
     type: partialTask.type || 'development',
+    functionalArea: partialTask.functionalArea || 'data-management',
     estimatedHours: partialTask.estimatedHours || 4,
     actualHours: partialTask.actualHours,
     epicId: await resolveEpicIdForTask(partialTask),
@@ -500,6 +530,379 @@ export class DecomposeTaskHandler implements CommandHandler {
     const hoursMatch = input.match(/(\d+)\s*hours?/);
     if (hoursMatch) {
       options.maxHours = parseInt(hoursMatch[1], 10);
+    }
+
+    return options;
+  }
+}
+
+/**
+ * Decompose Epic Handler
+ * Handles natural language requests to decompose epics into tasks
+ */
+export class DecomposeEpicHandler implements CommandHandler {
+  intent: Intent = 'decompose_epic';
+
+  /**
+   * Resolve project path using centralized path resolver
+   */
+  private resolveProjectPath(context: CommandExecutionContext): string {
+    const pathResolver = getPathResolver();
+    return pathResolver.resolveProjectPathFromContext(context);
+  }
+
+  async handle(
+    recognizedIntent: RecognizedIntent,
+    toolParams: Record<string, unknown>,
+    context: CommandExecutionContext
+  ): Promise<CommandExecutionResult> {
+    try {
+      logger.info({
+        intent: recognizedIntent.intent,
+        sessionId: context.sessionId
+      }, 'Processing epic decomposition request');
+
+      // Extract parameters from natural language
+      const epicId = this.extractEpicId(recognizedIntent, toolParams);
+      const additionalContext = this.extractAdditionalContext(recognizedIntent, toolParams);
+      const options = await this.extractDecompositionOptions(recognizedIntent, toolParams);
+
+      if (!epicId) {
+        return {
+          success: false,
+          result: {
+            content: [{
+              type: "text",
+              text: "❌ Please specify an epic ID to decompose. For example: 'decompose epic E001' or 'break down the authentication epic'"
+            }],
+            isError: true
+          }
+        };
+      }
+
+      // Validate epic exists
+      const epicService = getEpicService();
+      const epicResult = await epicService.getEpic(epicId);
+
+      if (!epicResult.success) {
+        return {
+          success: false,
+          result: {
+            content: [{
+              type: "text",
+              text: `❌ Epic ${epicId} not found. Please check the epic ID and try again.`
+            }],
+            isError: true
+          }
+        };
+      }
+
+      const epic = epicResult.data!;
+
+      // Initialize decomposition service
+      const decompositionService = new DecompositionService(context.config);
+
+      // Get project analyzer for dynamic detection
+      const projectAnalyzer = ProjectAnalyzer.getInstance();
+      const projectPath = this.resolveProjectPath(context);
+
+      // Detect project characteristics dynamically
+      let languages: string[];
+      let frameworks: string[];
+      let tools: string[];
+
+      try {
+        languages = await projectAnalyzer.detectProjectLanguages(projectPath);
+      } catch (error) {
+        logger.warn({ error, projectPath }, 'Language detection failed, using fallback');
+        languages = ['javascript'];
+      }
+
+      try {
+        frameworks = await projectAnalyzer.detectProjectFrameworks(projectPath);
+      } catch (error) {
+        logger.warn({ error, projectPath }, 'Framework detection failed, using fallback');
+        frameworks = ['node.js'];
+      }
+
+      try {
+        tools = await projectAnalyzer.detectProjectTools(projectPath);
+      } catch (error) {
+        logger.warn({ error, projectPath }, 'Tools detection failed, using fallback');
+        tools = ['git', 'npm'];
+      }
+
+      // Create a synthetic task from epic for decomposition workflow
+      const epicAsTask = await createCompleteAtomicTask({
+        id: `epic-decomp-${epic.id}`,
+        title: `Decompose Epic: ${epic.title}`,
+        description: additionalContext || epic.description || `Decompose epic ${epic.title} into actionable tasks`,
+        type: 'development' as const,
+        priority: epic.priority || 'medium',
+        estimatedHours: epic.estimatedHours || 8,
+        acceptanceCriteria: [`Epic ${epic.title} is fully decomposed into actionable tasks`],
+        tags: [...(epic.metadata?.tags || []), 'epic-decomposition'],
+        filePaths: [],
+        projectId: epic.projectId,
+        epicId: epic.id,
+        status: 'pending' as const,
+        createdBy: context.sessionId,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+
+      // Create decomposition request
+      const decompositionRequest = {
+        task: epicAsTask,
+        context: {
+          projectId: epic.projectId,
+          projectPath: process.cwd(),
+          projectName: epic.projectId,
+          description: `Epic decomposition context for ${epic.title}`,
+          languages,
+          frameworks,
+          buildTools: [],
+          tools,
+          configFiles: [],
+          entryPoints: [],
+          architecturalPatterns: [],
+          existingTasks: [],
+          codebaseSize: 'medium' as const,
+          teamSize: 1,
+          complexity: 'medium' as const,
+          codebaseContext: {
+            relevantFiles: [],
+            contextSummary: `Epic decomposition context for ${epic.title}`,
+            gatheringMetrics: {
+              searchTime: 0,
+              readTime: 0,
+              scoringTime: 0,
+              totalTime: 0,
+              cacheHitRate: 0
+            },
+            totalContextSize: 0,
+            averageRelevance: 0
+          },
+          structure: {
+            sourceDirectories: ['src'],
+            testDirectories: ['test', 'tests', '__tests__'],
+            docDirectories: ['docs', 'documentation'],
+            buildDirectories: ['dist', 'build', 'lib']
+          },
+          dependencies: {
+            production: [],
+            development: [],
+            external: []
+          },
+          metadata: {
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            version: '1.0.0',
+            source: 'manual' as const
+          }
+        },
+        sessionId: `nl-epic-decompose-${context.sessionId}`,
+        options: {
+          maxDepth: options.maxDepth || 2, // Epics to tasks should be shallow
+          minHours: options.minHours || 0.1,
+          maxHours: options.maxHours || 4,
+          forceDecomposition: options.force || true // Always decompose epics
+        }
+      };
+
+      // Start decomposition
+      const session = await decompositionService.startDecomposition(decompositionRequest);
+
+      // Wait for decomposition to complete (with timeout)
+      const timeout = 30000; // 30 seconds
+      const startTime = Date.now();
+
+      while ((session.status === 'pending' || session.status === 'in_progress') && (Date.now() - startTime) < timeout) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Refresh session status
+        const updatedSession = decompositionService.getSession(session.id);
+        if (updatedSession) {
+          Object.assign(session, updatedSession);
+        }
+      }
+
+      if (session.status === 'pending' || session.status === 'in_progress') {
+        return {
+          success: true,
+          result: {
+            content: [{
+              type: "text",
+              text: `⏳ Epic decomposition is in progress for "${epic.title}". This may take a few moments. Session ID: ${session.id}`
+            }]
+          }
+        };
+      }
+
+      if (session.status === 'failed') {
+        return {
+          success: false,
+          result: {
+            content: [{
+              type: "text",
+              text: `❌ Epic decomposition failed for "${epic.title}". Error: ${session.error || 'Unknown error'}`
+            }],
+            isError: true
+          }
+        };
+      }
+
+      // Success - return decomposed tasks
+      const taskCount = session.persistedTasks?.length || 0;
+      const successMessage = `✅ Successfully decomposed epic "${epic.title}" into ${taskCount} actionable tasks.`;
+
+      const tasksList = session.persistedTasks?.map(task => `  • ${task.title} (${task.id})`).join('\n') || '';
+
+      return {
+        success: true,
+        result: {
+          content: [{
+            type: "text",
+            text: `${successMessage}\n\nGenerated Tasks:\n${tasksList}\n\nSession ID: ${session.id}`
+          }]
+        }
+      };
+
+    } catch (error) {
+      logger.error({ err: error }, 'Epic decomposition failed');
+      return {
+        success: false,
+        result: {
+          content: [{
+            type: "text",
+            text: `❌ Epic decomposition failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+          }],
+          isError: true
+        }
+      };
+    }
+  }
+
+  /**
+   * Extract epic ID from natural language input
+   */
+  private extractEpicId(recognizedIntent: RecognizedIntent, toolParams: Record<string, unknown>): string | null {
+    // Check tool params first
+    if (toolParams.epicId) {
+      return toolParams.epicId as string;
+    }
+
+    // Extract from entities
+    const epicEntity = recognizedIntent.entities.find(e => e.type === 'epicId');
+    if (epicEntity) {
+      return epicEntity.value;
+    }
+
+    // Pattern matching from original input
+    const input = recognizedIntent.originalInput.toLowerCase();
+
+    // Look for epic ID patterns (E001, EPIC-123, etc.)
+    const epicIdMatch = input.match(/\b(e\d+|epic[-_]?\d+|[a-z]+-\d+)\b/i);
+    if (epicIdMatch) {
+      return epicIdMatch[1].toUpperCase();
+    }
+
+    // Look for "the X epic" patterns
+    const epicNameMatch = input.match(/(?:the\s+)?(\w+)\s+epic/i);
+    if (epicNameMatch) {
+      return epicNameMatch[1]; // Return the epic name, might need lookup
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract additional context from natural language input
+   */
+  private extractAdditionalContext(recognizedIntent: RecognizedIntent, toolParams: Record<string, unknown>): string | null {
+    // Check tool params
+    if (toolParams.description || toolParams.context) {
+      return (toolParams.description || toolParams.context) as string;
+    }
+
+    // Look for context phrases in the input
+    const input = recognizedIntent.originalInput;
+    const contextPhrases = [
+      /with\s+focus\s+on\s+(.+)/i,
+      /considering\s+(.+)/i,
+      /taking\s+into\s+account\s+(.+)/i,
+      /for\s+(.+)/i
+    ];
+
+    for (const phrase of contextPhrases) {
+      const match = input.match(phrase);
+      if (match) {
+        return match[1].trim();
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract decomposition options from natural language input using centralized configuration
+   */
+  private async extractDecompositionOptions(recognizedIntent: RecognizedIntent, toolParams: Record<string, unknown>): Promise<EpicDecompositionOptions> {
+    // Get centralized configuration
+    const config = await getVibeTaskManagerConfig();
+    const rddConfig = config?.taskManager?.rddConfig;
+    const timeouts = config?.taskManager?.timeouts;
+    const retryPolicy = config?.taskManager?.retryPolicy;
+
+    // Use centralized configuration without hardcoded fallbacks
+    if (!config) {
+      throw new Error('Centralized configuration not available for epic decomposition');
+    }
+
+    const options: EpicDecompositionOptions = {
+      maxDepth: rddConfig?.maxDepth ?? config.taskManager.rddConfig.maxDepth,
+      maxSubTasks: rddConfig?.maxSubTasks ?? config.taskManager.rddConfig.maxSubTasks,
+      minConfidence: rddConfig?.minConfidence ?? config.taskManager.rddConfig.minConfidence,
+      enableParallelDecomposition: rddConfig?.enableParallelDecomposition ?? config.taskManager.rddConfig.enableParallelDecomposition,
+      epicTimeLimit: rddConfig?.epicTimeLimit ?? config.taskManager.rddConfig.epicTimeLimit,
+      minHours: 0.1, // Will be configurable in future updates
+      maxHours: Math.floor((rddConfig?.epicTimeLimit ?? config.taskManager.rddConfig.epicTimeLimit) / 8), // Divide epic time limit by reasonable task chunks
+      force: true, // Epic decomposition is mandatory
+      timeouts: {
+        taskDecomposition: timeouts?.taskDecomposition ?? config.taskManager.timeouts.taskDecomposition,
+        recursiveTaskDecomposition: timeouts?.recursiveTaskDecomposition ?? config.taskManager.timeouts.recursiveTaskDecomposition,
+        llmRequest: timeouts?.llmRequest ?? config.taskManager.timeouts.llmRequest
+      },
+      retryPolicy: {
+        maxRetries: retryPolicy?.maxRetries ?? config.taskManager.retryPolicy.maxRetries,
+        backoffMultiplier: retryPolicy?.backoffMultiplier ?? config.taskManager.retryPolicy.backoffMultiplier,
+        initialDelayMs: retryPolicy?.initialDelayMs ?? config.taskManager.retryPolicy.initialDelayMs,
+        maxDelayMs: retryPolicy?.maxDelayMs ?? config.taskManager.retryPolicy.maxDelayMs,
+        enableExponentialBackoff: retryPolicy?.enableExponentialBackoff ?? config.taskManager.retryPolicy.enableExponentialBackoff
+      }
+    };
+
+    // Override with tool params if provided
+    if (toolParams.options && typeof toolParams.options === 'object') {
+      const toolOptions = toolParams.options as Partial<EpicDecompositionOptions>;
+      Object.assign(options, toolOptions);
+    }
+
+    const input = recognizedIntent.originalInput.toLowerCase();
+
+    // Extract depth preference from natural language
+    const depthMatch = input.match(/(\d+)\s*levels?/);
+    if (depthMatch) {
+      const extractedDepth = parseInt(depthMatch[1], 10);
+      if (extractedDepth > 0 && extractedDepth <= 5) { // Reasonable bounds
+        options.maxDepth = extractedDepth;
+      }
+    }
+
+    // Extract parallel processing preference
+    if (input.includes('parallel') || input.includes('concurrent') || input.includes('simultaneously')) {
+      options.enableParallelDecomposition = true;
+    } else if (input.includes('sequential') || input.includes('one by one') || input.includes('step by step')) {
+      options.enableParallelDecomposition = false;
     }
 
     return options;

@@ -6,6 +6,8 @@
 import { LanguageHandlerRegistry } from '../../code-map-generator/languageHandlers/registry.js';
 import { languageConfigurations } from '../../code-map-generator/parser.js';
 import { readDirSecure } from '../../code-map-generator/fsUtils.js';
+import { getUnifiedSecurityConfig } from '../security/unified-security-config.js';
+import { getTimeoutManager } from './timeout-manager.js';
 import logger from '../../../logger.js';
 import fs from 'fs';
 import path from 'path';
@@ -48,8 +50,26 @@ export class ProjectAnalyzer {
     try {
       logger.debug({ projectPath }, 'Starting language detection');
 
-      // Use existing secure file reading utilities
-      const files = await readDirSecure(projectPath, projectPath);
+      // Get security configuration using established pattern
+      const securityConfig = getUnifiedSecurityConfig().getConfig();
+      const timeoutManager = getTimeoutManager();
+      
+      // Use timeout protection for file system operations following established pattern
+      const filesResult = await timeoutManager.executeWithTimeout(
+        'fileOperations',
+        async () => readDirSecure(projectPath, securityConfig.allowedReadDirectory)
+      );
+
+      if (!filesResult.success || filesResult.timedOut) {
+        logger.warn({ 
+          projectPath, 
+          error: filesResult.error,
+          timedOut: filesResult.timedOut 
+        }, 'File system operation failed or timed out, using fallback');
+        return ['javascript'];
+      }
+
+      const files = filesResult.data!;
       const detectedLanguages = new Set<string>();
 
       // Analyze file extensions using existing language configurations
@@ -146,8 +166,26 @@ export class ProjectAnalyzer {
 
       const tools: string[] = ['git']; // Default tool
 
-      // Use existing secure file reading utilities
-      const files = await readDirSecure(projectPath, projectPath);
+      // Get security configuration using established pattern
+      const securityConfig = getUnifiedSecurityConfig().getConfig();
+      const timeoutManager = getTimeoutManager();
+      
+      // Use timeout protection for file system operations following established pattern
+      const filesResult = await timeoutManager.executeWithTimeout(
+        'fileOperations',
+        async () => readDirSecure(projectPath, securityConfig.allowedReadDirectory)
+      );
+
+      if (!filesResult.success || filesResult.timedOut) {
+        logger.warn({ 
+          projectPath, 
+          error: filesResult.error,
+          timedOut: filesResult.timedOut 
+        }, 'File system operation failed or timed out, using fallback tools');
+        return tools; // Return default tools
+      }
+
+      const files = filesResult.data!;
 
       // Follow Context Curator's config file detection patterns
       const configFileMap: Record<string, string> = {
@@ -257,15 +295,53 @@ export class ProjectAnalyzer {
    */
   private async getSampleFileContent(projectPath: string, extension: string): Promise<string | null> {
     try {
-      const files = await readDirSecure(projectPath, projectPath);
+      // Get security configuration using established pattern
+      const securityConfig = getUnifiedSecurityConfig().getConfig();
+      const timeoutManager = getTimeoutManager();
+      
+      // Use timeout protection for file system operations following established pattern
+      const filesResult = await timeoutManager.executeWithTimeout(
+        'fileOperations',
+        async () => readDirSecure(projectPath, securityConfig.allowedReadDirectory)
+      );
+
+      if (!filesResult.success || filesResult.timedOut) {
+        logger.warn({ 
+          projectPath, 
+          extension,
+          error: filesResult.error,
+          timedOut: filesResult.timedOut 
+        }, 'File directory read failed or timed out');
+        return null;
+      }
+
+      const files = filesResult.data!;
       const targetFile = files.find((f: fs.Dirent) => f.isFile() && f.name.endsWith(extension));
 
       if (targetFile) {
-        // Read first 1000 characters for framework detection
-        const fsPromises = await import('fs/promises');
-        const filePath = path.join(projectPath, targetFile.name);
-        const content = await fsPromises.readFile(filePath, 'utf-8');
-        return content.substring(0, 1000);
+        // Read first 1000 characters for framework detection with timeout protection
+        const contentResult = await timeoutManager.executeWithTimeout(
+          'fileOperations',
+          async () => {
+            const fsPromises = await import('fs/promises');
+            const filePath = path.join(projectPath, targetFile.name);
+            const content = await fsPromises.readFile(filePath, 'utf-8');
+            return content.substring(0, 1000);
+          }
+        );
+
+        if (!contentResult.success || contentResult.timedOut) {
+          logger.warn({ 
+            projectPath, 
+            extension,
+            fileName: targetFile.name,
+            error: contentResult.error,
+            timedOut: contentResult.timedOut 
+          }, 'File content read failed or timed out');
+          return null;
+        }
+
+        return contentResult.data!;
       }
 
       return null;

@@ -130,13 +130,24 @@ export class OpenRouterConfigManager {
       // Load LLM configuration with validation
       await this.loadLLMConfig();
 
-      // Create OpenRouter configuration from environment
+      // Create OpenRouter configuration from environment including MCP client env vars
       this.config = {
         baseUrl: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
         apiKey: process.env.OPENROUTER_API_KEY || '',
         geminiModel: process.env.GEMINI_MODEL || 'google/gemini-2.5-flash-preview-05-20',
         perplexityModel: process.env.PERPLEXITY_MODEL || 'perplexity/sonar',
-        llm_mapping: this.llmConfig?.llm_mapping || {}
+        llm_mapping: this.llmConfig?.llm_mapping || {},
+        
+        // Include MCP client environment variables for security configuration
+        env: {
+          VIBE_TASK_MANAGER_READ_DIR: process.env.VIBE_TASK_MANAGER_READ_DIR,
+          VIBE_CODER_OUTPUT_DIR: process.env.VIBE_CODER_OUTPUT_DIR,
+          CODE_MAP_ALLOWED_DIR: process.env.CODE_MAP_ALLOWED_DIR,
+          VIBE_TASK_MANAGER_SECURITY_MODE: process.env.VIBE_TASK_MANAGER_SECURITY_MODE as 'strict' | 'permissive' | undefined,
+          LOG_LEVEL: process.env.LOG_LEVEL,
+          NODE_ENV: process.env.NODE_ENV,
+          LLM_CONFIG_PATH: process.env.LLM_CONFIG_PATH
+        }
       };
 
       // Validate the complete configuration
@@ -414,7 +425,10 @@ export class OpenRouterConfigManager {
       apiKey: this.config.apiKey,
       geminiModel: this.config.geminiModel,
       perplexityModel: this.config.perplexityModel,
-      llm_mapping: { ...this.config.llm_mapping }
+      llm_mapping: { ...this.config.llm_mapping },
+      tools: this.config.tools ? { ...this.config.tools } : undefined,
+      config: this.config.config ? { ...this.config.config } : undefined,
+      env: this.config.env ? { ...this.config.env } : undefined
     };
   }
 

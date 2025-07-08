@@ -73,6 +73,10 @@ export interface ProjectContext {
     };
     totalContextSize: number;
     averageRelevance: number;
+    /** Code map integration information */
+    codeMapPath?: string;
+    codeMapGenerated?: boolean;
+    codeMapGenerationTime?: number;
   };
 
   /** Project structure information */

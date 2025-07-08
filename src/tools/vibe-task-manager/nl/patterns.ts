@@ -129,6 +129,60 @@ export class EntityExtractors {
   }
 
   /**
+   * Extract epic information from text
+   */
+  static epicInfo(text: string, _match: RegExpMatchArray): Record<string, unknown> {
+    const entities: Record<string, unknown> = {};
+
+    // Extract epic title - try patterns with and without quotes
+    const titlePatterns = [
+      /epic\s+["']([^"']+)["']/i,
+      /["']([^"']+)["']\s+epic/i,
+      /for\s+["']([^"']+)["']/i,
+      /called\s+["']([^"']+)["']/i,
+      /to\s+["']([^"']+)["']/i,
+      // Patterns without quotes
+      /called\s+(\w+)/i,
+      /for\s+(\w+)/i,
+      /epic\s+(\w+)/i,
+      /(\w+)\s+epic/i
+    ];
+
+    for (const pattern of titlePatterns) {
+      const titleMatch = text.match(pattern);
+      if (titleMatch) {
+        entities.epicTitle = titleMatch[1].trim();
+        break;
+      }
+    }
+
+    // Extract epic ID patterns
+    const epicIdPatterns = [
+      /epic\s+([E]\d+)/i,
+      /([E]\d+)/i,
+      /epic\s+id\s+(\w+)/i,
+      /id\s+(\w+)/i
+    ];
+
+    for (const pattern of epicIdPatterns) {
+      const idMatch = text.match(pattern);
+      if (idMatch) {
+        entities.epicId = idMatch[1].trim();
+        break;
+      }
+    }
+
+    // Extract priority
+    const priorityMatch = text.match(/\b(low|medium|high|critical)\s+priority\b/i) ||
+                         text.match(/priority\s+(low|medium|high|critical)\b/i);
+    if (priorityMatch) {
+      entities.priority = priorityMatch[1].toLowerCase();
+    }
+
+    return entities;
+  }
+
+  /**
    * Extract status information from text
    */
   static statusInfo(text: string, _match: RegExpMatchArray): Record<string, unknown> {
@@ -419,6 +473,38 @@ export class IntentPatternEngine {
       ]
     });
 
+    // Project opening patterns
+    this.addPattern('open_project', {
+      id: 'open_project_basic',
+      intent: 'open_project',
+      patterns: [
+        'open\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'switch\\s+to\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'work\\s+on\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'continue\\s+(?:with\\s+)?(?:the\\s+)?(?:\\w+\\s+)?project',
+        'load\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'access\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        // Natural variations
+        '(?:let\'s\\s+)?(?:open|switch|work|continue)\\s+(?:with\\s+|on\\s+)?(?:the\\s+)?(?:\\w+\\s+)?project',
+        'i\\s+(?:want\\s+to\\s+|need\\s+to\\s+)?(?:open|work\\s+on|switch\\s+to)\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'can\\s+(?:you\\s+)?(?:open|load|switch\\s+to)\\s+(?:the\\s+)?(?:\\w+\\s+)?project'
+      ],
+      keywords: ['open', 'switch', 'work', 'continue', 'load', 'access', 'project'],
+      requiredEntities: ['projectName'],
+      optionalEntities: [],
+      priority: 10,
+      active: true,
+      examples: [
+        'Open the web app project',
+        'Switch to mobile project',
+        'Work on the API project',
+        'Continue with project "E-commerce Platform"',
+        'Load the streaming project',
+        'I want to work on the mobile project',
+        'Can you open the backend project?'
+      ]
+    });
+
     // Task creation patterns
     this.addPattern('create_task', {
       id: 'create_task_basic',
@@ -576,6 +662,48 @@ export class IntentPatternEngine {
         'Break down the authentication task',
         'Split up this task',
         'Decompose the login feature task'
+      ]
+    });
+
+    // Epic decomposition patterns
+    this.addPattern('decompose_epic', {
+      id: 'decompose_epic_basic',
+      intent: 'decompose_epic',
+      patterns: [
+        'decompose\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'break\\s+down\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'split\\s+(?:up\\s+)?(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'divide\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'breakdown\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'decompose\\s+epic\\s+\\w+',
+        'break\\s+down\\s+epic\\s+\\w+',
+        // Natural language variations
+        'analyze\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'plan\\s+(?:out\\s+)?(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'organize\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'structure\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'outline\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        // Conversational patterns
+        '(?:can\\s+you\\s+)?(?:decompose|break\\s+down|analyze)\\s+(?:this\\s+|the\\s+)?epic',
+        'i\\s+(?:want\\s+to\\s+|need\\s+to\\s+)?(?:decompose|break\\s+down|analyze)\\s+(?:this\\s+|the\\s+)?epic',
+        '(?:let\'s\\s+)?(?:decompose|break\\s+down|analyze)\\s+(?:this\\s+|the\\s+)?epic',
+        // Task-oriented patterns
+        'create\\s+tasks\\s+for\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'generate\\s+tasks\\s+for\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'break\\s+epic\\s+into\\s+tasks',
+        'convert\\s+epic\\s+to\\s+tasks'
+      ],
+      keywords: ['decompose', 'break down', 'split', 'divide', 'breakdown', 'epic', 'analyze', 'plan', 'organize', 'tasks'],
+      requiredEntities: [],
+      optionalEntities: ['epicId', 'epicName', 'description'],
+      priority: 10,
+      active: true,
+      examples: [
+        'Decompose epic E001',
+        'Break down the authentication epic',
+        'Split up this epic',
+        'Create tasks for the user management epic',
+        'Decompose the payment processing epic into tasks'
       ]
     });
 
@@ -1020,6 +1148,7 @@ export class IntentPatternEngine {
       case 'list_tasks':
         Object.assign(entities, EntityExtractors.statusInfo(originalText, match));
         Object.assign(entities, EntityExtractors.agentInfo(originalText, match));
+        Object.assign(entities, EntityExtractors.projectName(originalText, match));
         break;
       case 'check_status':
         Object.assign(entities, EntityExtractors.statusInfo(originalText, match));
@@ -1031,6 +1160,10 @@ export class IntentPatternEngine {
         break;
       case 'decompose_task':
         Object.assign(entities, EntityExtractors.taskInfo(originalText, match));
+        Object.assign(entities, EntityExtractors.descriptionInfo(originalText, match));
+        break;
+      case 'decompose_epic':
+        Object.assign(entities, EntityExtractors.epicInfo(originalText, match));
         Object.assign(entities, EntityExtractors.descriptionInfo(originalText, match));
         break;
       case 'decompose_project':
@@ -1055,6 +1188,10 @@ export class IntentPatternEngine {
       case 'import_artifact':
         Object.assign(entities, EntityExtractors.projectName(originalText, match));
         Object.assign(entities, EntityExtractors.artifactInfo(originalText, match));
+        break;
+      case 'update_project':
+        Object.assign(entities, EntityExtractors.projectName(originalText, match));
+        Object.assign(entities, EntityExtractors.general(originalText, match));
         break;
     }
 

@@ -15,8 +15,8 @@ import { sseNotifier } from './services/sse-notifier/index.js'; // Import the SS
 import { transportManager } from './services/transport-manager/index.js'; // Import transport manager singleton
 import { PortAllocator } from './utils/port-allocator.js'; // Import port allocator for cleanup
 
-// Import createServer *after* tool imports to ensure proper initialization order
-import { createServer } from "./server.js";
+// Note: createServer will be dynamically imported after ToolRegistry initialization
+// to ensure proper tool registration timing
 
 // --- Load .env file explicitly ---
 // Get the directory name of the current module (build/index.js)
@@ -382,7 +382,9 @@ async function initializeApp() {
 }
 
 // Initialize app, create server with loaded config, then start main logic
-initializeApp().then((loadedConfig) => {
+initializeApp().then(async (loadedConfig) => {
+  // Dynamically import createServer AFTER ToolRegistry initialization and tool imports
+  const { createServer } = await import('./server.js');
   const server = createServer(loadedConfig); // Pass loaded config to server creation
   main(server).catch(error => { // Pass server instance to main
     logger.fatal({ err: error }, 'Failed to start server');

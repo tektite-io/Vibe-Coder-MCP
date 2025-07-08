@@ -391,6 +391,30 @@ export class IdGenerator {
   }
 
   /**
+   * Suggest a shorter project name by extracting key terms
+   */
+  private suggestShorterName(projectName: string): string {
+    // Remove common words and extract key terms
+    const commonWords = ['a', 'an', 'the', 'for', 'with', 'using', 'that', 'this', 'based', 'web', 'app', 'application', 'system', 'platform'];
+    const words = projectName
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(word => word.length > 2 && !commonWords.includes(word))
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1));
+    
+    // Take first 3-4 key words to create a shorter name
+    const suggested = words.slice(0, Math.min(4, words.length)).join(' ');
+    
+    // If still too long, take first 2 words or abbreviate
+    if (suggested.length > 35) {
+      const abbreviated = words.slice(0, 2).join(' ');
+      return abbreviated.length <= 35 ? abbreviated : words[0];
+    }
+    
+    return suggested || projectName.substring(0, 30).trim();
+  }
+
+  /**
    * Validate project name
    */
   private validateProjectName(projectName: string): { valid: boolean; errors: string[] } {
@@ -403,7 +427,12 @@ export class IdGenerator {
         errors.push('Project name must be at least 2 characters long');
       }
       if (projectName.length > 50) {
-        errors.push('Project name must be 50 characters or less');
+        errors.push(
+          `Project name is too long (${projectName.length} characters). ` +
+          `Please use 50 characters or less for optimal file system compatibility. ` +
+          `Suggestion: Use a shorter, descriptive name like "${this.suggestShorterName(projectName)}" ` +
+          `instead of "${projectName}".`
+        );
       }
       if (!/^[a-zA-Z0-9\s\-_]+$/.test(projectName)) {
         errors.push('Project name can only contain letters, numbers, spaces, hyphens, and underscores');

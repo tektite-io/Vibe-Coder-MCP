@@ -1,7 +1,7 @@
 import { performFormatAwareLlmCall } from '../../../utils/llmHelper.js';
 import { OpenRouterConfig } from '../../../types/workflow.js';
 // LLM model operations handled via config system
-import { AtomicTask, TaskType, TaskPriority } from '../types/task.js';
+import { AtomicTask, TaskType, TaskPriority, FunctionalArea } from '../types/task.js';
 import { AtomicTaskDetector, AtomicityAnalysis } from './atomic-detector.js';
 import { ProjectContext } from '../types/project-context.js';
 import { getPrompt } from '../services/prompt-service.js';
@@ -110,13 +110,61 @@ export interface DecompositionResult {
 }
 
 /**
+ * Epic structure for two-phase decomposition
+ */
+export interface EpicStructure {
+  readonly name: string;
+  readonly functionalArea: 'authentication' | 'user-management' | 'content-management' | 'data-management' | 'integration' | 'admin' | 'ui-components' | 'performance';
+  readonly description: string;
+  readonly priority: 'low' | 'medium' | 'high' | 'critical';
+  readonly estimatedComplexity: 'low' | 'medium' | 'high';
+}
+
+/**
+ * Raw LLM response structure for epic identification
+ */
+interface EpicIdentificationResponse {
+  readonly epics: ReadonlyArray<{
+    readonly name: string;
+    readonly functionalArea: string;
+    readonly description: string;
+    readonly priority?: string;
+    readonly estimatedComplexity?: string;
+  }>;
+}
+
+/**
+ * Raw LLM response structure for task generation
+ */
+interface TaskGenerationResponse {
+  readonly tasks: ReadonlyArray<{
+    readonly title: string;
+    readonly description: string;
+    readonly type?: string;
+    readonly priority?: string;
+    readonly estimatedHours?: number;
+    readonly acceptanceCriteria?: ReadonlyArray<string>;
+    readonly tags?: ReadonlyArray<string>;
+    readonly dependencies?: ReadonlyArray<string>;
+    readonly filePaths?: ReadonlyArray<string>;
+    readonly functionalArea?: string;
+    readonly epicContext?: {
+      readonly suggestedEpicName?: string;
+      readonly epicDescription?: string;
+      readonly epicJustification?: string;
+    };
+  }>;
+}
+
+/**
  * Configuration for RDD engine
  */
 export interface RDDConfig {
-  maxDepth: number;
-  maxSubTasks: number;
-  minConfidence: number;
-  enableParallelDecomposition: boolean;
+  readonly maxDepth: number;
+  readonly maxSubTasks: number;
+  readonly minConfidence: number;
+  readonly enableParallelDecomposition: boolean;
+  readonly epicTimeLimit: number; // Maximum hours per epic
 }
 
 /**
@@ -132,15 +180,64 @@ export class RDDEngine {
 
   constructor(config: OpenRouterConfig, rddConfig?: Partial<RDDConfig>) {
     this.config = config;
-    this.atomicDetector = new AtomicTaskDetector(config);
+    
+    // Initialize RDD config with defaults that can be overridden by centralized config
+    // The configuration hierarchy will be applied during initialization
     this.rddConfig = {
-      maxDepth: 3, // Reduced from 5 to prevent excessive recursion and improve performance
-      maxSubTasks: 48, // Increased to allow for more atomic tasks (8 hours / 10 minutes = 48 max tasks)
+      maxDepth: 5, // Restored to 5 for comprehensive decomposition depth
+      maxSubTasks: 400, // Increased to support realistic enterprise project coverage (was artificially limited to 48)
       minConfidence: 0.8, // Increased confidence threshold for stricter atomic detection
       enableParallelDecomposition: false,
-      ...rddConfig
+      epicTimeLimit: 400, // Configurable epic time limit (was hardcoded to 8 hours)
+      ...rddConfig // Apply explicitly provided config
     };
+    
+    // Initialize atomic detector with consistent epic time limit configuration
+    this.atomicDetector = new AtomicTaskDetector(config, {
+      epicTimeLimit: this.rddConfig.epicTimeLimit
+    });
+    
     this.circuitBreaker = new DecompositionCircuitBreaker(3, 2, 60000); // 3 attempts, 2 failures, 1 minute cooldown
+    
+    // Apply centralized configuration asynchronously after construction
+    this.initializeCentralizedConfig().catch(error => {
+      logger.debug({ err: error }, 'Could not load centralized RDD config, using defaults');
+    });
+  }
+  
+  /**
+   * Initialize RDD configuration from centralized config (async)
+   */
+  private async initializeCentralizedConfig(): Promise<void> {
+    try {
+      // Dynamic import to avoid circular dependencies
+      const { ConfigLoader } = await import('../utils/config-loader.js');
+      const configLoader = ConfigLoader.getInstance();
+      const vibeConfig = await configLoader.getConfig();
+      
+      if (vibeConfig?.taskManager?.rddConfig) {
+        // Apply centralized config while preserving any explicitly provided config
+        const configBasedRDD = vibeConfig.taskManager.rddConfig;
+        
+        // Merge with existing config (preserving explicit overrides)
+        this.rddConfig = {
+          ...configBasedRDD, // Apply centralized config
+          ...this.rddConfig // Preserve any explicitly provided overrides
+        };
+        
+        // Update atomic detector configuration
+        this.atomicDetector = new AtomicTaskDetector(this.config, {
+          epicTimeLimit: this.rddConfig.epicTimeLimit
+        });
+        
+        logger.debug({ 
+          finalConfig: this.rddConfig, 
+          source: 'centralized_config_merged' 
+        }, 'Applied centralized RDD configuration');
+      }
+    } catch (error) {
+      logger.debug({ err: error }, 'Could not load centralized RDD config, using defaults');
+    }
   }
 
   /**
@@ -202,6 +299,7 @@ export class RDDEngine {
       }
 
       // SOLVE: Analyze if task is atomic
+      this.emitTaskProgress(task.id, 'decomposition', 'progress', 25, 'Analyzing task atomicity');
       const analysis = await this.atomicDetector.analyzeTask(task, context);
 
       // If atomic with high confidence, return as-is
@@ -219,7 +317,30 @@ export class RDDEngine {
         };
       }
 
-      // SPLIT: Decompose into sub-tasks
+      // SPLIT: Epic-first decomposition strategy
+      this.emitTaskProgress(task.id, 'decomposition', 'progress', 50, 'Using epic-first decomposition strategy');
+      
+      // Try epic-first approach first
+      logger.info({ taskId: task.id }, 'Attempting epic-first decomposition as primary strategy');
+      try {
+        const epicResult = await this.decomposeTaskWithEpics(task, context, depth);
+        if (epicResult.success && epicResult.subTasks && epicResult.subTasks.length > 0) {
+          logger.info({ 
+            taskId: task.id, 
+            epicCount: epicResult.subTasks.length,
+            functionalAreas: [...new Set(epicResult.subTasks.map(t => t.functionalArea))] 
+          }, 'Epic-first decomposition successful');
+          this.circuitBreaker.recordSuccess(task.id);
+          this.completeOperation(operationId);
+          return epicResult;
+        }
+      } catch (error) {
+        logger.warn({ taskId: task.id, error: error instanceof Error ? error.message : 'Unknown error' }, 
+          'Epic-first decomposition failed, falling back to traditional approach');
+      }
+      
+      // Fallback to traditional single-phase decomposition
+      this.emitTaskProgress(task.id, 'decomposition', 'progress', 60, 'Falling back to traditional decomposition');
       const subTasks = await this.splitTask(task, context, analysis);
 
       if (subTasks.length === 0) {
@@ -237,6 +358,7 @@ export class RDDEngine {
       }
 
       // MERGE: Process decomposed tasks recursively if needed
+      this.emitTaskProgress(task.id, 'decomposition', 'progress', 75, 'Processing decomposed sub-tasks');
       const processedSubTasks = await this.processDecomposedTasks(subTasks, context, depth + 1);
 
       logger.info({
@@ -278,25 +400,126 @@ export class RDDEngine {
     logger.debug({ taskId: task.id }, 'Splitting task into sub-tasks');
 
     try {
-      const splitPrompt = this.buildSplitPrompt(task, context, analysis);
+      let splitPrompt = this.buildSplitPrompt(task, context, analysis);
       const systemPrompt = await getPrompt('decomposition');
 
-      // Perform LLM call with centralized timeout protection
+      // Perform LLM call with retry mechanism for parsing failures
       const timeoutManager = getTimeoutManager();
-      const response = await timeoutManager.raceWithTimeout(
-        'llmRequest',
-        performFormatAwareLlmCall(
-          splitPrompt,
-          systemPrompt,
-          this.config,
-          'task_decomposition',
-          'json', // Explicitly specify JSON format for task decomposition
-          undefined, // Schema will be inferred from task name
-          0.2 // Slightly higher temperature for creativity
-        )
-      );
+      let response: string = '';
+      let subTasks: AtomicTask[] = [];
+      let retryCount = 0;
+      const maxRetries = 2; // Allow up to 2 retries for parsing failures
+      const llmCallStartTime = Date.now();
+      
+      while (retryCount <= maxRetries) {
+        try {
+          response = await timeoutManager.raceWithTimeout(
+            'llmRequest',
+            performFormatAwareLlmCall(
+              splitPrompt,
+              systemPrompt,
+              this.config,
+              'task_decomposition',
+              'json', // Explicitly specify JSON format for task decomposition
+              undefined, // Schema will be inferred from task name
+              retryCount === 0 ? 0.2 : 0.3 + (retryCount * 0.1) // Increase temperature on retries
+            )
+          );
 
-      const subTasks = this.parseSplitResponse(response, task);
+          subTasks = this.parseSplitResponse(response, task);
+          
+          // Emit progress for successful parsing
+          this.emitTaskProgress(task.id, 'decomposition', 'progress', 60, 
+            `Successfully parsed ${subTasks.length} sub-tasks from LLM response`);
+          
+          // Log successful LLM parsing metrics
+          const totalLlmTime = Date.now() - llmCallStartTime;
+          logger.info({
+            taskId: task.id,
+            retryCount,
+            totalLlmTime,
+            responseLength: response.length,
+            parsedTaskCount: subTasks.length,
+            performance: {
+              llmLatency: totalLlmTime,
+              retries: retryCount,
+              parseSuccess: true,
+              timestamp: new Date().toISOString()
+            }
+          }, 'LLM response parsing: successful task decomposition');
+          
+          break; // Success, exit retry loop
+          
+        } catch (parseError) {
+          const parseErrorMessage = parseError instanceof Error ? parseError.message : 'Unknown parsing error';
+          
+          // Check if this is a contextualInsights-only response that might benefit from retry
+          const isContextualInsightsError = parseErrorMessage.includes('contextualInsights without tasks array');
+          const isEmptyTasksError = parseErrorMessage.includes('Empty tasks array');
+          const isInvalidFormatError = parseErrorMessage.includes('Invalid response format');
+          const isAnalysisOnlyError = parseErrorMessage.includes('analysis fields') && parseErrorMessage.includes('without tasks array');
+          
+          if ((isContextualInsightsError || isEmptyTasksError || isInvalidFormatError || isAnalysisOnlyError) && retryCount < maxRetries) {
+            retryCount++;
+            const partialLlmTime = Date.now() - llmCallStartTime;
+            logger.warn({
+              taskId: task.id,
+              retryCount,
+              maxRetries,
+              parseError: parseErrorMessage,
+              retryReason: 'LLM response parsing failed, retrying with different temperature',
+              partialLlmTime,
+              responseLength: response?.length || 0,
+              errorType: isContextualInsightsError ? 'contextual_insights_only' : 
+                         isEmptyTasksError ? 'empty_tasks_array' : 
+                         isAnalysisOnlyError ? 'analysis_only' : 'invalid_format',
+              performance: {
+                llmLatency: partialLlmTime,
+                retries: retryCount,
+                parseSuccess: false,
+                errorCategory: isContextualInsightsError ? 'contextual_insights_only' : 
+                              isEmptyTasksError ? 'empty_tasks_array' : 'invalid_format',
+                timestamp: new Date().toISOString()
+              }
+            }, 'LLM response parsing: retry attempt due to parsing failure');
+            
+            // Modify the prompt slightly for retry to encourage better response format
+            if (retryCount === 1) {
+              if (isAnalysisOnlyError) {
+                splitPrompt = `${splitPrompt}\n\nIMPORTANT: You MUST respond with a JSON object containing BOTH "contextualInsights" AND "tasks" array. Do not respond with only codebaseAlignment, researchIntegration, technologySpecifics, estimationFactors. The response must include actionable tasks in a "tasks" array.`;
+              } else {
+                splitPrompt = `${splitPrompt}\n\nIMPORTANT: You MUST respond with a JSON object containing a "tasks" array. Do not respond with only contextualInsights or analysis. The response must include actionable tasks.`;
+              }
+            } else if (retryCount === 2) {
+              splitPrompt = `${splitPrompt}\n\nCRITICAL: Respond ONLY with valid JSON format: {"contextualInsights": {"codebaseAlignment": "...", "researchIntegration": "...", "technologySpecifics": "...", "estimationFactors": "..."}, "tasks": [{"title": "...", "description": "...", "type": "...", "priority": "...", "estimatedHours": 0.1}]}. No additional text or analysis.`;
+            }
+            continue; // Try again
+          }
+          
+          // If not a retryable error or max retries reached, log final failure and throw
+          const finalLlmTime = Date.now() - llmCallStartTime;
+          logger.error({
+            taskId: task.id,
+            retryCount,
+            maxRetries,
+            finalLlmTime,
+            parseError: parseErrorMessage,
+            errorType: isContextualInsightsError ? 'contextual_insights_only' : 
+                       isEmptyTasksError ? 'empty_tasks_array' : 
+                       isAnalysisOnlyError ? 'analysis_only' :
+                       isInvalidFormatError ? 'invalid_format' : 'other',
+            performance: {
+              llmLatency: finalLlmTime,
+              retries: retryCount,
+              parseSuccess: false,
+              finalFailure: true,
+              timestamp: new Date().toISOString()
+            }
+          }, 'LLM response parsing: final failure, falling back to atomic task generation');
+          
+          throw parseError;
+        }
+      }
 
       // Validate and limit decomposed tasks
       const validatedSubTasks = this.validateDecomposedTasks(subTasks, task);
@@ -430,6 +653,491 @@ export class RDDEngine {
   }
 
   /**
+   * Two-phase decomposition: First identify epics, then generate tasks within epics
+   * This replaces the traditional single-phase approach with epic-aware decomposition
+   */
+  async decomposeTaskWithEpics(
+    task: AtomicTask,
+    context: ProjectContext,
+    depth: number = 0
+  ): Promise<DecompositionResult> {
+    const operationId = `epic-decompose-${task.id}-${Date.now()}`;
+    this.trackOperation(operationId, 'epic_decomposition', task.id);
+
+    logger.info({ taskId: task.id, depth, operationId }, 'Starting two-phase epic-aware decomposition');
+
+    try {
+      // PHASE 1: Epic Identification
+      this.emitTaskProgress(task.id, 'decomposition', 'progress', 25, 'Identifying functional areas and epics');
+      const epicStructure = await this.identifyEpicStructure(task, context);
+
+      if (!epicStructure || epicStructure.length === 0) {
+        logger.warn({ taskId: task.id }, 'No epics identified, falling back to traditional decomposition');
+        return await this.decomposeTask(task, context, depth);
+      }
+
+      // PHASE 2: Task Generation Within Epics
+      this.emitTaskProgress(task.id, 'decomposition', 'progress', 50, 'Generating atomic tasks within epic boundaries');
+      const allSubTasks: AtomicTask[] = [];
+
+      for (const epic of epicStructure) {
+        const epicTasks = await this.generateTasksForEpic(task, epic, context);
+        allSubTasks.push(...epicTasks);
+      }
+
+      if (allSubTasks.length === 0) {
+        logger.warn({ taskId: task.id }, 'No tasks generated in epic-aware decomposition, falling back to traditional');
+        return await this.decomposeTask(task, context, depth);
+      }
+
+      // Process recursively if needed
+      this.emitTaskProgress(task.id, 'decomposition', 'progress', 75, 'Processing epic-aware sub-tasks');
+      const processedSubTasks = await this.processDecomposedTasks(allSubTasks, context, depth + 1);
+
+      logger.info({
+        taskId: task.id,
+        epicsIdentified: epicStructure.length,
+        tasksGenerated: processedSubTasks.length,
+        depth,
+        operationId
+      }, 'Two-phase epic-aware decomposition completed');
+
+      this.completeOperation(operationId);
+      return {
+        success: true,
+        isAtomic: false,
+        originalTask: task,
+        subTasks: processedSubTasks,
+        analysis: {
+          isAtomic: false,
+          confidence: 0.95,
+          reasoning: 'Successfully decomposed using two-phase epic-aware strategy',
+          estimatedHours: processedSubTasks.reduce((sum, t) => sum + t.estimatedHours, 0),
+          complexityFactors: ['epic_based_decomposition', 'functional_area_grouping'],
+          recommendations: ['Tasks organized by epic boundaries', 'Natural feature grouping applied']
+        },
+        depth
+      };
+
+    } catch (error) {
+      this.completeOperation(operationId);
+      logger.warn({
+        err: error,
+        taskId: task.id,
+        depth
+      }, 'Epic-aware decomposition failed, falling back to traditional approach');
+      
+      // Fallback to traditional decomposition
+      return await this.decomposeTask(task, context, depth);
+    }
+  }
+
+  /**
+   * PHASE 1: Identify epic structure and functional areas
+   */
+  private async identifyEpicStructure(
+    task: AtomicTask,
+    context: ProjectContext
+  ): Promise<EpicStructure[]> {
+    logger.debug({ taskId: task.id }, 'Identifying epic structure for task');
+
+    const epicPrompt = `Analyze this task and identify the natural functional areas and epic boundaries:
+
+TASK TO ANALYZE:
+- Title: ${task.title}
+- Description: ${task.description}
+- Type: ${task.type}
+
+PROJECT CONTEXT:
+- Languages: ${context.languages?.join(', ') || 'not specified'}
+- Frameworks: ${context.frameworks?.join(', ') || 'not specified'}
+- Build Tools: ${context.buildTools?.join(', ') || 'not specified'}
+
+Identify 2-5 major functional areas (epics) that this work should be grouped into.
+
+Respond with valid JSON only:
+{
+  "epics": [
+    {
+      "name": "Authentication System",
+      "functionalArea": "authentication",
+      "description": "User login and security features",
+      "priority": "high",
+      "estimatedComplexity": "medium"
+    }
+  ]
+}`;
+
+    try {
+      const timeoutManager = getTimeoutManager();
+      const response = await timeoutManager.raceWithTimeout(
+        'llmRequest',
+        performFormatAwareLlmCall(
+          epicPrompt,
+          'Identify functional areas and epic boundaries for task decomposition',
+          this.config,
+          'epic_identification',
+          'json',
+          undefined,
+          0.1
+        )
+      );
+
+      const parsedResponse = this.parseEpicIdentificationResponse(response);
+      return this.validateAndTransformEpics(parsedResponse.epics);
+    } catch (error) {
+      logger.warn({ err: error, taskId: task.id }, 'Failed to identify epic structure');
+      return [];
+    }
+  }
+
+  /**
+   * PHASE 2: Generate atomic tasks for a specific epic
+   */
+  private async generateTasksForEpic(
+    originalTask: AtomicTask,
+    epic: EpicStructure,
+    _context: ProjectContext
+  ): Promise<AtomicTask[]> {
+    logger.debug({ 
+      taskId: originalTask.id, 
+      epicName: epic.name,
+      functionalArea: epic.functionalArea 
+    }, 'Generating tasks for epic');
+
+    const epicTaskPrompt = `Generate atomic tasks specifically for this epic:
+
+EPIC CONTEXT:
+- Epic Name: ${epic.name}
+- Functional Area: ${epic.functionalArea}
+- Description: ${epic.description}
+- Priority: ${epic.priority}
+
+ORIGINAL TASK:
+- Title: ${originalTask.title}
+- Description: ${originalTask.description}
+- Type: ${originalTask.type}
+
+Generate 3-8 atomic tasks that belong to this epic. Each task should be 5-10 minutes of work.
+
+Respond with valid JSON only using the enhanced format from the decomposition prompt:
+{
+  "tasks": [
+    {
+      "title": "Create authentication middleware",
+      "description": "...",
+      "type": "development",
+      "priority": "high",
+      "estimatedHours": 0.15,
+      "acceptanceCriteria": ["Middleware validates JWT tokens"],
+      "functionalArea": "${epic.functionalArea}",
+      "epicContext": {
+        "suggestedEpicName": "${epic.name}",
+        "epicDescription": "${epic.description}",
+        "epicJustification": "Core component of ${epic.functionalArea} functionality"
+      }
+    }
+  ]
+}`;
+
+    try {
+      const timeoutManager = getTimeoutManager();
+      const response = await timeoutManager.raceWithTimeout(
+        'llmRequest',
+        performFormatAwareLlmCall(
+          epicTaskPrompt,
+          'Generate atomic tasks for specific epic in two-phase decomposition',
+          this.config,
+          'epic_task_generation',
+          'json',
+          undefined,
+          0.1
+        )
+      );
+
+      const parsedResponse = this.parseTaskGenerationResponse(response);
+      return this.validateAndTransformTasks(parsedResponse.tasks, originalTask, epic);
+    } catch (error) {
+      logger.warn({ 
+        err: error, 
+        taskId: originalTask.id, 
+        epicName: epic.name 
+      }, 'Failed to generate tasks for epic');
+      return [];
+    }
+  }
+
+  /**
+   * Type-safe parser for epic identification LLM response
+   */
+  private parseEpicIdentificationResponse(jsonResponse: string): EpicIdentificationResponse {
+    try {
+      const parsed: unknown = JSON.parse(jsonResponse);
+      
+      if (typeof parsed !== 'object' || parsed === null) {
+        throw new Error('Response must be an object');
+      }
+      
+      const obj = parsed as Record<string, unknown>;
+      
+      if (!('epics' in obj) || !Array.isArray(obj.epics)) {
+        throw new Error('Response must contain epics array');
+      }
+      
+      const epics = obj.epics as unknown[];
+      const validatedEpics = epics.map((epic: unknown, index: number): EpicIdentificationResponse['epics'][number] => {
+        if (typeof epic !== 'object' || epic === null) {
+          throw new Error(`Epic at index ${index} must be an object`);
+        }
+        
+        const epicObj = epic as Record<string, unknown>;
+        
+        if (typeof epicObj.name !== 'string') {
+          throw new Error(`Epic at index ${index} must have string name`);
+        }
+        
+        if (typeof epicObj.functionalArea !== 'string') {
+          throw new Error(`Epic at index ${index} must have string functionalArea`);
+        }
+        
+        if (typeof epicObj.description !== 'string') {
+          throw new Error(`Epic at index ${index} must have string description`);
+        }
+        
+        return {
+          name: epicObj.name,
+          functionalArea: epicObj.functionalArea,
+          description: epicObj.description,
+          priority: typeof epicObj.priority === 'string' ? epicObj.priority : undefined,
+          estimatedComplexity: typeof epicObj.estimatedComplexity === 'string' ? epicObj.estimatedComplexity : undefined
+        };
+      });
+      
+      return { epics: validatedEpics };
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown parsing error';
+      throw new Error(`Failed to parse epic identification response: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Type-safe parser for task generation LLM response
+   */
+  private parseTaskGenerationResponse(jsonResponse: string): TaskGenerationResponse {
+    try {
+      const parsed: unknown = JSON.parse(jsonResponse);
+      
+      if (typeof parsed !== 'object' || parsed === null) {
+        throw new Error('Response must be an object');
+      }
+      
+      const obj = parsed as Record<string, unknown>;
+      
+      if (!('tasks' in obj) || !Array.isArray(obj.tasks)) {
+        throw new Error('Response must contain tasks array');
+      }
+      
+      const tasks = obj.tasks as unknown[];
+      const validatedTasks = tasks.map((task: unknown, index: number): TaskGenerationResponse['tasks'][number] => {
+        if (typeof task !== 'object' || task === null) {
+          throw new Error(`Task at index ${index} must be an object`);
+        }
+        
+        const taskObj = task as Record<string, unknown>;
+        
+        if (typeof taskObj.title !== 'string') {
+          throw new Error(`Task at index ${index} must have string title`);
+        }
+        
+        if (typeof taskObj.description !== 'string') {
+          throw new Error(`Task at index ${index} must have string description`);
+        }
+        
+        // Validate arrays if present
+        const validateStringArray = (arr: unknown, fieldName: string): ReadonlyArray<string> | undefined => {
+          if (arr === undefined) return undefined;
+          if (!Array.isArray(arr)) {
+            throw new Error(`Task at index ${index}: ${fieldName} must be an array`);
+          }
+          return arr.map((item: unknown, arrIndex: number): string => {
+            if (typeof item !== 'string') {
+              throw new Error(`Task at index ${index}: ${fieldName}[${arrIndex}] must be a string`);
+            }
+            return item;
+          });
+        };
+        
+        // Validate epic context if present
+        let epicContext: TaskGenerationResponse['tasks'][number]['epicContext'] = undefined;
+        if (taskObj.epicContext !== undefined) {
+          if (typeof taskObj.epicContext !== 'object' || taskObj.epicContext === null) {
+            throw new Error(`Task at index ${index}: epicContext must be an object`);
+          }
+          const epicCtx = taskObj.epicContext as Record<string, unknown>;
+          epicContext = {
+            suggestedEpicName: typeof epicCtx.suggestedEpicName === 'string' ? epicCtx.suggestedEpicName : undefined,
+            epicDescription: typeof epicCtx.epicDescription === 'string' ? epicCtx.epicDescription : undefined,
+            epicJustification: typeof epicCtx.epicJustification === 'string' ? epicCtx.epicJustification : undefined
+          };
+        }
+        
+        return {
+          title: taskObj.title,
+          description: taskObj.description,
+          type: typeof taskObj.type === 'string' ? taskObj.type : undefined,
+          priority: typeof taskObj.priority === 'string' ? taskObj.priority : undefined,
+          estimatedHours: typeof taskObj.estimatedHours === 'number' ? taskObj.estimatedHours : undefined,
+          acceptanceCriteria: validateStringArray(taskObj.acceptanceCriteria, 'acceptanceCriteria'),
+          tags: validateStringArray(taskObj.tags, 'tags'),
+          dependencies: validateStringArray(taskObj.dependencies, 'dependencies'),
+          filePaths: validateStringArray(taskObj.filePaths, 'filePaths'),
+          functionalArea: typeof taskObj.functionalArea === 'string' ? taskObj.functionalArea : undefined,
+          epicContext
+        };
+      });
+      
+      return { tasks: validatedTasks };
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown parsing error';
+      throw new Error(`Failed to parse task generation response: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Validate and transform raw epic data to EpicStructure
+   */
+  private validateAndTransformEpics(rawEpics: EpicIdentificationResponse['epics']): EpicStructure[] {
+    const validFunctionalAreas: EpicStructure['functionalArea'][] = [
+      'authentication', 'user-management', 'content-management', 'data-management', 
+      'integration', 'admin', 'ui-components', 'performance'
+    ];
+    
+    const validPriorities: EpicStructure['priority'][] = ['low', 'medium', 'high', 'critical'];
+    const validComplexities: EpicStructure['estimatedComplexity'][] = ['low', 'medium', 'high'];
+    
+    return rawEpics.map((epic): EpicStructure => {
+      // Validate functional area
+      let functionalArea: EpicStructure['functionalArea'] = 'admin'; // default fallback
+      if (validFunctionalAreas.includes(epic.functionalArea as EpicStructure['functionalArea'])) {
+        functionalArea = epic.functionalArea as EpicStructure['functionalArea'];
+      } else {
+        logger.warn({ 
+          epicName: epic.name, 
+          invalidFunctionalArea: epic.functionalArea 
+        }, 'Invalid functional area, using fallback');
+      }
+      
+      // Validate priority
+      let priority: EpicStructure['priority'] = 'medium'; // default
+      if (epic.priority && validPriorities.includes(epic.priority as EpicStructure['priority'])) {
+        priority = epic.priority as EpicStructure['priority'];
+      }
+      
+      // Validate complexity
+      let estimatedComplexity: EpicStructure['estimatedComplexity'] = 'medium'; // default
+      if (epic.estimatedComplexity && validComplexities.includes(epic.estimatedComplexity as EpicStructure['estimatedComplexity'])) {
+        estimatedComplexity = epic.estimatedComplexity as EpicStructure['estimatedComplexity'];
+      }
+      
+      return {
+        name: epic.name,
+        functionalArea,
+        description: epic.description,
+        priority,
+        estimatedComplexity
+      };
+    });
+  }
+
+  /**
+   * Validate and transform raw task data to AtomicTask
+   */
+  private validateAndTransformTasks(
+    rawTasks: TaskGenerationResponse['tasks'], 
+    originalTask: AtomicTask, 
+    epic: EpicStructure
+  ): AtomicTask[] {
+    const validTaskTypes: AtomicTask['type'][] = ['development', 'testing', 'documentation', 'research'];
+    const validPriorities: AtomicTask['priority'][] = ['low', 'medium', 'high', 'critical'];
+    
+    return rawTasks.map((taskData, index): AtomicTask => {
+      // Validate and set defaults
+      const type: AtomicTask['type'] = (taskData.type && validTaskTypes.includes(taskData.type as AtomicTask['type'])) 
+        ? taskData.type as AtomicTask['type'] 
+        : 'development';
+        
+      const priority: AtomicTask['priority'] = (taskData.priority && validPriorities.includes(taskData.priority as AtomicTask['priority']))
+        ? taskData.priority as AtomicTask['priority']
+        : epic.priority as AtomicTask['priority'];
+        
+      const estimatedHours: number = (typeof taskData.estimatedHours === 'number' && taskData.estimatedHours > 0)
+        ? Math.min(taskData.estimatedHours, 0.17) // Cap at 10 minutes
+        : 0.15;
+        
+      const now = new Date();
+      
+      return {
+        id: `${originalTask.id}-epic-${index + 1}`,
+        title: taskData.title,
+        description: taskData.description,
+        status: 'pending' as const,
+        priority,
+        type,
+        functionalArea: epic.functionalArea,
+        estimatedHours,
+        actualHours: undefined,
+        epicId: `${epic.functionalArea}-epic`,
+        projectId: originalTask.projectId,
+        dependencies: taskData.dependencies ? [...taskData.dependencies] : [],
+        dependents: [],
+        filePaths: taskData.filePaths ? [...taskData.filePaths] : [],
+        acceptanceCriteria: taskData.acceptanceCriteria ? [...taskData.acceptanceCriteria] : [],
+        testingRequirements: {
+          unitTests: [],
+          integrationTests: [],
+          performanceTests: [],
+          coverageTarget: 80
+        },
+        performanceCriteria: {
+          responseTime: undefined,
+          memoryUsage: undefined,
+          throughput: undefined
+        },
+        qualityCriteria: {
+          codeQuality: [],
+          documentation: [],
+          typeScript: true,
+          eslint: true
+        },
+        integrationCriteria: {
+          compatibility: [],
+          patterns: []
+        },
+        validationMethods: {
+          automated: [],
+          manual: []
+        },
+        assignedAgent: undefined,
+        executionContext: undefined,
+        createdAt: now,
+        updatedAt: now,
+        startedAt: undefined,
+        completedAt: undefined,
+        createdBy: 'decomposition-service',
+        tags: taskData.tags ? [...taskData.tags] : [epic.functionalArea],
+        metadata: {
+          createdAt: now,
+          updatedAt: now,
+          createdBy: 'decomposition-service',
+          tags: taskData.tags ? [...taskData.tags] : [epic.functionalArea]
+        }
+      };
+    });
+  }
+
+  /**
    * Build prompt for task splitting
    */
   private buildSplitPrompt(
@@ -462,9 +1170,9 @@ PROJECT CONTEXT:
 - Complexity: ${context.complexity || 'unknown'}
 
 EPIC CONSTRAINT:
-- This task belongs to an epic with a maximum of 8 hours total
+- This task belongs to an epic with a maximum of ${this.rddConfig.epicTimeLimit} hours total (configurable limit supporting realistic enterprise projects)
 - All generated tasks combined should not exceed the original task's estimated hours
-- Aim for efficient task breakdown that respects the epic time limit
+- Aim for comprehensive task breakdown that supports realistic project scope
 
 ATOMIC TASK REQUIREMENTS (MANDATORY):
 1. ⏱️ DURATION: Each task must take 5-10 minutes maximum (0.08-0.17 hours)
@@ -485,7 +1193,7 @@ TASK GENERATION REQUIREMENTS:
 7. Preserve the original task's intent and scope
 8. Use specific, actionable titles
 9. Provide detailed but focused descriptions
-10. Respect the 8-hour epic time constraint
+10. Support comprehensive project coverage within the ${this.rddConfig.epicTimeLimit}-hour epic scope
 
 VALIDATION CHECKLIST (Apply to each task):
 □ Takes 5-10 minutes maximum?
@@ -532,21 +1240,50 @@ CRITICAL REMINDER:
   /**
    * Validate the response structure before parsing
    */
-  private validateResponseStructure(parsed: Record<string, unknown>): { isValid: boolean; error?: string } {
+  private validateResponseStructure(parsed: Record<string, unknown>): { isValid: boolean; error?: string; canConvert?: boolean } {
+    // Check if it's a analysis-only response (codebaseAlignment, researchIntegration, etc.)
+    const analysisFields = ['codebaseAlignment', 'researchIntegration', 'technologySpecifics', 'estimationFactors'];
+    const hasAnalysisFields = analysisFields.some(field => parsed[field]);
+    
+    if (hasAnalysisFields && !parsed.tasks && !parsed.subTasks && !parsed.title && !parsed.contextualInsights) {
+      return { 
+        isValid: false, 
+        error: `LLM returned analysis fields (${analysisFields.filter(f => parsed[f]).join(', ')}) without tasks array. This is a malformed response.`,
+        canConvert: true
+      };
+    }
+
+    // Check if it's a contextualInsights-only response (common LLM behavior)
+    if (parsed.contextualInsights && !parsed.tasks && !parsed.subTasks && !parsed.title) {
+      return { 
+        isValid: false, 
+        error: `LLM returned contextualInsights without tasks array. This suggests the task may already be atomic or the LLM failed to decompose it properly. Response keys: ${Object.keys(parsed).join(', ')}`,
+        canConvert: false
+      };
+    }
+
     // Check if it's a tasks array format
     if (parsed.tasks && Array.isArray(parsed.tasks)) {
+      if (parsed.tasks.length === 0) {
+        return { isValid: false, error: `Empty tasks array received from LLM` };
+      }
       const invalidTasks = (parsed.tasks as Record<string, unknown>[]).filter((task: Record<string, unknown>) => !this.validateTaskStructure(task));
       if (invalidTasks.length > 0) {
-        return { isValid: false, error: `Invalid task structure in tasks array: missing required fields` };
+        const missingFields = this.getMissingFields(invalidTasks[0]);
+        return { isValid: false, error: `Invalid task structure in tasks array: missing required fields [${missingFields.join(', ')}] in task "${invalidTasks[0].title || 'untitled'}"` };
       }
       return { isValid: true };
     }
 
     // Check if it's a subTasks array format (backward compatibility)
     if (parsed.subTasks && Array.isArray(parsed.subTasks)) {
+      if (parsed.subTasks.length === 0) {
+        return { isValid: false, error: `Empty subTasks array received from LLM` };
+      }
       const invalidTasks = (parsed.subTasks as Record<string, unknown>[]).filter((task: Record<string, unknown>) => !this.validateTaskStructure(task));
       if (invalidTasks.length > 0) {
-        return { isValid: false, error: `Invalid task structure in subTasks array: missing required fields` };
+        const missingFields = this.getMissingFields(invalidTasks[0]);
+        return { isValid: false, error: `Invalid task structure in subTasks array: missing required fields [${missingFields.join(', ')}] in task "${invalidTasks[0].title || 'untitled'}"` };
       }
       return { isValid: true };
     }
@@ -554,12 +1291,103 @@ CRITICAL REMINDER:
     // Check if it's a single task object
     if (parsed.title && parsed.description) {
       if (!this.validateTaskStructure(parsed)) {
-        return { isValid: false, error: `Invalid single task structure: missing required fields` };
+        const missingFields = this.getMissingFields(parsed);
+        return { isValid: false, error: `Invalid single task structure: missing required fields [${missingFields.join(', ')}]` };
       }
       return { isValid: true };
     }
 
-    return { isValid: false, error: `Invalid response format: no tasks array or single task found` };
+    // Provide detailed diagnostic information for debugging
+    const responseKeys = Object.keys(parsed);
+    const hasContextualInsights = !!parsed.contextualInsights;
+    const hasAnalysis = !!parsed.analysis;
+    const hasRecommendations = !!parsed.recommendations;
+    
+    return { 
+      isValid: false, 
+      error: `Invalid response format: no tasks array or single task found. Response contains keys: [${responseKeys.join(', ')}]. Has contextualInsights: ${hasContextualInsights}, analysis: ${hasAnalysis}, recommendations: ${hasRecommendations}. Expected "tasks" array or single task object with title/description.` 
+    };
+  }
+
+  /**
+   * Convert analysis-only response to proper format by treating as atomic task
+   */
+  private convertAnalysisOnlyResponse(parsed: Record<string, unknown>, originalTask: AtomicTask): AtomicTask[] {
+    logger.info({ 
+      taskId: originalTask.id,
+      analysisFields: Object.keys(parsed).filter(k => ['codebaseAlignment', 'researchIntegration', 'technologySpecifics', 'estimationFactors'].includes(k))
+    }, 'Converting analysis-only response to atomic task - LLM failed to provide proper decomposition');
+
+    // Create proper contextualInsights structure
+    const contextualInsights = {
+      codebaseAlignment: parsed.codebaseAlignment as string || 'No codebase alignment analysis provided',
+      researchIntegration: parsed.researchIntegration as string || 'No research integration analysis provided', 
+      technologySpecifics: parsed.technologySpecifics as string || 'No technology specifics provided',
+      estimationFactors: parsed.estimationFactors as string || 'No estimation factors provided'
+    };
+
+    // Generate atomic task since LLM didn't provide proper decomposition
+    const atomicTask: AtomicTask = {
+      id: `${originalTask.id}-atomic-01`,
+      title: originalTask.title,
+      description: `${originalTask.description}\n\nAnalysis: ${contextualInsights.codebaseAlignment}`,
+      type: originalTask.type,
+      functionalArea: originalTask.functionalArea || 'data-management',
+      priority: originalTask.priority,
+      status: 'pending',
+      projectId: originalTask.projectId,
+      epicId: originalTask.epicId,
+      estimatedHours: Math.min(Math.max(originalTask.estimatedHours, 0.08), 0.17),
+      actualHours: 0,
+      filePaths: originalTask.filePaths || [],
+      acceptanceCriteria: originalTask.acceptanceCriteria?.length > 0 
+        ? [originalTask.acceptanceCriteria[0]]
+        : ['Task implementation completed and verified'],
+      tags: [...(originalTask.tags || []), 'llm-analysis-converted', 'atomic-fallback'],
+      dependencies: originalTask.dependencies || [],
+      dependents: [],
+      testingRequirements: originalTask.testingRequirements || {
+        unitTests: [],
+        integrationTests: [],
+        performanceTests: [],
+        coverageTarget: 80
+      },
+      performanceCriteria: originalTask.performanceCriteria || {},
+      qualityCriteria: originalTask.qualityCriteria || {
+        codeQuality: [],
+        documentation: [],
+        typeScript: true,
+        eslint: true
+      },
+      integrationCriteria: originalTask.integrationCriteria || {
+        compatibility: [],
+        patterns: []
+      },
+      validationMethods: originalTask.validationMethods || {
+        automated: [],
+        manual: []
+      },
+      assignedAgent: undefined,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      createdBy: originalTask.createdBy,
+      metadata: {
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        createdBy: originalTask.createdBy,
+        tags: [...(originalTask.tags || []), 'llm-analysis-converted', 'atomic-fallback']
+      }
+    };
+
+    return [atomicTask];
+  }
+
+  /**
+   * Get missing required fields for a task object
+   */
+  private getMissingFields(task: Record<string, unknown>): string[] {
+    const requiredFields = ['title', 'description', 'type', 'priority', 'estimatedHours'];
+    return requiredFields.filter(field => !Object.prototype.hasOwnProperty.call(task, field) || task[field] == null);
   }
 
   /**
@@ -582,6 +1410,15 @@ CRITICAL REMINDER:
       // Validate response structure first
       const validation = this.validateResponseStructure(parsed);
       if (!validation.isValid) {
+        // Check if we can convert an analysis-only response
+        if (validation.canConvert) {
+          logger.warn({
+            taskId: originalTask.id,
+            responseKeys: Object.keys(parsed),
+            conversionReason: 'LLM returned analysis fields without tasks array'
+          }, 'Converting analysis-only response to atomic task');
+          return this.convertAnalysisOnlyResponse(parsed, originalTask);
+        }
         throw new Error(validation.error || 'Invalid response structure');
       }
 
@@ -611,6 +1448,7 @@ CRITICAL REMINDER:
           title: (taskData.title as string) || '',
           description: (taskData.description as string) || '',
           type: this.validateTaskType(String(taskData.type)) || originalTask.type,
+          functionalArea: (taskData.functionalArea as FunctionalArea) || originalTask.functionalArea || 'data-management',
           priority: this.validateTaskPriority(String(taskData.priority)) || originalTask.priority,
           status: 'pending' as const,
           projectId: originalTask.projectId,
@@ -670,23 +1508,93 @@ CRITICAL REMINDER:
    * Generate fallback tasks when LLM parsing fails
    */
   private generateFallbackTasks(originalTask: AtomicTask, errorMessage: string): AtomicTask[] {
-    logger.info({ taskId: originalTask.id, errorMessage }, 'Generating fallback tasks due to parsing failure');
+    logger.info({ 
+      taskId: originalTask.id, 
+      errorMessage, 
+      originalEstimatedHours: originalTask.estimatedHours,
+      fallbackStrategy: 'realistic_atomic_tasks' 
+    }, 'Generating realistic fallback tasks due to parsing failure');
     
-    // Create a single simplified task based on the original
-    const fallbackTask: AtomicTask = {
-      id: `${originalTask.id}-fallback-01`,
-      title: `Review and plan: ${originalTask.title}`,
-      description: `Review the requirements for "${originalTask.title}" and create a detailed implementation plan. Original description: ${originalTask.description}`,
+    // Determine if this is a contextualInsights-only response (suggests atomic task)
+    const isContextualInsightsResponse = errorMessage.includes('contextualInsights without tasks array');
+    
+    if (isContextualInsightsResponse) {
+      // If LLM returned contextualInsights only, the task is likely already atomic
+      // Create a single refined task with proper atomic constraints
+      const atomicTask: AtomicTask = {
+        id: `${originalTask.id}-atomic-01`,
+        title: originalTask.title,
+        description: `${originalTask.description}\n\nNote: LLM analysis suggests this task is already appropriately sized for atomic execution.`,
+        type: originalTask.type,
+        functionalArea: originalTask.functionalArea || 'data-management',
+        priority: originalTask.priority,
+        status: 'pending',
+        projectId: originalTask.projectId,
+        epicId: originalTask.epicId,
+        estimatedHours: Math.min(Math.max(originalTask.estimatedHours, 0.08), 0.17), // Ensure 5-10 minute range
+        actualHours: 0,
+        filePaths: originalTask.filePaths || [],
+        acceptanceCriteria: originalTask.acceptanceCriteria?.length > 0 
+          ? [originalTask.acceptanceCriteria[0]] // Keep only the first criteria for atomic tasks
+          : ['Task implementation completed and verified'],
+        tags: [...(originalTask.tags || []), 'llm-atomic-validated'],
+        dependencies: originalTask.dependencies || [],
+        dependents: [],
+        testingRequirements: originalTask.testingRequirements || {
+          unitTests: [],
+          integrationTests: [],
+          performanceTests: [],
+          coverageTarget: 80
+        },
+        performanceCriteria: originalTask.performanceCriteria || {},
+        qualityCriteria: originalTask.qualityCriteria || {
+          codeQuality: [],
+          documentation: [],
+          typeScript: true,
+          eslint: true
+        },
+        integrationCriteria: originalTask.integrationCriteria || {
+          compatibility: [],
+          patterns: []
+        },
+        validationMethods: originalTask.validationMethods || {
+          automated: [],
+          manual: []
+        },
+        assignedAgent: undefined,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        createdBy: originalTask.createdBy,
+        metadata: {
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          createdBy: originalTask.createdBy,
+          tags: [...(originalTask.tags || []), 'llm-atomic-validated', 'fallback:atomic']
+        }
+      };
+      
+      return [atomicTask];
+    }
+    
+    // For other parsing failures, create proper atomic breakdown
+    const tasks: AtomicTask[] = [];
+    
+    // Create more realistic and specific planning task
+    tasks.push({
+      id: `${originalTask.id}-plan-01`,
+      title: `Analyze requirements for ${originalTask.title.toLowerCase()}`,
+      description: `Review existing code patterns and create implementation approach for: ${originalTask.description}. Identify required changes, dependencies, and potential risks.`,
       type: 'research',
+      functionalArea: originalTask.functionalArea || 'data-management',
       priority: originalTask.priority,
       status: 'pending',
       projectId: originalTask.projectId,
       epicId: originalTask.epicId,
-      estimatedHours: Math.min(originalTask.estimatedHours, 0.5), // Cap at 30 minutes
+      estimatedHours: 0.1, // 6 minutes - more realistic for analysis
       actualHours: 0,
-      filePaths: [],
-      acceptanceCriteria: ['Detailed implementation plan is created'],
-      tags: [...(originalTask.tags || []), 'fallback-generated', 'needs-review'],
+      filePaths: originalTask.filePaths?.slice(0, 2) || [], // Include relevant files
+      acceptanceCriteria: ['Implementation approach documented with clear next steps'],
+      tags: [...(originalTask.tags || []), 'fallback-generated', 'planning-phase'],
       dependencies: [],
       dependents: [],
       testingRequirements: originalTask.testingRequirements || {
@@ -718,11 +1626,81 @@ CRITICAL REMINDER:
         createdAt: new Date(),
         updatedAt: new Date(),
         createdBy: originalTask.createdBy,
-        tags: [...(originalTask.tags || []), 'fallback-generated', `error:${errorMessage.slice(0, 50)}`]
+        tags: [...(originalTask.tags || []), 'fallback-generated', 'planning-phase', 'parsing-failed']
       }
-    };
+    });
+    
+    // Create more specific implementation task based on task type
+    const implementationTitle = originalTask.type === 'testing' 
+      ? `Write tests for ${originalTask.title.toLowerCase()}`
+      : originalTask.type === 'documentation'
+      ? `Document ${originalTask.title.toLowerCase()}`
+      : `Implement ${originalTask.title.toLowerCase()}`;
+    
+    const implementationDescription = originalTask.type === 'testing'
+      ? `Write unit tests covering the functionality described in: ${originalTask.description}. Include edge cases and error scenarios.`
+      : originalTask.type === 'documentation'
+      ? `Create comprehensive documentation for: ${originalTask.description}. Include usage examples and API details.`
+      : `Execute the implementation for: ${originalTask.description}. Follow established patterns and coding standards.`;
 
-    return [fallbackTask];
+    tasks.push({
+        id: `${originalTask.id}-impl-02`,
+        title: implementationTitle,
+        description: implementationDescription,
+        type: originalTask.type,
+        functionalArea: originalTask.functionalArea || 'data-management',
+        priority: originalTask.priority,
+        status: 'pending',
+        projectId: originalTask.projectId,
+        epicId: originalTask.epicId,
+        estimatedHours: 0.15, // 9 minutes - slightly longer for implementation
+        actualHours: 0,
+        filePaths: originalTask.filePaths || [],
+        acceptanceCriteria: [`${implementationTitle} completed and verified`],
+        tags: [...(originalTask.tags || []), 'fallback-generated', 'implementation-phase'],
+        dependencies: [`${originalTask.id}-plan-01`], // Depends on planning task
+        dependents: [],
+        testingRequirements: originalTask.testingRequirements || {
+          unitTests: [],
+          integrationTests: [],
+          performanceTests: [],
+          coverageTarget: 80
+        },
+        performanceCriteria: originalTask.performanceCriteria || {},
+        qualityCriteria: originalTask.qualityCriteria || {
+          codeQuality: [],
+          documentation: [],
+          typeScript: true,
+          eslint: true
+        },
+        integrationCriteria: originalTask.integrationCriteria || {
+          compatibility: [],
+          patterns: []
+        },
+        validationMethods: originalTask.validationMethods || {
+          automated: [],
+          manual: []
+        },
+        assignedAgent: undefined,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        createdBy: originalTask.createdBy,
+        metadata: {
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          createdBy: originalTask.createdBy,
+          tags: [...(originalTask.tags || []), 'fallback-generated', 'implementation-phase', 'parsing-failed']
+        }
+      });
+
+    logger.info({
+      taskId: originalTask.id,
+      fallbackTasksGenerated: tasks.length,
+      totalEstimatedHours: tasks.reduce((sum, task) => sum + task.estimatedHours, 0),
+      originalEstimatedHours: originalTask.estimatedHours
+    }, 'Realistic fallback tasks generated successfully');
+
+    return tasks;
   }
 
   /**
@@ -732,8 +1710,8 @@ CRITICAL REMINDER:
     // Limit number of tasks
     const limitedTasks = decomposedTasks.slice(0, this.rddConfig.maxSubTasks);
 
-    // Epic time limit for validation
-    const epicTimeLimit = 8; // 8 hours maximum per epic
+    // Epic time limit for validation - now configurable through RDDConfig
+    const epicTimeLimit: number = this.rddConfig.epicTimeLimit;
 
     // Validate each task with atomic constraints
     const validTasks = limitedTasks.filter(task => {
@@ -760,13 +1738,10 @@ CRITICAL REMINDER:
         return false;
       }
 
-      // Check for "and" operators indicating multiple actions
-      const hasAndOperator = task.title.toLowerCase().includes(' and ') ||
-                            task.description.toLowerCase().includes(' and ');
-      if (hasAndOperator) {
-        logger.warn({ taskId: task.id }, 'Task contains "and" operator suggesting multiple actions');
-        return false;
-      }
+      // Removed overly strict "and" operator validation - it was rejecting valid atomic tasks
+      // Tasks can contain "and" in context that doesn't indicate multiple actions
+      // e.g., "Update user model and database schema" can be atomic if referring to related changes
+      // Better to rely on time estimation and acceptance criteria validation
 
       return true;
     });
@@ -807,7 +1782,7 @@ CRITICAL REMINDER:
   }
 
   /**
-   * Track active operation for health monitoring
+   * Track active operation for health monitoring with progress updates
    */
   private trackOperation(operationId: string, operation: string, taskId: string): void {
     this.activeOperations.set(operationId, {
@@ -815,12 +1790,20 @@ CRITICAL REMINDER:
       operation,
       taskId
     });
+    
+    // Emit progress update for operation start
+    this.emitTaskProgress(taskId, 'decomposition', 'started', 0, `${operation} started`);
   }
 
   /**
-   * Complete operation tracking
+   * Complete operation tracking with progress updates
    */
   private completeOperation(operationId: string): void {
+    const operation = this.activeOperations.get(operationId);
+    if (operation) {
+      // Emit progress update for operation completion
+      this.emitTaskProgress(operation.taskId, 'decomposition', 'completed', 100, `${operation.operation} completed`);
+    }
     this.activeOperations.delete(operationId);
   }
 
@@ -1087,5 +2070,47 @@ CRITICAL REMINDER:
       stopped: stoppedOperations.length,
       operations: stoppedOperations
     };
+  }
+
+  /**
+   * Emit operation progress updates for real-time status tracking
+   */
+  private emitTaskProgress(
+    taskId: string, 
+    operation: string, 
+    status: 'started' | 'progress' | 'completed' | 'failed',
+    progressPercentage: number,
+    message?: string
+  ): void {
+    try {
+      // Import progress tracker dynamically to avoid circular dependencies
+      import('../services/progress-tracker.js').then(({ ProgressTracker }) => {
+        const progressTracker = ProgressTracker.getInstance();
+        
+        progressTracker.emitProgressEvent('decomposition_progress', {
+          taskId,
+          progressPercentage,
+          componentName: 'RDDEngine',
+          message: message || `${operation} ${status}`,
+          decompositionProgress: {
+            phase: 'decomposition',
+            progress: progressPercentage,
+            message: message || `${operation} ${status}`
+          }
+        });
+        
+        logger.debug({
+          taskId,
+          operation,
+          status,
+          progressPercentage,
+          message
+        }, 'RDD task progress update emitted');
+      }).catch(error => {
+        logger.debug({ err: error, taskId }, 'Could not emit progress update');
+      });
+    } catch (error) {
+      logger.debug({ err: error, taskId }, 'Failed to emit task progress');
+    }
   }
 }

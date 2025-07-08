@@ -15,6 +15,7 @@ export type Intent =
   | 'run_task'
   | 'check_status'
   | 'decompose_task'
+  | 'decompose_epic'
   | 'decompose_project'
   | 'search_files'
   | 'search_content'

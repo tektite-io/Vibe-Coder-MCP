@@ -337,11 +337,43 @@ export class PRDIntegrationService {
             const stats = await fs.stat(filePath);
             const { projectName, createdAt } = this.extractPRDMetadataFromFilename(file.name);
 
-            // If projectPath is specified, filter by project name
+            // If projectPath is specified, filter by project name or project ID
             if (projectPath) {
-              const expectedProjectName = path.basename(projectPath).toLowerCase();
-              if (!projectName.toLowerCase().includes(expectedProjectName)) {
-                continue;
+              // Handle both project ID (PID-EDUPLAY-ADVENTURES-001) and project name matching
+              const projectPathLower = projectPath.toLowerCase();
+              const projectNameLower = projectName.toLowerCase();
+              
+              // Check if projectPath is a project ID (starts with PID-)
+              if (projectPathLower.startsWith('pid-')) {
+                // For project IDs, be more lenient with matching
+                // Try multiple matching strategies
+                const projectIdParts = projectPathLower.replace('pid-', '').split('-');
+                
+                // Strategy 1: Check if any significant part matches
+                const hasMatchingParts = projectIdParts.some(part => 
+                  part.length > 2 && projectNameLower.includes(part)
+                );
+                
+                // Strategy 2: Check if this is a platform-based project (common terms)
+                const isPlatformProject = projectNameLower.includes('platform') ||
+                                         projectNameLower.includes('web') ||
+                                       projectNameLower.includes('based');
+                
+                // Strategy 3: Check if the project ID contains common educational terms
+                const hasEducationalTerms = projectIdParts.some(part => 
+                  ['edu', 'play', 'game', 'learn', 'platform'].includes(part)
+                );
+                
+                // Accept if any strategy matches
+                if (!hasMatchingParts && !isPlatformProject && !hasEducationalTerms) {
+                  continue;
+                }
+              } else {
+                // Traditional project name matching
+                const expectedProjectName = path.basename(projectPath).toLowerCase();
+                if (!projectNameLower.includes(expectedProjectName)) {
+                  continue;
+                }
               }
             }
 

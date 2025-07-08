@@ -12,6 +12,43 @@ import { extractVibeTaskManagerSecurityConfig } from '../utils/config-loader.js'
 import logger from '../../../logger.js';
 
 /**
+ * Path validation result for centralized security boundary validation
+ */
+export interface PathValidationResult {
+  /** Whether the path is valid and safe */
+  isValid: boolean;
+  /** Normalized secure path */
+  normalizedPath?: string;
+  /** Error message if validation failed */
+  error?: string;
+  /** Security warnings */
+  warnings?: string[];
+  /** Type of security violation if any */
+  violationType?: 'path_traversal' | 'outside_boundary' | 'invalid_path' | 'dangerous_characters' | 'invalid_extension';
+}
+
+/**
+ * Path operation type for security validation
+ */
+export type PathOperation = 'read' | 'write';
+
+/**
+ * Centralized validation options
+ */
+export interface ValidationOptions {
+  /** Operation type for boundary checking */
+  operation?: PathOperation;
+  /** Whether to allow test mode relaxations */
+  allowTestMode?: boolean;
+  /** Whether to check file extensions */
+  checkExtensions?: boolean;
+  /** Custom allowed extensions for this validation */
+  allowedExtensions?: string[];
+  /** Whether to perform strict validation */
+  strictMode?: boolean;
+}
+
+/**
  * Unified security configuration that all security components should use
  */
 export interface UnifiedSecurityConfiguration {
@@ -304,6 +341,289 @@ export class UnifiedSecurityConfigManager {
     }
   }
 
+  // ========================================================================
+  // CENTRALIZED SECURITY BOUNDARY VALIDATION METHODS
+  // ========================================================================
+
+  /**
+   * Centralized path normalization that handles cross-platform compatibility
+   * and security concerns. Consolidates logic from multiple path utilities.
+   * @param inputPath The path to normalize
+   * @returns The normalized absolute path
+   */
+  normalizePath(inputPath: string): string {
+    // Handle empty or undefined paths
+    if (!inputPath || typeof inputPath !== 'string') {
+      throw new Error('Path cannot be empty, undefined, or non-string');
+    }
+
+    try {
+      // Remove dangerous characters that could indicate path injection
+      // eslint-disable-next-line no-control-regex
+      const sanitized = inputPath.replace(/[<>:"|?*\x00-\x1f]/g, '');
+      
+      // Normalize the path to resolve '..' and '.' segments
+      const normalizedPath = path.normalize(sanitized);
+      
+      // Special handling for test paths to avoid path resolution issues in tests
+      const isTestMode = process.env.NODE_ENV === 'test';
+      if (isTestMode && (normalizedPath.includes('/tmp/') || normalizedPath.includes('temp/'))) {
+        if (path.isAbsolute(normalizedPath)) {
+          logger.debug(`Using test path as-is: ${normalizedPath}`);
+          return normalizedPath;
+        }
+      }
+
+      // Resolve to absolute path if it's relative
+      return path.isAbsolute(normalizedPath)
+        ? normalizedPath
+        : path.resolve(normalizedPath);
+        
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Path normalization failed: ${errorMessage}`);
+    }
+  }
+
+  /**
+   * Centralized path containment validation that checks if a child path
+   * is within a parent path. Handles cross-platform path separators.
+   * @param childPath The path to check
+   * @param parentPath The potential parent path
+   * @returns True if childPath is within parentPath or equal to it
+   */
+  isPathWithin(childPath: string, parentPath: string): boolean {
+    try {
+      const normalizedChild = this.normalizePath(childPath);
+      const normalizedParent = this.normalizePath(parentPath);
+
+      // Check for exact match first
+      if (normalizedChild === normalizedParent) {
+        return true;
+      }
+
+      // Ensure parent path ends with separator for proper prefix matching
+      const separator = path.sep;
+      const parentWithSep = normalizedParent.endsWith(separator)
+        ? normalizedParent
+        : normalizedParent + separator;
+
+      // Check if child starts with parent (prefix match)
+      return normalizedChild.startsWith(parentWithSep);
+      
+    } catch (error) {
+      logger.error({ err: error, childPath, parentPath }, 'Error checking path containment');
+      return false;
+    }
+  }
+
+  /**
+   * Centralized comprehensive path security validation that consolidates
+   * all security checks from various path utilities across the codebase.
+   * @param inputPath The path to validate
+   * @param options Validation options including operation type and strictness
+   * @returns Detailed validation result with security information
+   */
+  validatePathSecurity(inputPath: string, options: ValidationOptions = {}): PathValidationResult {
+    const {
+      operation = 'read',
+      allowTestMode = true,
+      checkExtensions = false,
+      allowedExtensions = ['.md', '.json', '.txt', '.yaml', '.yml', '.js', '.ts'],
+      strictMode = true
+    } = options;
+
+    try {
+      const config = this.getConfig();
+      const isTestMode = process.env.NODE_ENV === 'test';
+
+      // Step 1: Basic input validation
+      if (!inputPath || typeof inputPath !== 'string' || inputPath.trim() === '') {
+        return {
+          isValid: false,
+          error: 'Path cannot be empty, undefined, or non-string',
+          violationType: 'invalid_path'
+        };
+      }
+
+      // Step 2: Check for dangerous characters (path injection prevention)
+      // eslint-disable-next-line no-control-regex
+      const dangerousChars = /[<>:"|?*\x00-\x1f]/;
+      if (strictMode && dangerousChars.test(inputPath)) {
+        return {
+          isValid: false,
+          error: `Path contains dangerous characters: ${inputPath}`,
+          violationType: 'dangerous_characters'
+        };
+      }
+
+      // Step 3: Check for path traversal attempts
+      if (inputPath.includes('..') && strictMode) {
+        const normalizedTest = path.normalize(inputPath);
+        if (normalizedTest.includes('..')) {
+          return {
+            isValid: false,
+            error: `Path traversal detected: ${inputPath}`,
+            violationType: 'path_traversal'
+          };
+        }
+      }
+
+      // Step 4: Normalize the path
+      let normalizedPath: string;
+      try {
+        normalizedPath = this.normalizePath(inputPath);
+      } catch (error) {
+        return {
+          isValid: false,
+          error: `Path normalization failed: ${error instanceof Error ? error.message : String(error)}`,
+          violationType: 'invalid_path'
+        };
+      }
+
+      // Step 5: Check path length
+      if (normalizedPath.length > config.maxPathLength) {
+        const multiplier = isTestMode && allowTestMode ? 2 : 1;
+        if (normalizedPath.length > config.maxPathLength * multiplier) {
+          return {
+            isValid: false,
+            error: `Path length ${normalizedPath.length} exceeds maximum ${config.maxPathLength * multiplier}`,
+            violationType: 'invalid_path'
+          };
+        }
+      }
+
+      // Step 6: Check file extension if requested
+      if (checkExtensions) {
+        const ext = path.extname(normalizedPath).toLowerCase();
+        if (ext && !allowedExtensions.includes(ext)) {
+          // Allow relaxed extension validation in test mode
+          if (!(isTestMode && allowTestMode)) {
+            return {
+              isValid: false,
+              error: `File extension '${ext}' not allowed. Allowed extensions: ${allowedExtensions.join(', ')}`,
+              violationType: 'invalid_extension'
+            };
+          }
+        }
+      }
+
+      // Step 7: Validate against security boundaries
+      const allowedDirectory = operation === 'read' 
+        ? config.allowedReadDirectory 
+        : config.allowedWriteDirectory;
+
+      if (!allowedDirectory) {
+        return {
+          isValid: false,
+          error: `Security boundary not configured for ${operation} operations`,
+          violationType: 'outside_boundary'
+        };
+      }
+
+      // Step 8: Check boundary containment
+      if (!this.isPathWithin(normalizedPath, allowedDirectory)) {
+        // Allow test paths in test mode
+        if (isTestMode && allowTestMode) {
+          const testPaths = ['/tmp', path.join(process.cwd(), '__tests__'), path.join(process.cwd(), 'test')];
+          const isTestPath = testPaths.some(testPath => this.isPathWithin(normalizedPath, testPath));
+          
+          if (isTestPath) {
+            logger.debug(`Allowing test path: ${normalizedPath}`);
+            return {
+              isValid: true,
+              normalizedPath,
+              warnings: [`Test mode: Path outside normal boundaries but within test paths`]
+            };
+          }
+        }
+
+        return {
+          isValid: false,
+          error: `Access denied: Path '${inputPath}' is outside the allowed ${operation} directory '${allowedDirectory}'`,
+          violationType: 'outside_boundary'
+        };
+      }
+
+      // Path is valid
+      return {
+        isValid: true,
+        normalizedPath
+      };
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error({ err: error, inputPath, options }, 'Unexpected error during path validation');
+      return {
+        isValid: false,
+        error: `Validation error: ${errorMessage}`,
+        violationType: 'invalid_path'
+      };
+    }
+  }
+
+  /**
+   * Creates a secure path within the appropriate directory boundary.
+   * Consolidates secure path creation logic from various utilities.
+   * @param inputPath The path to secure
+   * @param operation The operation type (read or write)
+   * @param options Additional validation options
+   * @returns The secure path if valid, throws an error otherwise
+   */
+  createSecurePath(inputPath: string, operation: PathOperation = 'read', options: ValidationOptions = {}): string {
+    const validation = this.validatePathSecurity(inputPath, { ...options, operation });
+    
+    if (!validation.isValid) {
+      const errorMsg = `Security violation: ${validation.error}`;
+      logger.error({ inputPath, operation, validation }, errorMsg);
+      throw new Error(errorMsg);
+    }
+
+    return validation.normalizedPath!;
+  }
+
+  /**
+   * Validates path for specific operation with detailed result.
+   * Provides backward compatibility with existing security validators.
+   * @param inputPath The path to validate
+   * @param operation The operation type
+   * @param options Additional validation options
+   * @returns Detailed validation result
+   */
+  isPathAllowedForOperation(inputPath: string, operation: PathOperation, options: ValidationOptions = {}): PathValidationResult {
+    return this.validatePathSecurity(inputPath, { ...options, operation });
+  }
+
+  /**
+   * Batch validation for multiple paths (performance optimization)
+   * @param paths Array of paths to validate
+   * @param operation Operation type for all paths
+   * @param options Validation options
+   * @returns Map of path to validation result
+   */
+  validateMultiplePaths(
+    paths: string[], 
+    operation: PathOperation = 'read', 
+    options: ValidationOptions = {}
+  ): Map<string, PathValidationResult> {
+    const results = new Map<string, PathValidationResult>();
+    
+    for (const inputPath of paths) {
+      try {
+        const result = this.validatePathSecurity(inputPath, { ...options, operation });
+        results.set(inputPath, result);
+      } catch (error) {
+        results.set(inputPath, {
+          isValid: false,
+          error: `Batch validation error: ${error instanceof Error ? error.message : String(error)}`,
+          violationType: 'invalid_path'
+        });
+      }
+    }
+    
+    return results;
+  }
+
   /**
    * Get configuration status for debugging
    */
@@ -323,6 +643,100 @@ export class UnifiedSecurityConfigManager {
     };
   }
 
+  // ========================================================================
+  // BACKWARD COMPATIBILITY METHODS FOR EXISTING PATH UTILITIES
+  // ========================================================================
+
+  /**
+   * Backward compatibility method for existing pathUtils.validatePathSecurity()
+   * @param inputPath The path to validate
+   * @param allowedDirectory The allowed directory (ignored in favor of centralized config)
+   * @returns Compatible validation result
+   */
+  validatePathSecurityCompat(
+    inputPath: string, 
+    allowedDirectory?: string
+  ): { isValid: boolean; normalizedPath?: string; error?: string } {
+    // Log warning if allowedDirectory is provided (should use centralized config)
+    if (allowedDirectory) {
+      logger.warn({
+        inputPath,
+        providedAllowedDirectory: allowedDirectory,
+        centralizedDirectory: this.getConfig().allowedReadDirectory
+      }, 'Path validation using deprecated allowedDirectory parameter. Consider using centralized configuration.');
+    }
+
+    const result = this.validatePathSecurity(inputPath, { operation: 'read' });
+    return {
+      isValid: result.isValid,
+      normalizedPath: result.normalizedPath,
+      error: result.error
+    };
+  }
+
+  /**
+   * Backward compatibility method for existing SecurityBoundaryValidator.createSecureReadPath()
+   * @param filePath The path to secure for reading
+   * @returns The secure read path
+   */
+  createSecureReadPath(filePath: string): string {
+    return this.createSecurePath(filePath, 'read');
+  }
+
+  /**
+   * Backward compatibility method for existing SecurityBoundaryValidator.createSecureWritePath()
+   * @param filePath The path to secure for writing
+   * @returns The secure write path
+   */
+  createSecureWritePath(filePath: string): string {
+    return this.createSecurePath(filePath, 'write');
+  }
+
+  /**
+   * Backward compatibility method for existing VibeTaskManagerSecurityValidator.isPathWithinReadDirectory()
+   * @param filePath The path to check
+   * @returns Whether the path is within the read directory
+   */
+  isPathWithinReadDirectory(filePath: string): boolean {
+    const result = this.isPathAllowedForOperation(filePath, 'read');
+    return result.isValid;
+  }
+
+  /**
+   * Backward compatibility method for existing VibeTaskManagerSecurityValidator.isPathWithinWriteDirectory()
+   * @param filePath The path to check
+   * @returns Whether the path is within the write directory
+   */
+  isPathWithinWriteDirectory(filePath: string): boolean {
+    const result = this.isPathAllowedForOperation(filePath, 'write');
+    return result.isValid;
+  }
+
+  /**
+   * Enhanced method for existing PathSecurityValidator with test mode support
+   * @param inputPath The path to validate
+   * @param config Optional path security config (merged with centralized config)
+   * @returns Enhanced validation result
+   */
+  validatePathWithConfig(
+    inputPath: string,
+    config?: {
+      allowedExtensions?: string[];
+      maxPathLength?: number;
+      allowSymlinks?: boolean;
+      strictMode?: boolean;
+    }
+  ): PathValidationResult {
+    const options: ValidationOptions = {
+      operation: 'read',
+      checkExtensions: true,
+      allowedExtensions: config?.allowedExtensions,
+      strictMode: config?.strictMode ?? true
+    };
+
+    return this.validatePathSecurity(inputPath, options);
+  }
+
   /**
    * Reset configuration (for testing purposes)
    */
@@ -338,4 +752,123 @@ export class UnifiedSecurityConfigManager {
  */
 export function getUnifiedSecurityConfig(): UnifiedSecurityConfigManager {
   return UnifiedSecurityConfigManager.getInstance();
+}
+
+// ========================================================================
+// CENTRALIZED SECURITY VALIDATION CONVENIENCE FUNCTIONS
+// ========================================================================
+
+/**
+ * Centralized path validation function that all path utilities should use.
+ * Provides a single point of truth for security boundary validation.
+ * @param inputPath The path to validate
+ * @param options Validation options
+ * @returns Detailed validation result
+ */
+export function validatePathSecurity(inputPath: string, options: ValidationOptions = {}): PathValidationResult {
+  return getUnifiedSecurityConfig().validatePathSecurity(inputPath, options);
+}
+
+/**
+ * Centralized secure path creation function.
+ * @param inputPath The path to secure
+ * @param operation The operation type (read or write)
+ * @param options Additional validation options
+ * @returns The secure path if valid, throws an error otherwise
+ */
+export function createSecurePath(inputPath: string, operation: PathOperation = 'read', options: ValidationOptions = {}): string {
+  return getUnifiedSecurityConfig().createSecurePath(inputPath, operation, options);
+}
+
+/**
+ * Centralized path normalization function.
+ * @param inputPath The path to normalize
+ * @returns The normalized absolute path
+ */
+export function normalizePath(inputPath: string): string {
+  return getUnifiedSecurityConfig().normalizePath(inputPath);
+}
+
+/**
+ * Centralized path containment validation function.
+ * @param childPath The path to check
+ * @param parentPath The potential parent path
+ * @returns True if childPath is within parentPath
+ */
+export function isPathWithin(childPath: string, parentPath: string): boolean {
+  return getUnifiedSecurityConfig().isPathWithin(childPath, parentPath);
+}
+
+/**
+ * Check if a path is allowed for a specific operation.
+ * @param inputPath The path to check
+ * @param operation The operation type
+ * @param options Additional validation options
+ * @returns Whether the path is allowed
+ */
+export function isPathAllowed(inputPath: string, operation: PathOperation = 'read', options: ValidationOptions = {}): boolean {
+  const result = getUnifiedSecurityConfig().isPathAllowedForOperation(inputPath, operation, options);
+  return result.isValid;
+}
+
+/**
+ * Validate multiple paths in batch for performance.
+ * @param paths Array of paths to validate
+ * @param operation Operation type for all paths
+ * @param options Validation options
+ * @returns Map of path to validation result
+ */
+export function validateMultiplePaths(
+  paths: string[], 
+  operation: PathOperation = 'read', 
+  options: ValidationOptions = {}
+): Map<string, PathValidationResult> {
+  return getUnifiedSecurityConfig().validateMultiplePaths(paths, operation, options);
+}
+
+// ========================================================================
+// BACKWARD COMPATIBILITY EXPORTS FOR EXISTING PATH UTILITIES
+// ========================================================================
+
+/**
+ * Backward compatibility export for existing pathUtils
+ * @deprecated Use validatePathSecurity() instead
+ */
+export function validatePathSecurityCompat(
+  inputPath: string, 
+  allowedDirectory?: string
+): { isValid: boolean; normalizedPath?: string; error?: string } {
+  return getUnifiedSecurityConfig().validatePathSecurityCompat(inputPath, allowedDirectory);
+}
+
+/**
+ * Backward compatibility export for existing SecurityBoundaryValidator
+ * @deprecated Use createSecurePath(path, 'read') instead
+ */
+export function createSecureReadPath(filePath: string): string {
+  return getUnifiedSecurityConfig().createSecureReadPath(filePath);
+}
+
+/**
+ * Backward compatibility export for existing SecurityBoundaryValidator
+ * @deprecated Use createSecurePath(path, 'write') instead
+ */
+export function createSecureWritePath(filePath: string): string {
+  return getUnifiedSecurityConfig().createSecureWritePath(filePath);
+}
+
+/**
+ * Backward compatibility export for existing VibeTaskManagerSecurityValidator
+ * @deprecated Use isPathAllowed(path, 'read') instead
+ */
+export function isPathWithinReadDirectory(filePath: string): boolean {
+  return getUnifiedSecurityConfig().isPathWithinReadDirectory(filePath);
+}
+
+/**
+ * Backward compatibility export for existing VibeTaskManagerSecurityValidator
+ * @deprecated Use isPathAllowed(path, 'write') instead
+ */
+export function isPathWithinWriteDirectory(filePath: string): boolean {
+  return getUnifiedSecurityConfig().isPathWithinWriteDirectory(filePath);
 }

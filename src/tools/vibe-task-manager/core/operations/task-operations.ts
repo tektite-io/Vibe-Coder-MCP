@@ -1,4 +1,4 @@
-import { AtomicTask, TaskStatus, TaskPriority, TaskType } from '../../types/task.js';
+import { AtomicTask, TaskStatus, TaskPriority, TaskType, FunctionalArea } from '../../types/task.js';
 import { getStorageManager } from '../storage/storage-manager.js';
 import { getVibeTaskManagerConfig } from '../../utils/config-loader.js';
 import { getIdGenerator } from '../../utils/id-generator.js';
@@ -17,6 +17,7 @@ export interface CreateTaskParams {
   epicId?: string; // Made optional - will be auto-resolved if not provided
   priority?: TaskPriority;
   type?: TaskType;
+  functionalArea?: FunctionalArea;
   estimatedHours?: number;
   filePaths?: string[];
   acceptanceCriteria?: string[];
@@ -323,6 +324,7 @@ export class TaskOperations {
         status: 'pending',
         priority: sanitizedParams.priority || 'medium',
         type: sanitizedParams.type || 'development',
+        functionalArea: sanitizedParams.functionalArea || 'data-management',
         estimatedHours: sanitizedParams.estimatedHours || 4,
         epicId: sanitizedParams.epicId,
         projectId: sanitizedParams.projectId,

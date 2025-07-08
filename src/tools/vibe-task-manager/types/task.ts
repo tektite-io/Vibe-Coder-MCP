@@ -18,6 +18,11 @@ export type TaskPriority = 'low' | 'medium' | 'high' | 'critical';
 export type TaskType = 'development' | 'testing' | 'documentation' | 'research' | 'deployment' | 'review';
 
 /**
+ * Represents the functional area of a task for epic organization
+ */
+export type FunctionalArea = 'authentication' | 'user-management' | 'content-management' | 'data-management' | 'integration' | 'admin' | 'ui-components' | 'performance' | 'frontend' | 'backend' | 'database';
+
+/**
  * Represents an atomic task - the smallest unit of work that cannot be decomposed further
  */
 export interface AtomicTask {
@@ -38,6 +43,9 @@ export interface AtomicTask {
 
   /** Type of task */
   type: TaskType;
+
+  /** Functional area for epic organization */
+  functionalArea: FunctionalArea;
 
   /** Estimated duration in hours */
   estimatedHours: number;
@@ -155,6 +163,9 @@ export interface Epic {
 
   /** Priority level */
   priority: TaskPriority;
+
+  /** Functional area for epic organization */
+  functionalArea: FunctionalArea;
 
   /** Project this epic belongs to */
   projectId: string;
