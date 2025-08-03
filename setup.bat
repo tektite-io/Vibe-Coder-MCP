@@ -35,14 +35,66 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-REM Check Node.js version (require v18+)
+REM Check Node.js version (require v20+)
 echo Checking Node.js version...
 SET MAJOR_NODE_VERSION=
 FOR /F "tokens=1 delims=v." %%a IN ('node -v') DO SET MAJOR_NODE_VERSION=%%a
 
-powershell -Command "if ($env:MAJOR_NODE_VERSION -eq $null -or $env:MAJOR_NODE_VERSION -eq '') { Write-Host 'Could not determine Node.js major version. Proceeding anyway...' -ForegroundColor Yellow; exit 0 } elseif ([int]$env:MAJOR_NODE_VERSION -lt 18) { Write-Host 'Node.js v18+ is required (found v$env:MAJOR_NODE_VERSION). Please upgrade Node.js. Visit: https://nodejs.org/' -ForegroundColor Red; exit 1 } else { Write-Host \"✓ Node.js version $env:MAJOR_NODE_VERSION detected (v18+ required) - OK.\" -ForegroundColor Green; exit 0 }"
+powershell -Command "if ($env:MAJOR_NODE_VERSION -eq $null -or $env:MAJOR_NODE_VERSION -eq '') { Write-Host 'Could not determine Node.js major version. Proceeding anyway...' -ForegroundColor Yellow; exit 0 } elseif ([int]$env:MAJOR_NODE_VERSION -lt 20) { Write-Host 'Node.js v20+ is required (found v$env:MAJOR_NODE_VERSION). Please upgrade Node.js. Visit: https://nodejs.org/' -ForegroundColor Red; exit 1 } else { Write-Host \"✓ Node.js version $env:MAJOR_NODE_VERSION detected (v20+ required) - OK.\" -ForegroundColor Green; exit 0 }"
 if %ERRORLEVEL% neq 0 (
     exit /b 1
+)
+
+REM Check disk space
+echo Checking available disk space...
+for /f "tokens=3" %%a in ('dir /-c ^| findstr /C:"bytes free"') do set FREE_SPACE=%%a
+REM Convert bytes to MB (divide by 1048576)
+set /a FREE_SPACE_MB=%FREE_SPACE:~0,-6% 2>nul
+if %ERRORLEVEL% neq 0 (
+    REM If conversion fails, try PowerShell method
+    for /f %%a in ('powershell -Command "(Get-PSDrive -Name $PWD.Drive.Name).Free / 1MB"') do set FREE_SPACE_MB=%%a
+)
+if defined FREE_SPACE_MB (
+    if %FREE_SPACE_MB% LSS 500 (
+        powershell -Command "Write-Host 'WARNING: Less than 500MB free disk space available.' -ForegroundColor Yellow"
+        powershell -Command "Write-Host 'Installation may fail. Please free up disk space.' -ForegroundColor Yellow"
+    )
+)
+
+REM Check memory availability
+echo Checking system memory...
+for /f "skip=1" %%a in ('wmic os get TotalVisibleMemorySize') do (
+    set TOTAL_MEMORY=%%a
+    goto :memory_check_done
+)
+:memory_check_done
+if defined TOTAL_MEMORY (
+    set /a TOTAL_MEMORY_MB=%TOTAL_MEMORY%/1024
+    if %TOTAL_MEMORY_MB% LSS 4096 (
+        powershell -Command "Write-Host 'WARNING: Less than 4GB RAM detected (%TOTAL_MEMORY_MB%MB).' -ForegroundColor Yellow"
+        powershell -Command "Write-Host 'Large projects may experience performance issues.' -ForegroundColor Yellow"
+    )
+)
+
+REM Check network connectivity
+echo Checking network connectivity...
+ping -n 1 -w 1000 registry.npmjs.org >nul 2>nul
+if %ERRORLEVEL% neq 0 (
+    powershell -Command "Write-Host 'WARNING: Cannot reach npm registry. Check internet connection.' -ForegroundColor Yellow"
+    powershell -Command "Write-Host 'Installation may fail without network access.' -ForegroundColor Yellow"
+)
+
+REM Check git configuration
+echo Checking git configuration...
+git config --get user.name >nul 2>nul
+if %ERRORLEVEL% neq 0 (
+    powershell -Command "Write-Host 'Git user.name not configured. Consider running:' -ForegroundColor Yellow"
+    echo    git config --global user.name "Your Name"
+)
+git config --get user.email >nul 2>nul
+if %ERRORLEVEL% neq 0 (
+    powershell -Command "Write-Host 'Git user.email not configured. Consider running:' -ForegroundColor Yellow"
+    echo    git config --global user.email "your.email@example.com"
 )
 
 REM Check npm cache health
