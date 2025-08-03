@@ -6,6 +6,9 @@
  */
 
 import { createServer } from 'net';
+import { promises as fs } from 'fs';
+import path from 'path';
+import os from 'os';
 import logger from '../logger.js';
 
 // Port range interface
@@ -28,10 +31,20 @@ export interface PortAllocationResult {
 export interface AllocationSummary {
   allocations: Map<string, PortAllocationResult>;
   totalAttempted: number[];
-  successful: number[];
-  conflicts: number[];
-  errors: string[];
+  success: boolean;
 }
+
+// Instance tracking interface
+export interface InstanceInfo {
+  pid: number;
+  port: number;
+  service: string;
+  startTime: number;
+}
+
+// Instance tracking file location - will be configurable
+const DEFAULT_INSTANCE_TRACKING_DIR = path.join(os.tmpdir(), 'vibe-coder-instances');
+const INSTANCE_FILE_PREFIX = 'instance-';
 
 // System port exclusion ranges
 const EXCLUDED_PORT_RANGES = [
@@ -44,12 +57,54 @@ const EXCLUDED_PORT_RANGES = [
 ];
 
 /**
+ * Port Allocator Configuration
+ */
+export interface PortAllocatorConfig {
+  instanceTrackingDir?: string;
+}
+
+/**
  * Port Allocator Class
  * 
  * Handles dynamic port allocation with system port exclusion,
  * conflict detection, and cleanup functionality.
  */
 export class PortAllocator {
+  private static config: PortAllocatorConfig = {};
+
+  /**
+   * Get the instance tracking directory
+   * Uses configured directory or falls back to default
+   */
+  private static get INSTANCE_TRACKING_DIR(): string {
+    return this.config.instanceTrackingDir || DEFAULT_INSTANCE_TRACKING_DIR;
+  }
+
+  /**
+   * Initialize the PortAllocator with configuration
+   * @param config - Configuration options for PortAllocator
+   */
+  static initialize(config: PortAllocatorConfig): void {
+    this.config = config;
+    
+    if (config.instanceTrackingDir) {
+      logger.info({ 
+        instanceTrackingDir: config.instanceTrackingDir 
+      }, 'PortAllocator initialized with custom instance tracking directory');
+    } else {
+      logger.debug({ 
+        instanceTrackingDir: DEFAULT_INSTANCE_TRACKING_DIR 
+      }, 'PortAllocator using default instance tracking directory');
+    }
+  }
+
+  /**
+   * Get current configuration
+   * @returns Current PortAllocator configuration
+   */
+  static getConfig(): PortAllocatorConfig {
+    return { ...this.config };
+  }
 
   /**
    * Check if a port is in the excluded ranges
@@ -64,6 +119,41 @@ export class PortAllocator {
       }
     }
     return false;
+  }
+
+  /**
+   * Check if a port is in use by another vibe-coder instance
+   * @param port - Port number to check
+   * @returns Promise<boolean> - True if port is in use by vibe-coder
+   */
+  static async isPortUsedByVibeCoderInstance(port: number): Promise<boolean> {
+    try {
+      // Try to connect to the port
+      const net = await import('net');
+      return new Promise((resolve) => {
+        const client = net.createConnection({ port }, () => {
+          // Connected successfully, port is in use
+          client.end();
+          logger.debug({ port }, 'Port is in use by another process');
+          resolve(true);
+        });
+
+        client.on('error', () => {
+          // Connection failed, port is not in use
+          logger.debug({ port }, 'Port is not in use');
+          resolve(false);
+        });
+
+        // Timeout after 1 second
+        client.setTimeout(1000, () => {
+          client.destroy();
+          resolve(false);
+        });
+      });
+    } catch (error) {
+      logger.error({ err: error, port }, 'Error checking port usage');
+      return false;
+    }
   }
 
   /**
@@ -265,6 +355,34 @@ export class PortAllocator {
   }
 
   /**
+   * Detect port conflicts with other vibe-coder instances
+   * @param ports - Array of ports to check
+   * @returns Promise<Map<number, boolean>> - Map of port to conflict status
+   */
+  static async detectPortConflicts(ports: number[]): Promise<Map<number, boolean>> {
+    const conflicts = new Map<number, boolean>();
+    
+    logger.debug({ ports }, 'Checking for port conflicts with other instances');
+    
+    for (const port of ports) {
+      const inUse = await this.isPortUsedByVibeCoderInstance(port);
+      conflicts.set(port, inUse);
+      
+      if (inUse) {
+        logger.warn({ port }, 'Port conflict detected with another instance');
+      }
+    }
+    
+    const conflictCount = Array.from(conflicts.values()).filter(v => v).length;
+    logger.info({ 
+      portsChecked: ports.length, 
+      conflictsFound: conflictCount 
+    }, 'Port conflict detection complete');
+    
+    return conflicts;
+  }
+
+  /**
    * Allocate ports for multiple services at once
    * @param ranges - Array of port ranges for different services
    * @returns Promise<AllocationSummary> - Summary of all allocations
@@ -326,9 +444,7 @@ export class PortAllocator {
     const summary: AllocationSummary = {
       allocations,
       totalAttempted: [...new Set(totalAttempted)], // Remove duplicates
-      successful,
-      conflicts: [...new Set(conflicts)], // Remove duplicates
-      errors
+      success: successful.length === ranges.length
     };
 
     const batchDuration = Date.now() - batchStartTime;
@@ -482,6 +598,136 @@ export class PortAllocator {
         operation: 'cleanup_error'
       }, 'Error during port cleanup');
       return cleanedCount;
+    }
+  }
+
+  /**
+   * Register an instance with its allocated port
+   * @param port - Port number allocated to this instance
+   * @param service - Service name using the port
+   * @returns Promise<void>
+   */
+  static async registerInstance(port: number, service: string): Promise<void> {
+    try {
+      // Ensure tracking directory exists
+      await fs.mkdir(this.INSTANCE_TRACKING_DIR, { recursive: true });
+
+      const instanceInfo: InstanceInfo = {
+        pid: process.pid,
+        port,
+        service,
+        startTime: Date.now()
+      };
+
+      const instanceFile = path.join(this.INSTANCE_TRACKING_DIR, `${INSTANCE_FILE_PREFIX}${process.pid}-${port}.json`);
+      await fs.writeFile(instanceFile, JSON.stringify(instanceInfo, null, 2));
+
+      logger.info({ pid: process.pid, port, service }, 'Instance registered');
+    } catch (error) {
+      logger.error({ err: error, port, service }, 'Failed to register instance');
+    }
+  }
+
+  /**
+   * Unregister an instance when shutting down
+   * @param port - Port number to unregister
+   * @returns Promise<void>
+   */
+  static async unregisterInstance(port: number): Promise<void> {
+    try {
+      const instanceFile = path.join(this.INSTANCE_TRACKING_DIR, `${INSTANCE_FILE_PREFIX}${process.pid}-${port}.json`);
+      await fs.unlink(instanceFile);
+      logger.info({ pid: process.pid, port }, 'Instance unregistered');
+    } catch (error) {
+      // File might not exist, which is fine
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        logger.error({ err: error, port }, 'Failed to unregister instance');
+      }
+    }
+  }
+
+  /**
+   * Get all active instances
+   * @returns Promise<InstanceInfo[]> - Array of active instances
+   */
+  static async getActiveInstances(): Promise<InstanceInfo[]> {
+    const instances: InstanceInfo[] = [];
+    
+    try {
+      // Ensure directory exists
+      await fs.mkdir(this.INSTANCE_TRACKING_DIR, { recursive: true });
+      
+      const files = await fs.readdir(this.INSTANCE_TRACKING_DIR);
+      
+      for (const file of files) {
+        if (file.startsWith(INSTANCE_FILE_PREFIX)) {
+          try {
+            const filePath = path.join(this.INSTANCE_TRACKING_DIR, file);
+            const content = await fs.readFile(filePath, 'utf-8');
+            const instanceInfo = JSON.parse(content) as InstanceInfo;
+            
+            // Check if process is still running
+            if (this.isProcessRunning(instanceInfo.pid)) {
+              instances.push(instanceInfo);
+            } else {
+              // Clean up stale instance file
+              await fs.unlink(filePath);
+              logger.debug({ pid: instanceInfo.pid, port: instanceInfo.port }, 'Cleaned up stale instance file');
+            }
+          } catch (error) {
+            logger.error({ err: error, file }, 'Failed to read instance file');
+          }
+        }
+      }
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to get active instances');
+    }
+    
+    return instances;
+  }
+
+  /**
+   * Check if a process is still running
+   * @param pid - Process ID to check
+   * @returns boolean - True if process is running
+   */
+  private static isProcessRunning(pid: number): boolean {
+    try {
+      // Sending signal 0 checks if process exists without actually sending a signal
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Clean up all instance tracking for this process
+   * @returns Promise<void>
+   */
+  static async cleanupInstanceTracking(): Promise<void> {
+    try {
+      // Check if directory exists before attempting to read it
+      try {
+        await fs.access(this.INSTANCE_TRACKING_DIR);
+      } catch {
+        // Directory doesn't exist, nothing to clean up
+        logger.debug({ dir: this.INSTANCE_TRACKING_DIR }, 'Instance tracking directory does not exist, skipping cleanup');
+        return;
+      }
+
+      const files = await fs.readdir(this.INSTANCE_TRACKING_DIR);
+      const prefix = `${INSTANCE_FILE_PREFIX}${process.pid}-`;
+      
+      for (const file of files) {
+        if (file.startsWith(prefix)) {
+          const filePath = path.join(this.INSTANCE_TRACKING_DIR, file);
+          await fs.unlink(filePath);
+          logger.debug({ file }, 'Cleaned up instance tracking file');
+        }
+      }
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to cleanup instance tracking');
     }
   }
 }

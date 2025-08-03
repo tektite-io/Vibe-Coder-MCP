@@ -93,7 +93,7 @@ export function checkWorkingDirectorySafety(): {
     };
   }
   
-  if (!currentCwd.includes('Vibe-Coder-MCP') && !currentCwd.includes('RepoTools')) {
+  if (!currentCwd.includes('Vibe-Coder-MCP')) {
     return {
       isSafe: false,
       currentCwd,
