@@ -66,7 +66,13 @@ export async function performDirectLlmCall(
     'module_selection',
     'yaml_generation',
     'template_generation',
-    'fullstack_starter_kit_dynamic_yaml_module_generation'
+    'fullstack_starter_kit_dynamic_yaml_module_generation',
+    // Additional JSON-expecting tasks
+    'epic_task_generation',
+    'epic_identification',
+    'atomic_detection',
+    'task_validation',
+    'project_analysis'
   ];
 
   // Define tasks that should NEVER be JSON optimized (expect other formats)
@@ -564,23 +570,99 @@ export function intelligentJsonParse(response: string, context: string): unknown
   // STEP 1: Quick validation check - does it look like valid JSON?
   const validationResult = validateJsonExpectations(response);
 
+  let parsed: unknown;
+  
   if (validationResult.success) {
     // Perfect! No preprocessing needed
     logger.debug({ context }, "Response meets expectations - parsing directly");
-    return JSON.parse(response.trim());
+    parsed = JSON.parse(response.trim());
+  } else {
+    // STEP 2: Determine specific issues and choose appropriate strategy
+    const strategy = determineParsingStrategy(validationResult.issues, response);
+    logger.debug({
+      context,
+      issues: validationResult.issues,
+      strategy,
+      responseLength: response.length
+    }, "Response needs preprocessing - applying targeted strategy");
+
+    // STEP 3: Apply targeted preprocessing based on identified issues
+    parsed = applyTargetedParsing(response, strategy, context);
   }
+  
+  // STEP 4: Always apply context-specific format corrections
+  return detectAndCorrectFileDiscoveryFormat(parsed, context);
+}
 
-  // STEP 2: Determine specific issues and choose appropriate strategy
-  const strategy = determineParsingStrategy(validationResult.issues, response);
-  logger.debug({
-    context,
-    issues: validationResult.issues,
-    strategy,
-    responseLength: response.length
-  }, "Response needs preprocessing - applying targeted strategy");
-
-  // STEP 3: Apply targeted preprocessing based on identified issues
-  return applyTargetedParsing(response, strategy, context);
+/**
+ * Detects and corrects file discovery format variations
+ * Handles cases where LLM returns single file object instead of expected array format
+ */
+function detectAndCorrectFileDiscoveryFormat(parsed: unknown, context: string): unknown {
+  // Only apply corrections to file discovery contexts
+  if (!context.includes('file_discovery')) {
+    return parsed;
+  }
+  
+  // Check if response is missing expected wrapper structure
+  if (typeof parsed === 'object' && parsed !== null && 'path' in parsed && !('relevantFiles' in parsed)) {
+    logger.info({ 
+      context,
+      originalFormat: 'single_file_object',
+      correctedFormat: 'standard_wrapper'
+    }, 'Auto-correcting file discovery response format');
+    
+    // Cast to any to access properties dynamically
+    const fileObj = parsed as Record<string, unknown>;
+    
+    // Extract strategy from context (e.g., "context_curator_file_discovery_semantic_similarity")
+    // The strategy starts after "file_discovery_" 
+    const strategyMatch = context.match(/file_discovery_(.+)$/);
+    const strategy = strategyMatch ? strategyMatch[1] : 'unknown';
+    
+    // Auto-wrap single file response in expected format
+    return {
+      relevantFiles: [parsed],
+      totalFilesAnalyzed: 1,
+      processingTimeMs: 0,
+      searchStrategy: strategy,
+      coverageMetrics: {
+        totalTokens: Number(fileObj.estimatedTokens) || 0,
+        averageConfidence: Number(fileObj.confidence) || 0
+      }
+    };
+  }
+  
+  // Check for array of files without wrapper (another common LLM mistake)
+  if (Array.isArray(parsed) && parsed.length > 0 && 'path' in parsed[0]) {
+    logger.info({ 
+      context,
+      originalFormat: 'bare_array',
+      correctedFormat: 'standard_wrapper',
+      fileCount: parsed.length
+    }, 'Auto-correcting bare array file discovery response');
+    
+    const strategyMatch = context.match(/file_discovery_(.+)$/);
+    const strategy = strategyMatch ? strategyMatch[1] : 'unknown';
+    
+    // Calculate aggregate metrics
+    const totalTokens = parsed.reduce((sum: number, file: Record<string, unknown>) => sum + (Number(file.estimatedTokens) || 0), 0);
+    const avgConfidence = parsed.reduce((sum: number, file: Record<string, unknown>) => sum + (Number(file.confidence) || 0), 0) / parsed.length;
+    
+    return {
+      relevantFiles: parsed,
+      totalFilesAnalyzed: parsed.length,
+      processingTimeMs: 0,
+      searchStrategy: strategy,
+      coverageMetrics: {
+        totalTokens,
+        averageConfidence: avgConfidence
+      }
+    };
+  }
+  
+  // Return unchanged if format is already correct or unrecognized
+  return parsed;
 }
 
 interface ParseResult {
@@ -1404,15 +1486,49 @@ function detectCircularAndLimitDepth(obj: unknown, maxDepth: number, maxArrayLen
 
 /**
  * Extracts JSON from mixed content using improved bracket matching and markdown code block handling
+ * Now supports multiple JSON blocks and prioritizes blocks containing "tasks" array
  */
 function extractJsonFromMixedContent(content: string, jobId?: string): string {
   const trimmed = content.trim();
 
-  // First, try to extract from markdown code blocks
-  const codeBlockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/s);
-  if (codeBlockMatch && codeBlockMatch[1]) {
-    logger.debug({ jobId, extractionMethod: "markdown_code_block" }, "Extracted JSON from Markdown code block in mixed content");
-    return codeBlockMatch[1].trim();
+  // First, try to extract ALL markdown code blocks
+  const codeBlockMatches = Array.from(trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/gs));
+  
+  if (codeBlockMatches.length > 0) {
+    // Priority 1: Find block containing "tasks" array
+    for (const match of codeBlockMatches) {
+      if (match[1] && match[1].includes('"tasks"')) {
+        logger.debug({ 
+          jobId, 
+          extractionMethod: "markdown_code_block_with_tasks",
+          blockIndex: codeBlockMatches.indexOf(match),
+          totalBlocks: codeBlockMatches.length 
+        }, "Extracted JSON from Markdown code block containing tasks array");
+        return match[1].trim();
+      }
+    }
+    
+    // Priority 2: Return the largest JSON block (likely has most content)
+    let largestBlock = '';
+    let largestIndex = -1;
+    for (let i = 0; i < codeBlockMatches.length; i++) {
+      const block = codeBlockMatches[i][1] || '';
+      if (block.length > largestBlock.length) {
+        largestBlock = block;
+        largestIndex = i;
+      }
+    }
+    
+    if (largestBlock) {
+      logger.debug({ 
+        jobId, 
+        extractionMethod: "markdown_code_block_largest",
+        blockIndex: largestIndex,
+        totalBlocks: codeBlockMatches.length,
+        blockSize: largestBlock.length
+      }, "Extracted largest JSON block from multiple Markdown code blocks");
+      return largestBlock.trim();
+    }
   }
 
   // Try single-line backticks
@@ -1742,3 +1858,4 @@ export async function getLLMModelWithCentralizedConfig(operation: string): Promi
            'google/gemini-2.5-flash-preview-05-20';
   }
 }
+

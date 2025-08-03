@@ -181,9 +181,7 @@ export class OpenRouterConfigManager {
         perplexityModel: this.config.perplexityModel,
         mappingCount,
         hasDefaultGeneration,
-        configPath: this.llmConfigPath,
-        isTestEnvironment: this.isTestEnvironment(),
-        forceRealConfig: process.env.FORCE_REAL_LLM_CONFIG === 'true'
+        configPath: this.llmConfigPath
       }, 'OpenRouterConfigManager initialized successfully');
 
       // Log sample mappings for debugging
@@ -223,10 +221,6 @@ export class OpenRouterConfigManager {
       .build();
 
     try {
-      // Enhanced test environment detection
-      const isTestEnvironment = this.isTestEnvironment();
-      const forceRealConfig = process.env.FORCE_REAL_LLM_CONFIG === 'true';
-
       // Read file with retry logic (includes existence check)
       const configContent = await this.readFileWithRetry(this.llmConfigPath, 3);
 
@@ -246,23 +240,8 @@ export class OpenRouterConfigManager {
       // Log successful read for debugging
       logger.debug({
         configPath: this.llmConfigPath,
-        contentLength: configContent.length,
-        isTestEnvironment,
-        forceRealConfig
+        contentLength: configContent.length
       }, 'Configuration file read successfully');
-
-      // Check if we should use empty mapping in test environment (only if not forced)
-      if (isTestEnvironment && !forceRealConfig && configContent.trim().length < 50) {
-        logger.debug({
-          configPath: this.llmConfigPath,
-          contentLength: configContent.length,
-          isTestEnvironment,
-          forceRealConfig
-        }, 'Test environment with minimal config detected, using fallback');
-
-        this.llmConfig = { llm_mapping: {} };
-        return;
-      }
 
       // Parse and validate JSON structure
       let parsedConfig: unknown;
@@ -325,48 +304,22 @@ export class OpenRouterConfigManager {
         throw error;
       }
 
-      // Enhanced error handling with more restrictive fallback behavior
-      const isTestEnvironment = this.isTestEnvironment();
-      const forceRealConfig = process.env.FORCE_REAL_LLM_CONFIG === 'true';
-      
-      // Only use empty mapping as absolute last resort
-      const shouldUseEmptyMapping = (
-        isTestEnvironment && 
-        !forceRealConfig && 
-        (error instanceof Error && error.message.includes('ENOENT'))
+      // Always throw the error to force proper initialization
+      logger.error({
+        err: error,
+        configPath: this.llmConfigPath,
+        errorType: error instanceof Error ? error.constructor.name : typeof error,
+        errorMessage: error instanceof Error ? error.message : String(error)
+      }, 'Critical: Failed to load LLM configuration');
+
+      throw new ConfigurationError(
+        `Failed to load LLM configuration: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          cause: error instanceof Error ? error : undefined,
+          userFriendly: true
+        }
       );
-
-      if (shouldUseEmptyMapping) {
-        logger.debug({
-          err: error,
-          configPath: this.llmConfigPath,
-          isTestEnvironment,
-          forceRealConfig,
-          errorType: error instanceof Error ? error.constructor.name : typeof error,
-          errorMessage: error instanceof Error ? error.message : String(error)
-        }, 'Test environment file not found, using empty mapping as fallback');
-
-        this.llmConfig = { llm_mapping: {} };
-      } else {
-        // In all other cases, throw the error to force proper initialization
-        logger.error({
-          err: error,
-          configPath: this.llmConfigPath,
-          isTestEnvironment,
-          forceRealConfig,
-          errorType: error instanceof Error ? error.constructor.name : typeof error,
-          errorMessage: error instanceof Error ? error.message : String(error)
-        }, 'Critical: Failed to load LLM configuration');
-
-        throw new ConfigurationError(
-          `Failed to load LLM configuration: ${error instanceof Error ? error.message : String(error)}`,
-          context,
-          {
-            cause: error instanceof Error ? error : undefined,
-            userFriendly: true
-          }
-        );
-      }
     }
   }
 
@@ -515,39 +468,7 @@ export class OpenRouterConfigManager {
     return process.env.GEMINI_MODEL || 'google/gemini-2.5-flash-preview-05-20';
   }
 
-  /**
-   * Enhanced test environment detection
-   */
-  private isTestEnvironment(): boolean {
-    return (
-      process.env.NODE_ENV === 'test' ||
-      process.env.VITEST === 'true' ||
-      process.env.JEST_WORKER_ID !== undefined ||
-      typeof global !== 'undefined' && 'it' in global
-    );
-  }
 
-  /**
-   * Detect CI environment for safe configuration handling
-   */
-  private isCIEnvironment(): boolean {
-    return (
-      process.env.CI === 'true' ||
-      process.env.GITHUB_ACTIONS === 'true' ||
-      process.env.NODE_ENV === 'test' ||
-      process.env.VITEST === 'true'
-    );
-  }
-
-  /**
-   * Determine if missing API key should be allowed in current environment
-   */
-  private shouldAllowMissingApiKey(): boolean {
-    return (
-      this.isCIEnvironment() && 
-      process.env.FORCE_REAL_LLM_CONFIG !== 'true'
-    );
-  }
 
   /**
    * Read file with retry logic and exponential backoff
@@ -659,54 +580,29 @@ export class OpenRouterConfigManager {
   }
 
   /**
-   * Validate environment variables with CI-aware handling
+   * Validate environment variables
    */
   private validateEnvironmentVariables(): EnvironmentValidationResult {
     const missing: string[] = [];
     const invalid: string[] = [];
     const warnings: string[] = [];
 
-    // Handle API key requirement with CI awareness
+    // Check required environment variables
     if (!process.env.OPENROUTER_API_KEY) {
-      if (this.shouldAllowMissingApiKey()) {
-        warnings.push('OPENROUTER_API_KEY missing in CI environment - using safe defaults');
-        // Set safe default for CI environment
-        process.env.OPENROUTER_API_KEY = 'ci-test-key-safe';
-        logger.debug('Set CI-safe OPENROUTER_API_KEY for test environment');
-      } else {
-        missing.push('OPENROUTER_API_KEY');
-      }
+      missing.push('OPENROUTER_API_KEY');
     }
 
-    // Set safe defaults for CI environment
-    if (this.isCIEnvironment()) {
-      if (!process.env.OPENROUTER_BASE_URL) {
-        process.env.OPENROUTER_BASE_URL = 'https://test.openrouter.ai/api/v1';
-        warnings.push('OPENROUTER_BASE_URL set to CI-safe default');
-      }
+    // Optional but recommended
+    if (!process.env.OPENROUTER_BASE_URL) {
+      warnings.push('OPENROUTER_BASE_URL not set, using default');
+    }
 
-      if (!process.env.GEMINI_MODEL) {
-        process.env.GEMINI_MODEL = 'google/gemini-2.5-flash-preview-05-20';
-        warnings.push('GEMINI_MODEL set to CI-safe default');
-      }
+    if (!process.env.GEMINI_MODEL) {
+      warnings.push('GEMINI_MODEL not set, using default');
+    }
 
-      if (!process.env.PERPLEXITY_MODEL) {
-        process.env.PERPLEXITY_MODEL = 'perplexity/sonar';
-        warnings.push('PERPLEXITY_MODEL set to CI-safe default');
-      }
-    } else {
-      // Optional but recommended for non-CI environments
-      if (!process.env.OPENROUTER_BASE_URL) {
-        warnings.push('OPENROUTER_BASE_URL not set, using default');
-      }
-
-      if (!process.env.GEMINI_MODEL) {
-        warnings.push('GEMINI_MODEL not set, using default');
-      }
-
-      if (!process.env.PERPLEXITY_MODEL) {
-        warnings.push('PERPLEXITY_MODEL not set, using default');
-      }
+    if (!process.env.PERPLEXITY_MODEL) {
+      warnings.push('PERPLEXITY_MODEL not set, using default');
     }
 
     // Validate URL format if provided
