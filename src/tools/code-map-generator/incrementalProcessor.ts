@@ -10,6 +10,7 @@ import crypto from 'crypto';
 import logger from '../../logger.js';
 import { CodeMapGeneratorConfig, IncrementalProcessingConfig } from './types.js';
 import { FileCache } from './cache/fileCache.js';
+import { getCacheDirectory } from './directoryUtils.js';
 
 /**
  * Interface for file metadata used for change detection.
@@ -286,15 +287,17 @@ export async function createIncrementalProcessor(config: CodeMapGeneratorConfig)
     return null;
   }
 
-  if (!config.cache?.cacheDir) {
-    logger.warn('Incremental processing is enabled but no cache directory is provided');
+  // Get cache directory - either from config or compute it
+  const cacheDir = config.cache?.cacheDir || getCacheDirectory(config);
+  if (!cacheDir) {
+    logger.warn('Incremental processing is enabled but no cache directory is available');
     return null;
   }
 
   const processor = new IncrementalProcessor(
     config.processing.incrementalConfig,
     config.allowedMappingDirectory,
-    config.cache.cacheDir
+    cacheDir
   );
 
   await processor.initialize();

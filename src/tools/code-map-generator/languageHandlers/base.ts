@@ -197,17 +197,11 @@ export abstract class BaseLanguageHandler implements LanguageHandler {
       try {
         rootNode.descendantsOfType(pattern).forEach(node => {
           try {
-            // Extract import information using the context tracker
-            const importInfo = this.contextTracker.withContext('import', node, undefined, () => {
-              // Extract import path
-              const path = this.extractImportPath(node, sourceCode);
-
-              // Update context with the path
-              if (path) {
-                this.contextTracker.exitContext();
-                this.contextTracker.enterContext('import', node, path);
-              }
-
+            // Extract import path before entering context
+            const path = this.extractImportPath(node, sourceCode);
+            
+            // Extract import information using the context tracker with path from the start
+            const importInfo = this.contextTracker.withContext('import', node, path, () => {
               // Extract imported items
               const importedItems = this.extractImportedItems(node, sourceCode);
 

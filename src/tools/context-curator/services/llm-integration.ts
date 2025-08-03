@@ -5,7 +5,7 @@
  * including format-aware calls, response validation, and error handling.
  */
 
-import { performFormatAwareLlmCall, intelligentJsonParse } from '../../../utils/llmHelper.js';
+import { performFormatAwareLlmCallWithCentralizedConfig, intelligentJsonParse } from '../../../utils/llmHelper.js';
 import { OpenRouterConfig } from '../../../types/workflow.js';
 import { ContextCuratorConfigLoader } from './config-loader.js';
 import logger from '../../../logger.js';
@@ -98,11 +98,10 @@ export class ContextCuratorLLMService {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        // Use existing performFormatAwareLlmCall - no changes to shared code
-        return await performFormatAwareLlmCall(
+        // Use existing performFormatAwareLlmCallWithCentralizedConfig - no changes to shared code
+        return await performFormatAwareLlmCallWithCentralizedConfig(
           prompt,
           systemPrompt,
-          config,
           taskId,
           expectedFormat
         );
@@ -244,10 +243,9 @@ export class ContextCuratorLLMService {
     try {
       const userPromptContent = buildIntentAnalysisPrompt(userPrompt, codemapContent, additionalContext);
       
-      const responseText = await performFormatAwareLlmCall(
+      const responseText = await performFormatAwareLlmCallWithCentralizedConfig(
         userPromptContent,
         INTENT_ANALYSIS_SYSTEM_PROMPT,
-        config,
         taskId,
         'json'
       );
@@ -479,12 +477,12 @@ export class ContextCuratorLLMService {
       );
 
       // Debug logging for file discovery response
-      logger.error({
+      logger.debug({
         taskId,
         responseLength: responseText.length,
         responsePreview: responseText.substring(0, 500),
-        fullResponse: responseText // Include full response for debugging
-      }, 'File discovery LLM response received - DEBUG');
+        searchStrategy
+      }, 'File discovery LLM response received');
 
       // Use intelligent JSON parsing to handle LLM responses that may contain markdown code blocks
       // This aligns with the enhanced JSON normalization pipeline used throughout the system
@@ -496,8 +494,10 @@ export class ContextCuratorLLMService {
         parsedResponseType: typeof response,
         parsedResponseKeys: response && typeof response === 'object' ? Object.keys(response) : 'not an object',
         hasRelevantFiles: response && typeof response === 'object' && 'relevantFiles' in response,
-        relevantFilesLength: response && typeof response === 'object' && 'relevantFiles' in response && Array.isArray(response.relevantFiles) ? response.relevantFiles.length : 'not an array'
-      }, 'File discovery response parsed');
+        relevantFilesLength: response && typeof response === 'object' && 'relevantFiles' in response && Array.isArray(response.relevantFiles) ? response.relevantFiles.length : 'not an array',
+        formatCorrected: response && typeof response === 'object' && 'relevantFiles' in response && 'searchStrategy' in response,
+        searchStrategy: response && typeof response === 'object' && 'searchStrategy' in response ? (response as Record<string, unknown>).searchStrategy : 'not present'
+      }, 'File discovery response parsed and format corrections applied');
 
       // Enhanced debug logging for validation failure
       if (!validateFileDiscoveryResponse(response)) {
@@ -1183,8 +1183,55 @@ Return the same JSON format but only for these ${chunk.length} files.`;
       return typedResponse;
 
     } catch (error) {
-      logger.error({ taskId, error: error instanceof Error ? error.message : 'Unknown error' }, 'Relevance scoring failed');
-      throw new Error(`Relevance scoring failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      logger.error({ taskId, error: error instanceof Error ? error.message : 'Unknown error' }, 'Relevance scoring failed, attempting fallback scoring');
+      
+      // Implement fallback scoring when LLM fails completely
+      try {
+        logger.info({ taskId, fileCount: fileDiscoveryResult.relevantFiles.length }, 'Applying fallback scoring due to LLM failure');
+        
+        const fallbackScores = fileDiscoveryResult.relevantFiles.map(file => {
+          // Calculate fallback score based on heuristics
+          const fallbackResult = this.calculateSimpleFallbackScore(file.path, originalPrompt);
+          
+          return {
+            filePath: file.path,
+            relevanceScore: fallbackResult.score,
+            confidence: fallbackResult.confidence,
+            reasoning: fallbackResult.reasoning,
+            categories: this.extractCategoriesFromPath(file.path),
+            modificationLikelihood: file.modificationLikelihood || 'medium',
+            estimatedTokens: file.estimatedTokens
+          };
+        });
+        
+        const fallbackResponse: RelevanceScoringResult = {
+          fileScores: fallbackScores,
+          overallMetrics: {
+            averageRelevance: fallbackScores.reduce((sum, s) => sum + s.relevanceScore, 0) / fallbackScores.length,
+            totalFilesScored: fallbackScores.length,
+            highRelevanceCount: fallbackScores.filter(s => s.relevanceScore >= 0.7).length,
+            processingTimeMs: 100
+          },
+          scoringStrategy: 'hybrid' as const
+        };
+        
+        logger.info({
+          taskId,
+          filesScored: fallbackResponse.fileScores.length,
+          averageRelevance: fallbackResponse.overallMetrics.averageRelevance,
+          highRelevanceCount: fallbackResponse.overallMetrics.highRelevanceCount
+        }, 'Fallback scoring completed successfully');
+        
+        return fallbackResponse;
+        
+      } catch (fallbackError) {
+        logger.error({ 
+          taskId, 
+          originalError: error instanceof Error ? error.message : 'Unknown error',
+          fallbackError: fallbackError instanceof Error ? fallbackError.message : 'Unknown error' 
+        }, 'Both LLM and fallback scoring failed');
+        throw new Error(`Relevance scoring failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
     }
   }
 
@@ -1329,5 +1376,120 @@ Return the same JSON format but only for these ${chunk.length} files.`;
       logger.error({ taskId, error: error instanceof Error ? error.message : 'Unknown error' }, 'Meta-prompt generation failed');
       throw new Error(`Meta-prompt generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  /**
+   * Calculate simple fallback score based on file path heuristics
+   * Used when LLM scoring fails completely
+   */
+  private calculateSimpleFallbackScore(filePath: string, userPrompt: string): { score: number; confidence: number; reasoning: string } {
+    let score = 0.3; // Base score
+    let confidence = 0.5; // Base confidence
+    const reasons: string[] = [];
+
+    // Normalize for comparison
+    const normalizedPath = filePath.toLowerCase();
+    const normalizedPrompt = userPrompt.toLowerCase();
+
+    // Check file extension importance
+    const extension = normalizedPath.split('.').pop() || '';
+    const importantExtensions = ['ts', 'tsx', 'js', 'jsx', 'py', 'java', 'go', 'rs', 'cpp', 'c'];
+    const configExtensions = ['json', 'yaml', 'yml', 'toml', 'env'];
+    
+    if (importantExtensions.includes(extension)) {
+      score += 0.15;
+      confidence += 0.1;
+      reasons.push(`Source file (.${extension})`);
+    } else if (configExtensions.includes(extension)) {
+      score += 0.1;
+      confidence += 0.05;
+      reasons.push(`Configuration file (.${extension})`);
+    }
+
+    // Check important directories
+    const importantDirs = ['src', 'lib', 'core', 'app', 'components', 'services', 'utils', 'api'];
+    const pathParts = normalizedPath.split('/');
+    for (const dir of importantDirs) {
+      if (pathParts.includes(dir)) {
+        score += 0.1;
+        reasons.push(`Contains '${dir}' directory`);
+        break;
+      }
+    }
+
+    // Simple keyword matching
+    const promptWords = normalizedPrompt.split(/\s+/).filter(w => w.length > 3);
+    const pathWords = normalizedPath.split(/[/._-]/).filter(w => w.length > 3);
+    
+    let matchCount = 0;
+    for (const promptWord of promptWords) {
+      for (const pathWord of pathWords) {
+        if (pathWord.includes(promptWord) || promptWord.includes(pathWord)) {
+          matchCount++;
+          break;
+        }
+      }
+    }
+    
+    if (matchCount > 0) {
+      const keywordBoost = Math.min(matchCount * 0.1, 0.3);
+      score += keywordBoost;
+      confidence += keywordBoost * 0.5;
+      reasons.push(`${matchCount} keyword matches`);
+    }
+
+    // Avoid test files unless specifically requested
+    if (normalizedPath.includes('test') || normalizedPath.includes('spec')) {
+      if (!normalizedPrompt.includes('test')) {
+        score -= 0.1;
+        reasons.push('Test file (penalty)');
+      }
+    }
+
+    // Ensure bounds
+    score = Math.max(0.1, Math.min(0.9, score));
+    confidence = Math.max(0.2, Math.min(0.8, confidence));
+
+    const reasoning = reasons.length > 0 
+      ? `Fallback scoring: ${reasons.join('; ')}` 
+      : 'Fallback scoring: Basic heuristics applied';
+
+    return { score, confidence, reasoning };
+  }
+
+  /**
+   * Extract categories from file path
+   * Used for fallback scoring categorization
+   */
+  private extractCategoriesFromPath(filePath: string): string[] {
+    const categories: string[] = [];
+    const normalizedPath = filePath.toLowerCase();
+
+    // Category mappings
+    const categoryPatterns = [
+      { pattern: /\/(components?|ui|views?)\//, category: 'ui' },
+      { pattern: /\/(services?|api|routes?)\//, category: 'api' },
+      { pattern: /\/(models?|entities|schemas?)\//, category: 'data' },
+      { pattern: /\/(utils?|helpers?|lib)\//, category: 'utility' },
+      { pattern: /\/(config|settings?)\//, category: 'configuration' },
+      { pattern: /\/(tests?|spec|__tests__)\//, category: 'test' },
+      { pattern: /\.(test|spec)\./, category: 'test' },
+      { pattern: /\/(types?|interfaces?)\//, category: 'types' },
+      { pattern: /\/(hooks?|providers?)\//, category: 'react' },
+      { pattern: /\/(store|redux|state)\//, category: 'state' }
+    ];
+
+    for (const { pattern, category } of categoryPatterns) {
+      if (pattern.test(normalizedPath)) {
+        categories.push(category);
+      }
+    }
+
+    // If no categories found, use 'general'
+    if (categories.length === 0) {
+      categories.push('general');
+    }
+
+    return categories;
   }
 }

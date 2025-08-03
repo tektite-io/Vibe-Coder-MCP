@@ -9,6 +9,7 @@ import path from 'path';
 import logger from '../../logger.js';
 import { CodeMapGeneratorConfig, CacheConfig, ProcessingConfig, OutputConfig, FeatureFlagsConfig, ImportResolverConfig, DebugConfig } from './types.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
+import { getCacheDirectory } from './directoryUtils.js';
 
 /**
  * Default configuration values
@@ -99,7 +100,7 @@ export async function validateCodeMapConfig(config: Partial<CodeMapGeneratorConf
   // Apply defaults for optional configurations
   const validatedConfig: CodeMapGeneratorConfig = {
     allowedMappingDirectory,
-    cache: validateCacheConfig(config.cache),
+    cache: validateCacheConfig(config.cache, allowedMappingDirectory),
     processing: validateProcessingConfig(config.processing),
     output: validateOutputConfig(config.output),
     featureFlags: validateFeatureFlagsConfig(config.featureFlags),
@@ -150,13 +151,20 @@ export async function validateAllowedMappingDirectory(dirPath: string): Promise<
 /**
  * Validates the cache configuration.
  * @param config The cache configuration to validate
+ * @param allowedMappingDirectory The allowed mapping directory for computing cache directory
  * @returns The validated cache configuration with defaults applied
  */
-export function validateCacheConfig(config?: Partial<CacheConfig>): CacheConfig {
+export function validateCacheConfig(config?: Partial<CacheConfig>, allowedMappingDirectory?: string): CacheConfig {
   const defaultCache = DEFAULT_CONFIG.cache as CacheConfig;
 
   if (!config) {
-    return defaultCache;
+    // Use defaults but still compute cacheDir if possible
+    const cacheConfig = { ...defaultCache };
+    if (allowedMappingDirectory && cacheConfig.enabled) {
+      const tempConfig = { allowedMappingDirectory } as CodeMapGeneratorConfig;
+      cacheConfig.cacheDir = getCacheDirectory(tempConfig);
+    }
+    return cacheConfig;
   }
 
   // Validate cacheDir if provided and caching is enabled
@@ -180,7 +188,7 @@ export function validateCacheConfig(config?: Partial<CacheConfig>): CacheConfig 
   }
 
   // Start with defaults and override with provided values
-  return {
+  const cacheConfig: CacheConfig = {
     enabled: config.enabled !== undefined ? config.enabled : defaultCache.enabled,
     maxEntries: config.maxEntries || defaultCache.maxEntries,
     maxAge: config.maxAge || defaultCache.maxAge,
@@ -193,6 +201,14 @@ export function validateCacheConfig(config?: Partial<CacheConfig>): CacheConfig 
     memoryMaxAge: config.memoryMaxAge || defaultCache.memoryMaxAge,
     memoryThreshold: config.memoryThreshold !== undefined ? config.memoryThreshold : defaultCache.memoryThreshold,
   };
+  
+  // If no cacheDir is provided but we have allowedMappingDirectory and caching is enabled, compute it
+  if (!cacheConfig.cacheDir && allowedMappingDirectory && cacheConfig.enabled) {
+    const tempConfig = { allowedMappingDirectory } as CodeMapGeneratorConfig;
+    cacheConfig.cacheDir = getCacheDirectory(tempConfig);
+  }
+  
+  return cacheConfig;
 }
 
 /**
@@ -376,23 +392,52 @@ export async function extractCodeMapConfig(config?: OpenRouterConfig): Promise<C
   let codeMapConfig: Partial<CodeMapGeneratorConfig> = {};
 
   if (config) {
-    // Try to extract from tools['map-codebase'] first
+    // First try to extract from config.env (MCP client environment variables)
+    if (config.env) {
+      logger.debug({
+        configEnv: config.env,
+        hasAllowedDir: Boolean(config.env.CODE_MAP_ALLOWED_DIR),
+        hasOutputDir: Boolean(config.env.VIBE_CODER_OUTPUT_DIR)
+      }, 'Extracting code-map config from MCP client environment variables');
+
+      if (config.env.CODE_MAP_ALLOWED_DIR) {
+        codeMapConfig.allowedMappingDirectory = config.env.CODE_MAP_ALLOWED_DIR;
+      }
+      
+      // Extract output directory if provided
+      if (config.env.VIBE_CODER_OUTPUT_DIR) {
+        codeMapConfig.output = codeMapConfig.output || {};
+        codeMapConfig.output.outputDir = path.join(config.env.VIBE_CODER_OUTPUT_DIR, 'code-map-generator');
+      }
+    }
+
+    // Fallback: Try to extract from tools['map-codebase'] (legacy support)
     const toolConfig = config.tools?.['map-codebase'] as Partial<CodeMapGeneratorConfig>;
 
     // If not found, try config['map-codebase']
     const configSection = config.config?.['map-codebase'] as Partial<CodeMapGeneratorConfig>;
 
-    // Merge configurations if they exist
+    // Merge configurations if they exist (env takes precedence)
     if (toolConfig || configSection) {
+      logger.debug({
+        toolConfig,
+        configSection
+      }, 'Using legacy tool config extraction as additional config');
+
       codeMapConfig = {
         ...configSection,
         ...toolConfig,
+        ...codeMapConfig // Preserve any values from env extraction
       };
     }
   }
 
-  // Even if no config is provided, we'll try to use environment variables
-  logger.debug(`Extracted code-map-generator config: ${JSON.stringify(codeMapConfig)}`);
+  logger.debug({
+    extractedCodeMapConfig: codeMapConfig,
+    hasConfig: Boolean(config),
+    hasEnv: Boolean(config?.env),
+    configKeys: config ? Object.keys(config) : []
+  }, 'Extracted code-map-generator config');
 
   // Validate the configuration (this will check for environment variables if config is empty)
   return validateCodeMapConfig(codeMapConfig);

@@ -257,4 +257,110 @@ describe('BaseLanguageHandler', () => {
       expect(comment).toContain('Represents a UserManager object');
     });
   });
+
+  describe('extractImports', () => {
+    it('should extract imports with proper context tracking - no manual stack manipulation', () => {
+      // Create mock nodes
+      const sourceNode = createMockNode('string', '"./module"');
+      const importNode = createMockNode(
+        'import_statement',
+        'import { foo } from "./module"',
+        [sourceNode],
+        [sourceNode],
+        null,
+        { source: sourceNode }
+      );
+
+      const rootNode = createMockNode('program', 'import { foo } from "./module"', [importNode], [importNode]);
+
+      // Mock descendantsOfType to return import node for both patterns
+      rootNode.descendantsOfType = vi.fn().mockImplementation((types: string) => {
+        // extractImports calls descendantsOfType with each pattern individually
+        if (types === 'import_statement' || types === 'import_declaration') {
+          return [importNode];
+        }
+        return [];
+      });
+
+      // Spy on context tracker methods
+      const contextTracker = handler['contextTracker'];
+      const enterContextSpy = vi.spyOn(contextTracker, 'enterContext');
+      const exitContextSpy = vi.spyOn(contextTracker, 'exitContext');
+
+      // Extract imports
+      const imports = handler.extractImports(rootNode, rootNode.text);
+
+      // The implementation calls descendantsOfType for each pattern
+      // So we get duplicates. This is expected behavior.
+      expect(imports.length).toBeGreaterThan(0);
+      expect(imports[0].path).toBe('./module');
+
+      // Verify context tracker methods are balanced
+      // Each withContext should result in one enter and one exit
+      expect(enterContextSpy).toHaveBeenCalledTimes(exitContextSpy.mock.calls.length);
+    });
+
+    it('should verify no manual context stack manipulation inside withContext', () => {
+      // This test verifies the fix - that we don't manually manipulate
+      // the context stack inside withContext anymore
+      
+      // Create mock node
+      const sourceNode = createMockNode('string', '"./module"');
+      const importNode = createMockNode(
+        'import_statement',
+        'import { foo } from "./module"',
+        [sourceNode],
+        [sourceNode],
+        null,
+        { source: sourceNode }
+      );
+
+      const rootNode = createMockNode('program', 'import { foo } from "./module"', [importNode], [importNode]);
+
+      // Mock descendantsOfType
+      rootNode.descendantsOfType = vi.fn().mockImplementation((types: string) => {
+        if (types === 'import_statement') {
+          return [importNode];
+        }
+        return [];
+      });
+
+      // Track enter/exit calls
+      const contextTracker = handler['contextTracker'];
+      let enterCount = 0;
+      let exitCount = 0;
+      let insideWithContext = false;
+
+      // Override withContext to track when we're inside it
+      const originalWithContext = contextTracker.withContext.bind(contextTracker);
+      contextTracker.withContext = function<T>(type: string, node: SyntaxNode, name: string | undefined, fn: () => T): T {
+        insideWithContext = true;
+        const result = originalWithContext(type, node, name, fn);
+        insideWithContext = false;
+        return result;
+      };
+
+      // Track enter/exit calls and verify they don't happen inside withContext callback
+      const originalEnter = contextTracker.enterContext.bind(contextTracker);
+      contextTracker.enterContext = function(type: string, node: SyntaxNode, name?: string): void {
+        enterCount++;
+        if (insideWithContext && enterCount > 1) {
+          throw new Error('Manual enterContext called inside withContext!');
+        }
+        return originalEnter(type, node, name);
+      };
+
+      const originalExit = contextTracker.exitContext.bind(contextTracker);
+      contextTracker.exitContext = function() {
+        exitCount++;
+        if (insideWithContext && exitCount > 0 && enterCount === 1) {
+          throw new Error('Manual exitContext called inside withContext!');
+        }
+        return originalExit();
+      };
+
+      // This should not throw if the fix is working correctly
+      expect(() => handler.extractImports(rootNode, rootNode.text)).not.toThrow();
+    });
+  });
 });

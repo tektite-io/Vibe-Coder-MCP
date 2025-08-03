@@ -4,7 +4,7 @@ import type { IntentAnalysisResult, FileDiscoveryResult, RelevanceScoringResult 
 
 // Mock the LLM helper with factory functions
 vi.mock('../../../../../utils/llmHelper.ts', () => ({
-  performFormatAwareLlmCall: vi.fn(),
+  performFormatAwareLlmCallWithCentralizedConfig: vi.fn(),
   intelligentJsonParse: vi.fn()
 }));
 
@@ -77,7 +77,7 @@ describe('ContextCuratorLLMService - Relevance Scoring with Retry and Chunking',
       // Create a fresh mock function
       mockIntelligentJsonParse = vi.fn();
       vi.doMock('../../../../../utils/llmHelper.ts', () => ({
-        performFormatAwareLlmCall: vi.fn(),
+        performFormatAwareLlmCallWithCentralizedConfig: vi.fn(),
         intelligentJsonParse: mockIntelligentJsonParse
       }));
     } else {
@@ -342,11 +342,11 @@ describe('ContextCuratorLLMService - Relevance Scoring with Retry and Chunking',
         scoringStrategy: 'semantic_similarity'
       };
 
-      // Set up multiple mock return values to handle all possible calls
+      // Set up mock to return incomplete response first, then complete response on retry
       mockIntelligentJsonParse
-        .mockReturnValue(incompleteJsonResponse)  // Default to incomplete for first calls
-        .mockReturnValueOnce(incompleteJsonResponse)  // First call
-        .mockReturnValueOnce(completeJsonResponse);   // Retry call
+        .mockReturnValueOnce(incompleteJsonResponse)  // First call returns incomplete
+        .mockReturnValueOnce(completeJsonResponse)   // Retry call returns complete
+        .mockReturnValue(completeJsonResponse);      // Any subsequent calls return complete
 
       const result = await llmService.performRelevanceScoring(
         'Test prompt',

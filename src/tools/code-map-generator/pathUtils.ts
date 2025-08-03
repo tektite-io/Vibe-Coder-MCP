@@ -10,9 +10,10 @@ import { PathValidationResult } from './types.js';
 /**
  * Normalizes a path to ensure consistent format.
  * @param inputPath The path to normalize
+ * @param baseDirectory Optional base directory for resolving relative paths (defaults to process.cwd())
  * @returns The normalized path
  */
-export function normalizePath(inputPath: string): string {
+export function normalizePath(inputPath: string, baseDirectory?: string): string {
   // Handle empty or undefined paths
   if (!inputPath) {
     throw new Error('Path cannot be empty or undefined');
@@ -28,9 +29,11 @@ export function normalizePath(inputPath: string): string {
   }
 
   // Resolve to absolute path if it's relative
+  // Use baseDirectory if provided, otherwise fall back to process.cwd()
+  const resolveBase = baseDirectory || process.cwd();
   return path.isAbsolute(normalizedPath)
     ? normalizedPath
-    : path.resolve(process.cwd(), normalizedPath);
+    : path.resolve(resolveBase, normalizedPath);
 }
 
 /**
@@ -78,7 +81,8 @@ export function validatePathSecurity(
     }
 
     // Normalize both paths
-    const normalizedPath = normalizePath(inputPath);
+    // Pass allowedDirectory as base for relative path resolution
+    const normalizedPath = normalizePath(inputPath, allowedDirectory);
     const normalizedAllowedDir = normalizePath(allowedDirectory);
 
     // Check if the path is within the allowed directory
