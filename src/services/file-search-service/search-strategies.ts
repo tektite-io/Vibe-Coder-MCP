@@ -114,6 +114,42 @@ export interface CacheStats {
 }
 
 /**
+ * File iterator options for streaming
+ */
+export interface FileIteratorOptions {
+  /** Directories to exclude */
+  excludeDirs: Set<string>;
+  /** File types to include (null = all) */
+  fileTypes: Set<string> | null;
+  /** Maximum depth to scan */
+  maxDepth?: number;
+  /** Security check callback */
+  securityCheckFn?: (path: string) => Promise<boolean>;
+}
+
+/**
+ * File evaluation result for streaming
+ */
+export interface FileEvaluation {
+  /** Whether the file matches criteria */
+  matches: boolean;
+  /** Search result if matches */
+  result?: FileSearchResult;
+}
+
+/**
+ * Streaming search options
+ */
+export interface StreamingOptions extends FileSearchOptions {
+  /** Enable streaming mode */
+  streamingEnabled?: boolean;
+  /** Callback for early results (progressive UI) */
+  onResult?: (result: FileSearchResult) => void;
+  /** Memory limit for result collection */
+  memoryLimit?: number;
+}
+
+/**
  * Fuzzy matching algorithm implementation
  */
 export class FuzzyMatcher {
@@ -233,5 +269,80 @@ export class GlobMatcher {
     } catch {
       return false;
     }
+  }
+}
+
+/**
+ * Priority queue for maintaining top N results efficiently
+ * Used during streaming to keep only the best results in memory
+ */
+export class PriorityQueue<T> {
+  private items: T[] = [];
+  private compareFn: (a: T, b: T) => number;
+  private maxSize: number;
+
+  /**
+   * Create a new priority queue
+   * @param compareFn Function to compare items (return positive if a > b)
+   * @param maxSize Maximum number of items to keep
+   */
+  constructor(compareFn: (a: T, b: T) => number, maxSize: number) {
+    this.compareFn = compareFn;
+    this.maxSize = maxSize;
+  }
+
+  /**
+   * Add an item to the queue
+   * Maintains sort order and size limit
+   */
+  add(item: T): void {
+    // Add the item
+    this.items.push(item);
+    
+    // Sort by priority (highest first)
+    this.items.sort(this.compareFn);
+    
+    // Remove lowest priority items if over limit
+    if (this.items.length > this.maxSize) {
+      this.items = this.items.slice(0, this.maxSize);
+    }
+  }
+
+  /**
+   * Get all items as an array
+   */
+  toArray(): T[] {
+    return [...this.items];
+  }
+
+  /**
+   * Get the current size
+   */
+  get size(): number {
+    return this.items.length;
+  }
+
+  /**
+   * Check if queue is full
+   */
+  get isFull(): boolean {
+    return this.items.length >= this.maxSize;
+  }
+
+  /**
+   * Get the minimum score item (last in queue)
+   * Useful for early filtering
+   */
+  getMinScore(scoreFn: (item: T) => number): number | undefined {
+    if (this.items.length === 0) return undefined;
+    if (this.items.length < this.maxSize) return 0; // Accept any score if not full
+    return scoreFn(this.items[this.items.length - 1]);
+  }
+
+  /**
+   * Clear the queue
+   */
+  clear(): void {
+    this.items = [];
   }
 }

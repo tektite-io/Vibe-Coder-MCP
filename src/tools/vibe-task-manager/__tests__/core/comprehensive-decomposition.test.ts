@@ -11,12 +11,13 @@ import { RDDEngine, RDDConfig } from '../../core/rdd-engine.js';
 import { DecompositionService } from '../../services/decomposition-service.js';
 import { AtomicTaskDetector } from '../../core/atomic-detector.js';
 import { getDependencyGraph } from '../../core/dependency-graph.js';
-import { AtomicTask } from '../../types/task.js';
+import { AtomicTask, FunctionalArea } from '../../types/task.js';
 import { ProjectContext } from '../../types/project-context.js';
 import { OpenRouterConfig } from '../../../../types/workflow.js';
 import { ProgressEventData } from '../../services/progress-tracker.js';
 import { createMockConfig } from '../utils/test-setup.js';
-import { withTestCleanup, registerTestSingleton } from '../utils/test-helpers.js';
+import { registerTestSingleton } from '../utils/test-helpers.js';
+import { cleanupUniversalTest } from '../utils/universal-test-cleanup.js';
 
 // Import the mocked function to access it in tests
 import { performFormatAwareLlmCall } from '../../../../utils/llmHelper.js';
@@ -119,10 +120,62 @@ describe('Comprehensive Core Decomposition Tests', () => {
   let mockConfig: OpenRouterConfig;
   let mockProjectContext: ProjectContext;
 
+  // Helper function to create a valid AtomicTask with all required fields
+  const createTestTask = (overrides: Partial<AtomicTask>): AtomicTask => {
+    const base: AtomicTask = {
+      id: 'TEST-001',
+      title: 'Test Task',
+      description: 'Test task description',
+      type: 'development',
+      priority: 'medium',
+      estimatedHours: 1,
+      status: 'pending',
+      epicId: 'test-epic',
+      projectId: 'test-project',
+      functionalArea: 'backend' as FunctionalArea,
+      dependencies: [],
+      dependents: [],
+      filePaths: [],
+      acceptanceCriteria: ['Task completed'],
+      testingRequirements: {
+        unitTests: [],
+        integrationTests: [],
+        performanceTests: [],
+        coverageTarget: 80
+      },
+      performanceCriteria: {},
+      qualityCriteria: {
+        codeQuality: [],
+        documentation: [],
+        typeScript: true,
+        eslint: true
+      },
+      integrationCriteria: {
+        compatibility: [],
+        patterns: []
+      },
+      validationMethods: {
+        automated: [],
+        manual: []
+      },
+      createdBy: 'test',
+      tags: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      metadata: {
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        createdBy: 'test',
+        tags: []
+      }
+    };
+    return { ...base, ...overrides };
+  };
+
   beforeAll(() => {
     // Register test singletons
-    registerTestSingleton('ProgressTracker');
-    registerTestSingleton('DecompositionService');
+    registerTestSingleton('ProgressTracker', {});
+    registerTestSingleton('DecompositionService', {});
   });
 
   beforeEach(() => {
@@ -173,7 +226,7 @@ describe('Comprehensive Core Decomposition Tests', () => {
         createdAt: new Date(),
         updatedAt: new Date(),
         version: '1.0.0',
-        source: 'test'
+        source: 'manual' as const
       }
     };
 
@@ -181,11 +234,14 @@ describe('Comprehensive Core Decomposition Tests', () => {
     // No additional local mocking needed to avoid conflicts
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.clearAllMocks();
     
     // Clean up enhanced mocking system
     clearMockQueue();
+    
+    // Universal cleanup
+    await cleanupUniversalTest();
   });
 
   describe('RDD Engine Core Functionality', () => {
@@ -196,58 +252,31 @@ describe('Comprehensive Core Decomposition Tests', () => {
         maxDepth: 3,
         maxSubTasks: 5,
         minConfidence: 0.7,
-        enableParallelDecomposition: false
+        enableParallelDecomposition: false,
+        epicTimeLimit: 40
       };
       engine = new RDDEngine(mockConfig, rddConfig);
     });
 
     it('should detect atomic tasks correctly', async () => {
-      const atomicTask: AtomicTask = {
+      const atomicTask = createTestTask({
         id: 'ATOMIC-001',
         title: 'Add console.log statement',
         description: 'Add a simple console.log statement to debug user login',
         type: 'development',
         priority: 'low',
         estimatedHours: 0.1,
-        status: 'pending',
         epicId: 'debug-epic',
-        projectId: 'test-project',
-        dependencies: [],
-        dependents: [],
         filePaths: ['src/auth/login.ts'],
         acceptanceCriteria: ['Console log added'],
-        testingRequirements: {
-          unitTests: [],
-          integrationTests: [],
-          performanceTests: [],
-          coverageTarget: 80
-        },
-        performanceCriteria: {},
-        qualityCriteria: {
-          codeQuality: [],
-          documentation: [],
-          typeScript: true,
-          eslint: true
-        },
-        integrationCriteria: {
-          compatibility: [],
-          patterns: []
-        },
-        validationMethods: {
-          automated: [],
-          manual: []
-        },
-        createdBy: 'test',
         tags: ['debug', 'simple'],
-        createdAt: new Date(),
-        updatedAt: new Date(),
         metadata: {
           createdAt: new Date(),
           updatedAt: new Date(),
           createdBy: 'test',
           tags: ['debug']
         }
-      };
+      });
 
       // Mock atomic detector to return true for simple tasks
       const mockAtomicDetector = {
@@ -283,6 +312,7 @@ describe('Comprehensive Core Decomposition Tests', () => {
         status: 'pending',
         epicId: 'auth-epic',
         projectId: 'test-project',
+        functionalArea: 'backend' as FunctionalArea,
         dependencies: [],
         dependents: [],
         filePaths: [],
@@ -405,6 +435,7 @@ describe('Comprehensive Core Decomposition Tests', () => {
         status: 'pending',
         epicId: 'enterprise-epic',
         projectId: 'test-project',
+        functionalArea: 'backend' as FunctionalArea,
         dependencies: [],
         dependents: [],
         filePaths: [],
@@ -447,7 +478,8 @@ describe('Comprehensive Core Decomposition Tests', () => {
         maxDepth: 1,
         maxSubTasks: 5,
         minConfidence: 0.7,
-        enableParallelDecomposition: false
+        enableParallelDecomposition: false,
+        epicTimeLimit: 40
       };
       const shallowEngine = new RDDEngine(mockConfig, shallowConfig);
 
@@ -514,6 +546,7 @@ describe('Comprehensive Core Decomposition Tests', () => {
         status: 'pending',
         epicId: 'test-epic',
         projectId: 'test-project',
+        functionalArea: 'backend' as FunctionalArea,
         dependencies: [],
         dependents: [],
         filePaths: [],
@@ -582,17 +615,16 @@ describe('Comprehensive Core Decomposition Tests', () => {
 
   describe('Decomposition Service Integration', () => {
     it('should integrate with progress tracking', async () => {
-      await withTestCleanup(async () => {
-        const progressEvents: ProgressEventData[] = [];
-        const progressCallback = (event: ProgressEventData) => {
-          progressEvents.push(event);
-        };
+      const progressEvents: ProgressEventData[] = [];
+      const progressCallback = (event: ProgressEventData) => {
+        progressEvents.push(event);
+      };
 
-        const service = DecompositionService.getInstance(mockConfig);
-        
-        const task: AtomicTask = {
-          id: 'PROGRESS-001',
-          title: 'Test task with progress',
+      const service = DecompositionService.getInstance(mockConfig);
+      
+      const task: AtomicTask = {
+        id: 'PROGRESS-001',
+        title: 'Test task with progress',
           description: 'A task to test progress tracking',
           type: 'development',
           priority: 'medium',
@@ -600,6 +632,7 @@ describe('Comprehensive Core Decomposition Tests', () => {
           status: 'pending',
           epicId: 'test-epic',
           projectId: 'test-project',
+        functionalArea: 'backend' as FunctionalArea,
           dependencies: [],
           dependents: [],
           filePaths: [],
@@ -655,7 +688,6 @@ describe('Comprehensive Core Decomposition Tests', () => {
         expect(progressEvents.some(e => e.event === 'decomposition_started')).toBe(true);
         expect(progressEvents.some(e => e.event === 'decomposition_completed')).toBe(true);
         expect(progressEvents.some(e => e.progressPercentage === 100)).toBe(true);
-      });
     });
   });
 
@@ -672,6 +704,7 @@ describe('Comprehensive Core Decomposition Tests', () => {
           status: 'pending',
           epicId: 'data-epic',
           projectId: 'test-project',
+        functionalArea: 'backend' as FunctionalArea,
           dependencies: [],
           dependents: [],
           filePaths: ['db/schema.sql'],
@@ -718,6 +751,7 @@ describe('Comprehensive Core Decomposition Tests', () => {
           status: 'pending',
           epicId: 'data-epic',
           projectId: 'test-project',
+        functionalArea: 'backend' as FunctionalArea,
           dependencies: [],
           dependents: [],
           filePaths: ['src/repositories/'],
@@ -781,6 +815,7 @@ describe('Comprehensive Core Decomposition Tests', () => {
           status: 'pending',
           epicId: 'setup-epic',
           projectId: 'test-project',
+        functionalArea: 'backend' as FunctionalArea,
           dependencies: [],
           dependents: [],
           filePaths: ['package.json'],
@@ -827,6 +862,7 @@ describe('Comprehensive Core Decomposition Tests', () => {
           status: 'pending',
           epicId: 'setup-epic',
           projectId: 'test-project',
+        functionalArea: 'backend' as FunctionalArea,
           dependencies: ['ORDER-001'],
           dependents: [],
           filePaths: ['node_modules/'],
@@ -873,6 +909,7 @@ describe('Comprehensive Core Decomposition Tests', () => {
           status: 'pending',
           epicId: 'setup-epic',
           projectId: 'test-project',
+        functionalArea: 'backend' as FunctionalArea,
           dependencies: ['ORDER-001'],
           dependents: [],
           filePaths: ['tsconfig.json'],
@@ -951,6 +988,7 @@ describe('Comprehensive Core Decomposition Tests', () => {
         status: 'pending',
         epicId: 'docs-epic',
         projectId: 'test-project',
+        functionalArea: 'backend' as FunctionalArea,
         dependencies: [],
         dependents: [],
         filePaths: ['README.md'],
@@ -1018,6 +1056,7 @@ describe('Comprehensive Core Decomposition Tests', () => {
         status: 'pending',
         epicId: 'ecommerce-epic',
         projectId: 'test-project',
+        functionalArea: 'backend' as FunctionalArea,
         dependencies: [],
         dependents: [],
         filePaths: [],
@@ -1103,6 +1142,7 @@ describe('Comprehensive Core Decomposition Tests', () => {
           status: 'pending',
           epicId: 'test-epic',
           projectId: 'test-project',
+        functionalArea: 'backend' as FunctionalArea,
           dependencies: ['CIRC-002'],
           dependents: [],
           filePaths: [],
@@ -1149,6 +1189,7 @@ describe('Comprehensive Core Decomposition Tests', () => {
           status: 'pending',
           epicId: 'test-epic',
           projectId: 'test-project',
+        functionalArea: 'backend' as FunctionalArea,
           dependencies: ['CIRC-001'],
           dependents: [],
           filePaths: [],
@@ -1198,7 +1239,7 @@ describe('Comprehensive Core Decomposition Tests', () => {
       // Check if errors exist and contain circular dependency message
       if (result.errors && result.errors.length > 0) {
         const hasCircularError = result.errors.some(error => 
-          error.toLowerCase().includes('circular')
+          error.message.toLowerCase().includes('circular')
         );
         expect(hasCircularError || result.isValid).toBe(true);
       } else {
@@ -1217,22 +1258,20 @@ describe('Comprehensive Core Decomposition Tests', () => {
     });
 
     it('should handle malformed task data gracefully', async () => {
-      await withTestCleanup(async () => {
-        const service = DecompositionService.getInstance(mockConfig);
-        
-        // Task with missing required fields
-        const malformedTask = {
-          id: 'MALFORMED-001',
-          title: 'Incomplete task'
-          // Missing many required fields
-        } as AtomicTask;
+      const service = DecompositionService.getInstance(mockConfig);
+      
+      // Task with missing required fields
+      const malformedTask = {
+        id: 'MALFORMED-001',
+        title: 'Incomplete task'
+        // Missing many required fields
+      } as AtomicTask;
 
-        // Should not throw, but return error
-        const result = await service.decomposeTask(malformedTask, mockProjectContext);
-        
-        expect(result.success).toBe(false);
-        expect(result.error).toBeDefined();
-      });
+      // Should not throw, but return error
+      const result = await service.decomposeTask(malformedTask, mockProjectContext);
+      
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
     });
   });
 
@@ -1262,6 +1301,7 @@ describe('Comprehensive Core Decomposition Tests', () => {
           status: 'pending',
           epicId: 'perf-epic',
           projectId: 'test-project',
+        functionalArea: 'backend' as FunctionalArea,
           dependencies: i > 0 ? [`PERF-${(i - 1).toString().padStart(3, '0')}`] : [],
           dependents: [],
           filePaths: [`src/file${i}.ts`],

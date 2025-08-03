@@ -159,12 +159,56 @@ class SseNotifier {
       job.updatedAt
     );
 
-    // For stdio transport, just update the job status
+    // For stdio transport, update job status and emit to stderr for visibility
     if (sessionId === 'stdio-session' || sessionId === 'placeholder-session-id' || sessionId === 'unknown-session') {
-      // Just update the job status in the job manager
-      jobManager.updateJobStatus(jobId, status, message);
-      logger.debug({ jobId, status, message, sessionId }, "Updated job status for stdio session");
-      return;
+      const updateStartTime = Date.now();
+      try {
+        // Update the job status in the job manager
+        jobManager.updateJobStatus(jobId, status, message);
+        
+        // Emit detailed progress to stderr for MCP client visibility
+        if (message && progress !== undefined) {
+          const progressOutput = {
+            type: 'progress',
+            jobId,
+            tool: job.toolName,
+            status,
+            message,
+            progress,
+            timestamp: new Date().toISOString()
+          };
+          process.stderr.write(`[PROGRESS] ${JSON.stringify(progressOutput)}\n`);
+        }
+        
+        const updateTime = Date.now() - updateStartTime;
+        
+        logger.info({ 
+          jobId, 
+          status, 
+          message, 
+          sessionId,
+          updateTime,
+          performance: {
+            jobUpdateLatency: updateTime,
+            timestamp: new Date().toISOString(),
+            statusType: status
+          }
+        }, "Job status update: successful stdio session update with stderr emission");
+        return;
+      } catch (error) {
+        const updateTime = Date.now() - updateStartTime;
+        logger.error({
+          err: error,
+          jobId,
+          status,
+          message,
+          sessionId,
+          updateTime,
+          errorType: error instanceof Error ? error.constructor.name : 'Unknown',
+          errorMessage: error instanceof Error ? error.message : String(error)
+        }, "Job status update: failed to update job status for stdio session");
+        return;
+      }
     }
 
     // For SSE transport, send the update via SSE

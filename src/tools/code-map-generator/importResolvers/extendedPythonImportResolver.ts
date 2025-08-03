@@ -9,7 +9,7 @@ import { execSync } from 'child_process';
 import Parser from 'web-tree-sitter';
 import logger from '../../../logger.js';
 import { ImportInfo, ImportedItem } from '../codeMapModel.js';
-import { SecurityBoundaryValidator } from '../utils/securityBoundaryValidator.js';
+import { UnifiedSecurityConfigManager } from '../../vibe-task-manager/security/unified-security-config.js';
 import { parseSourceCode } from '../parser.js';
 import { ImportResolver, ImportResolverOptions } from './importResolver.js';
 
@@ -60,14 +60,14 @@ export interface PythonImportResolverOptions extends ImportResolverOptions {
  * Provides comprehensive import resolution for Python files without requiring Pyright.
  */
 export class ExtendedPythonImportResolver implements ImportResolver {
-  private securityValidator: SecurityBoundaryValidator;
+  private securityManager: UnifiedSecurityConfigManager;
   private cache: Map<string, ImportInfo[]> = new Map();
   private sitePackagesPath: string | null = null;
   private pythonPath: string | null = null;
   private tempFiles: string[] = [];
 
   constructor(private allowedDir: string, private outputDir: string) {
-    this.securityValidator = new SecurityBoundaryValidator(allowedDir, outputDir);
+    this.securityManager = UnifiedSecurityConfigManager.getInstance();
     this.initializePythonEnvironment();
   }
 
@@ -163,8 +163,9 @@ export class ExtendedPythonImportResolver implements ImportResolver {
       }
 
       // Validate file path is within security boundary
-      if (!this.securityValidator.isPathWithinAllowedDirectory(filePath)) {
-        logger.warn({ filePath }, 'File path is outside allowed directory');
+      const validation = this.securityManager.validatePathSecurity(filePath, { operation: 'read' });
+      if (!validation.isValid) {
+        logger.warn({ filePath, error: validation.error }, 'File path validation failed');
         return [];
       }
 

@@ -39,6 +39,12 @@ import { setupUniqueTestPorts, cleanupTestPorts } from '../../../../services/tra
 // Test timeout for real operations
 const TEST_TIMEOUT = 30000; // 30 seconds
 
+// Environment guard to prevent live LLM calls in CI
+const shouldRunIntegrationTests = process.env.INTEGRATION_TEST === 'true' && process.env.OPENROUTER_API_KEY;
+const skipMessage = shouldRunIntegrationTests
+  ? ''
+  : 'Skipping integration test - set INTEGRATION_TEST=true and OPENROUTER_API_KEY to run with real LLM calls';
+
 describe('Vibe Task Manager - Basic Integration Tests', () => {
   let taskScheduler: TaskScheduler;
   let testPortRange: ReturnType<typeof setupUniqueTestPorts>;
@@ -108,6 +114,11 @@ describe('Vibe Task Manager - Basic Integration Tests', () => {
     });
 
     it('should have OpenRouter API key configured', () => {
+      if (!shouldRunIntegrationTests) {
+        console.log(skipMessage);
+        return;
+      }
+
       expect(process.env.OPENROUTER_API_KEY).toBeDefined();
       expect(process.env.OPENROUTER_API_KEY).toMatch(/^sk-or-v1-/);
       
@@ -251,7 +262,9 @@ describe('Vibe Task Manager - Basic Integration Tests', () => {
       expect(transportManager).toBeDefined();
 
       // Verify environment
-      expect(process.env.OPENROUTER_API_KEY).toBeDefined();
+      if (shouldRunIntegrationTests) {
+        expect(process.env.OPENROUTER_API_KEY).toBeDefined();
+      }
 
       logger.info({
         taskScheduler: !!taskScheduler,

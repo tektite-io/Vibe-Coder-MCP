@@ -75,7 +75,10 @@ export function setupUniversalLLMMocking(): void {
 
   if (isCIEnvironment) {
     // Mock all LLM calls universally - following existing pattern in test-setup.ts
-    vi.mock('../../../utils/llmHelper.js', () => ({
+    vi.mock('../../../utils/llmHelper.js', async (importOriginal) => {
+      const actual = await importOriginal();
+      return {
+        ...actual,
       performFormatAwareLlmCall: vi.fn().mockImplementation(async (prompt: string, config: unknown, taskName?: string) => {
         // Generate mock responses based on prompt content and task type for realistic testing
         
@@ -172,8 +175,111 @@ export function setupUniversalLLMMocking(): void {
         } catch {
           return { result: "Mock parsed response", error: false };
         }
+      }),
+      performFormatAwareLlmCallWithCentralizedConfig: vi.fn().mockImplementation(async (
+        prompt: string,
+        systemPrompt: string,
+        logicalTaskName: string,
+        expectedFormat: 'json' | 'markdown' | 'text' | 'yaml' = 'text',
+        expectedSchema?: object,
+        _temperature: number = 0.1
+      ) => {
+        // Generate mock responses based on prompt content and task type for realistic testing
+        
+        // Task decomposition responses - check task name and prompt content for decomposition keywords
+        if (logicalTaskName?.includes('decomposition') || logicalTaskName?.includes('task_decomposition') ||
+            prompt.includes('decompose') || prompt.includes('split') || 
+            prompt.includes('subTasks') || prompt.includes('subtasks') || 
+            prompt.includes('break down') || prompt.includes('into smaller')) {
+          const response = {
+            contextualInsights: {
+              codebaseAlignment: "Mock alignment with existing patterns",
+              researchIntegration: "Mock research integration",
+              technologySpecifics: "TypeScript, Node.js, Vitest",
+              estimationFactors: "Mock estimation factors"
+            },
+            tasks: [
+              {
+                title: "Mock decomposed task",
+                description: "Mock task description for testing",
+                type: "development",
+                priority: "medium",
+                estimatedHours: 1,
+                filePaths: ["src/mock/file.ts"],
+                acceptanceCriteria: ["Mock acceptance criterion"],
+                tags: ["mock", "test"],
+                dependencies: [],
+                contextualNotes: {
+                  codebaseReferences: "Mock codebase references",
+                  researchJustification: "Mock research justification",
+                  integrationConsiderations: "Mock integration considerations",
+                  riskMitigation: "Mock risk mitigation"
+                }
+              }
+            ]
+          };
+          return expectedFormat === 'json' ? JSON.stringify(response) : JSON.stringify(response);
+        }
+        
+        // Atomic detection responses - check for atomic keywords
+        if (logicalTaskName?.includes('atomic') || prompt.includes('atomic') || 
+            prompt.includes('isAtomic')) {
+          const response = {
+            isAtomic: true,
+            confidence: 0.95,
+            reasoning: "Mock atomic analysis for testing",
+            estimatedHours: 0.5,
+            complexityFactors: ["mock_factor"],
+            recommendations: ["Mock recommendation"]
+          };
+          return expectedFormat === 'json' ? JSON.stringify(response) : JSON.stringify(response);
+        }
+
+        // Research evaluation responses
+        if (logicalTaskName?.includes('research') || prompt.includes('research') || 
+            prompt.includes('shouldTriggerResearch')) {
+          const response = {
+            decision: {
+              shouldTriggerResearch: false,
+              confidence: 0.8,
+              primaryReason: "sufficient_context",
+              reasoning: "Mock research evaluation for testing"
+            }
+          };
+          return expectedFormat === 'json' ? JSON.stringify(response) : JSON.stringify(response);
+        }
+
+        // Default fallback: If prompt looks like it needs task decomposition, provide that format
+        if (prompt.includes('task') && (prompt.includes('complex') || prompt.includes('break') || 
+            prompt.includes('split') || prompt.length > 200)) {
+          const response = {
+            tasks: [
+              {
+                title: "Fallback decomposed task",
+                description: "Fallback mock task description",
+                type: "development",
+                priority: "medium",
+                estimatedHours: 2,
+                filePaths: ["src/fallback/mock.ts"],
+                acceptanceCriteria: ["Fallback acceptance criterion"],
+                tags: ["fallback", "mock"],
+                dependencies: []
+              }
+            ]
+          };
+          return expectedFormat === 'json' ? JSON.stringify(response) : JSON.stringify(response);
+        }
+
+        // Generic fallback response
+        const response = {
+          result: "Mock LLM response for testing with centralized config",
+          confidence: 0.9,
+          reasoning: "Mock reasoning for test environment"
+        };
+        return expectedFormat === 'json' ? JSON.stringify(response) : JSON.stringify(response);
       })
-    }));
+    };
+  });
 
     logger.info('Universal LLM mocking setup for CI environment');
   }
@@ -222,25 +328,29 @@ export function setupStorageManagerMock(): void {
   );
 
   if (isCIEnvironment) {
-    // Mock storage manager universally
-    vi.mock('../core/storage/storage-manager.js', () => ({
-      getStorageManager: vi.fn().mockResolvedValue({
-        projectExists: vi.fn().mockResolvedValue(true),
-        epicExists: vi.fn().mockResolvedValue(false),
-        taskExists: vi.fn().mockResolvedValue(false),
-        dependencyExists: vi.fn().mockResolvedValue(false),
-        // Add other required methods as needed
-        loadProject: vi.fn(),
-        saveProject: vi.fn(),
-        loadEpic: vi.fn(),
-        saveEpic: vi.fn(),
-        loadTask: vi.fn(),
-        saveTask: vi.fn(),
-        deleteProject: vi.fn(),
-        deleteEpic: vi.fn(),
-        deleteTask: vi.fn()
-      })
-    }));
+    // Mock storage manager universally with importOriginal support
+    vi.mock('../core/storage/storage-manager.js', async (importOriginal) => {
+      const actual = await importOriginal() as Record<string, unknown>;
+      return {
+        ...actual,
+        getStorageManager: vi.fn().mockResolvedValue({
+          projectExists: vi.fn().mockResolvedValue(true),
+          epicExists: vi.fn().mockResolvedValue(false),
+          taskExists: vi.fn().mockResolvedValue(false),
+          dependencyExists: vi.fn().mockResolvedValue(false),
+          // Add other required methods as needed
+          loadProject: vi.fn(),
+          saveProject: vi.fn(),
+          loadEpic: vi.fn(),
+          saveEpic: vi.fn(),
+          loadTask: vi.fn(),
+          saveTask: vi.fn(),
+          deleteProject: vi.fn(),
+          deleteEpic: vi.fn(),
+          deleteTask: vi.fn()
+        })
+      };
+    });
     
     logger.info('Storage manager mocking setup for CI environment');
   }
@@ -300,18 +410,49 @@ const defaultTestConfig: VibeTaskManagerConfig['taskManager'] = {
   retryPolicy: {
     maxRetries: 2, // Reduced for tests
     backoffMultiplier: 1.5,
-    initialDelayMs: 500, // 500ms for tests
-    maxDelayMs: 5000, // 5 seconds for tests
+    initialDelayMs: 500,
+    maxDelayMs: 5000,
     enableExponentialBackoff: true
+  },
+  rddConfig: {
+    maxDepth: 3,
+    maxSubTasks: 50,
+    minConfidence: 0.7,
+    enableParallelDecomposition: false,
+    epicTimeLimit: 300
   },
   performance: {
     memoryManagement: {
+      enabled: true,
       maxMemoryPercentage: 50, // 50% for tests
-      gcThreshold: 70
+      monitorInterval: 5000,
+      autoManage: true,
+      pruneThreshold: 70,
+      prunePercentage: 30
+    },
+    fileSystem: {
+      enableLazyLoading: true,
+      batchSize: 50,
+      enableCompression: false,
+      indexingEnabled: true,
+      concurrentOperations: 5
     },
     caching: {
+      enabled: true,
+      strategy: 'memory' as const,
       maxCacheSize: 1024 * 1024 * 5, // 5MB for tests
-      ttlMs: 30000 // 30 seconds for tests
+      defaultTTL: 30000, // 30 seconds for tests
+      enableWarmup: false
+    },
+    monitoring: {
+      enabled: true,
+      metricsInterval: 5000,
+      enableAlerts: false,
+      performanceThresholds: {
+        maxResponseTime: 1000,
+        maxMemoryUsage: 512,
+        maxCpuUsage: 80
+      }
     }
   }
 };

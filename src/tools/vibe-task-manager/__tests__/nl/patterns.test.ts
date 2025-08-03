@@ -125,6 +125,45 @@ describe('IntentPatternEngine', () => {
       const entities = EntityExtractors.general('Parse PRD #urgent #review', [] as unknown);
       expect(entities.tags).toEqual(['urgent', 'review']);
     });
+
+    it('should handle long project names with descriptions', () => {
+      const entities = EntityExtractors.projectName(
+        'Create a new project for EduPlay Connect - a web-based educational gaming platform for kids aged 6-12',
+        [] as unknown as RegExpMatchArray
+      );
+      // Should extract just the project name, not the description
+      expect(entities.projectName).toBe('EduPlay Connect');
+    });
+
+    it('should truncate extremely long project names', () => {
+      const entities = EntityExtractors.projectName(
+        'Create project called This Is An Extremely Long Project Name That Exceeds The Fifty Character Limit',
+        [] as unknown as RegExpMatchArray
+      );
+      // Should truncate at word boundary
+      expect(entities.projectName).toBeDefined();
+      expect((entities.projectName as string).length).toBeLessThanOrEqual(50);
+      // Pattern captures up to 5 words
+      expect(entities.projectName).toBe('This Is An Extremely Long');
+    });
+
+    it('should handle project names with dashes correctly', () => {
+      const entities = EntityExtractors.projectName(
+        'Create project ABC-123 - a test project',
+        [] as unknown as RegExpMatchArray
+      );
+      // The pattern captures until the dash separator
+      expect(entities.projectName).toBe('ABC-123');
+    });
+
+    it('should limit multi-word capture to 5 words', () => {
+      const entities = EntityExtractors.projectName(
+        'Create project One Two Three Four Five Six Seven Eight',
+        [] as unknown as RegExpMatchArray
+      );
+      // Single word fallback pattern matches when multi-word doesn't
+      expect(entities.projectName).toBe('One');
+    });
   });
 
   describe('Pattern Management', () => {

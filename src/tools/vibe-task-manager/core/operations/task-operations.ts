@@ -1,10 +1,9 @@
-import { AtomicTask, TaskStatus, TaskPriority, TaskType } from '../../types/task.js';
+import { AtomicTask, TaskStatus, TaskPriority, TaskType, FunctionalArea } from '../../types/task.js';
 import { getStorageManager } from '../storage/storage-manager.js';
 import { getVibeTaskManagerConfig } from '../../utils/config-loader.js';
 import { getIdGenerator } from '../../utils/id-generator.js';
 import { FileOperationResult } from '../../utils/file-utils.js';
-import { DataSanitizer } from '../../security/data-sanitizer.js';
-import { ConcurrentAccessManager } from '../../security/concurrent-access.js';
+import { UnifiedSecurityEngine, createDefaultSecurityConfig, LockId } from '../unified-security-engine.js';
 import logger from '../../../../logger.js';
 
 /**
@@ -17,6 +16,7 @@ export interface CreateTaskParams {
   epicId?: string; // Made optional - will be auto-resolved if not provided
   priority?: TaskPriority;
   type?: TaskType;
+  functionalArea?: FunctionalArea;
   estimatedHours?: number;
   filePaths?: string[];
   acceptanceCriteria?: string[];
@@ -75,16 +75,70 @@ export interface CreateEpicParams {
  */
 export class TaskOperations {
   private static instance: TaskOperations;
-  private accessManager: ConcurrentAccessManager;
+  private securityEngine: UnifiedSecurityEngine;
 
   private constructor() {
-    this.accessManager = ConcurrentAccessManager.getInstance({
-      enableLockAuditTrail: true,
-      enableDeadlockDetection: true,
-      defaultLockTimeout: 30000, // 30 seconds
-      maxLockTimeout: 300000, // 5 minutes
-      lockCleanupInterval: 60000 // 1 minute
-    });
+    const securityConfig = {
+      ...createDefaultSecurityConfig(),
+      concurrentAccess: {
+        enabled: true,
+        maxLockDuration: 300000, // 5 minutes
+        deadlockDetection: true,
+        lockCleanupInterval: 60000, // 1 minute
+        maxLocksPerResource: 10
+      }
+    };
+    this.securityEngine = UnifiedSecurityEngine.getInstance(securityConfig);
+  }
+
+  /**
+   * Compatibility wrapper for lock acquisition
+   */
+  private async acquireLock(resource: string, _owner: string, operation: 'read' | 'write', options: { timeout?: number; metadata?: Record<string, unknown> } = {}) {
+    const result = await this.securityEngine.acquireLock(resource, operation, undefined, options.timeout);
+    
+    if (result.success) {
+      return {
+        success: true,
+        lock: { id: result.data.lockId as string },
+        error: undefined
+      };
+    } else {
+      return {
+        success: false,
+        lock: undefined,
+        error: result.error.message
+      };
+    }
+  }
+
+  /**
+   * Compatibility wrapper for lock release
+   */
+  private async releaseLock(lockId: string) {
+    const result = await this.securityEngine.releaseLock(lockId as LockId);
+    return result.success;
+  }
+
+  /**
+   * Compatibility wrapper for data sanitization
+   */
+  private async sanitizeData<T>(data: T) {
+    const result = await this.securityEngine.sanitizeData(data);
+    
+    if (result.success) {
+      return {
+        success: true,
+        sanitizedData: result.data.sanitizedData,
+        violations: result.data.violations || []
+      };
+    } else {
+      return {
+        success: false,
+        sanitizedData: data,
+        violations: [result.error.message]
+      };
+    }
   }
 
   /**
@@ -115,7 +169,7 @@ export class TaskOperations {
       logger.info({ taskTitle: params.title, projectId: params.projectId, createdBy }, 'Creating new task');
 
       // Acquire project lock to prevent concurrent modifications
-      const projectLockResult = await this.accessManager.acquireLock(
+      const projectLockResult = await this.acquireLock(
         `project:${params.projectId}`,
         createdBy,
         'write',
@@ -164,7 +218,7 @@ export class TaskOperations {
       }
 
       // Acquire epic lock to prevent concurrent modifications
-      const epicLockResult = await this.accessManager.acquireLock(
+      const epicLockResult = await this.acquireLock(
         `epic:${resolvedEpicId}`,
         createdBy,
         'write',
@@ -179,7 +233,7 @@ export class TaskOperations {
 
       if (!epicLockResult.success) {
         // Release project lock
-        await this.accessManager.releaseLock(lockIds[0]);
+        await this.releaseLock(lockIds[0]);
         return {
           success: false,
           error: `Failed to acquire epic lock: ${epicLockResult.error}`,
@@ -193,12 +247,11 @@ export class TaskOperations {
       lockIds.push(epicLockResult.lock!.id);
 
       // Sanitize input parameters with resolved epic ID
-      const dataSanitizer = DataSanitizer.getInstance();
       const paramsWithEpicId = {
         ...params,
         epicId: resolvedEpicId
       };
-      const sanitizationResult = await dataSanitizer.sanitizeInput(paramsWithEpicId);
+      const sanitizationResult = await this.sanitizeData(paramsWithEpicId);
 
       if (!sanitizationResult.success) {
         logger.error({
@@ -208,7 +261,7 @@ export class TaskOperations {
 
         return {
           success: false,
-          error: `Input sanitization failed: ${sanitizationResult.violations.map((v: { description: string }) => v.description).join(', ')}`,
+          error: `Input sanitization failed: ${sanitizationResult.violations.join(', ')}`,
           metadata: {
             filePath: 'task-operations',
             operation: 'create_task',
@@ -283,9 +336,9 @@ export class TaskOperations {
         sanitizedParams.epicId = epicValidationResult.epicId;
       }
 
-      // Generate unique task ID
+      // Generate unique task ID (globally unique across all projects)
       const idGenerator = getIdGenerator();
-      const idResult = await idGenerator.generateTaskId(sanitizedParams.projectId, sanitizedParams.epicId);
+      const idResult = await idGenerator.generateTaskId();
 
       if (!idResult.success) {
         return {
@@ -323,6 +376,7 @@ export class TaskOperations {
         status: 'pending',
         priority: sanitizedParams.priority || 'medium',
         type: sanitizedParams.type || 'development',
+        functionalArea: sanitizedParams.functionalArea || 'data-management',
         estimatedHours: sanitizedParams.estimatedHours || 4,
         epicId: sanitizedParams.epicId,
         projectId: sanitizedParams.projectId,
@@ -431,7 +485,7 @@ export class TaskOperations {
       // Release all acquired locks
       for (const lockId of lockIds) {
         try {
-          await this.accessManager.releaseLock(lockId);
+          await this.releaseLock(lockId);
         } catch (error) {
           logger.error({ err: error, lockId }, 'Failed to release lock during task creation cleanup');
         }

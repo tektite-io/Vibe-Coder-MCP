@@ -3,7 +3,7 @@ import path from 'path';
 import yaml from 'js-yaml';
 import { z } from 'zod';
 import logger from '../../../logger.js';
-import { validateSecurePath } from './path-security-validator.js';
+import { UnifiedSecurityEngine, createDefaultSecurityConfig } from '../core/unified-security-engine.js';
 
 /**
  * File operation result
@@ -28,6 +28,19 @@ export interface FileOperationResult<T = unknown> {
 export class FileUtils {
   private static readonly MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
   private static readonly ALLOWED_EXTENSIONS = ['.json', '.yaml', '.yml', '.md', '.txt'];
+  private static securityEngine: UnifiedSecurityEngine | null = null;
+
+  /**
+   * Get or initialize the security engine
+   */
+  private static async getSecurityEngine(): Promise<UnifiedSecurityEngine> {
+    if (!this.securityEngine) {
+      const config = createDefaultSecurityConfig();
+      this.securityEngine = UnifiedSecurityEngine.getInstance(config);
+      await this.securityEngine.initialize();
+    }
+    return this.securityEngine;
+  }
 
   /**
    * Safely read a file with validation
@@ -409,28 +422,33 @@ export class FileUtils {
   }
 
   /**
-   * Validate file path for security using centralized security validator
+   * Validate file path for security using unified security engine
    */
   private static async validateFilePath(filePath: string, operation: 'read' | 'write' = 'read'): Promise<{ valid: boolean; error?: string }> {
     try {
+      const securityEngine = await this.getSecurityEngine();
+      
       // For write operations, we need to validate the directory path and allow non-existent files
       if (operation === 'write') {
         const dirPath = path.dirname(filePath);
         const fileName = path.basename(filePath);
 
         // Validate directory path exists and is accessible
-        const dirValidationResult = await validateSecurePath(dirPath);
-        if (!dirValidationResult.isValid) {
-          // If directory validation fails, try to validate the full path with relaxed mode
-          const pathValidator = new (await import('./path-security-validator.js')).PathSecurityValidator({
-            strictMode: false // Allow non-existent files for write operations
-          });
-          const relaxedResult = await pathValidator.validatePath(filePath);
-
-          if (!relaxedResult.isValid) {
+        const dirValidationResult = await securityEngine.validatePath(dirPath, 'write');
+        if (!dirValidationResult.success || !dirValidationResult.data?.isValid) {
+          // Try to validate the full path with write operation
+          const fullPathResult = await securityEngine.validatePath(filePath, 'write');
+          
+          if (!fullPathResult.success) {
             return {
               valid: false,
-              error: relaxedResult.error
+              error: fullPathResult.error.message || 'Path validation failed'
+            };
+          }
+          if (!fullPathResult.data.isValid) {
+            return {
+              valid: false,
+              error: fullPathResult.data.error || 'Path validation failed'
             };
           }
         }
@@ -446,11 +464,17 @@ export class FileUtils {
         }
       } else {
         // For read operations, use standard validation
-        const validationResult = await validateSecurePath(filePath);
-        if (!validationResult.isValid) {
+        const validationResult = await securityEngine.validatePath(filePath, 'read');
+        if (!validationResult.success) {
           return {
             valid: false,
-            error: validationResult.error
+            error: validationResult.error.message || 'Path validation failed'
+          };
+        }
+        if (!validationResult.data.isValid) {
+          return {
+            valid: false,
+            error: validationResult.data.error || 'Path validation failed'
           };
         }
       }

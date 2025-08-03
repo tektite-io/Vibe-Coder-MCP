@@ -6,6 +6,20 @@
 import { z } from 'zod';
 
 /**
+ * Priority categorization thresholds for file relevance
+ */
+export const PRIORITY_THRESHOLDS = {
+  HIGH: {
+    relevanceScore: 0.7,
+    confidence: 0.8
+  },
+  MEDIUM: {
+    relevanceScore: 0.4,
+    confidence: 0.6
+  }
+} as const;
+
+/**
  * Task type enumeration for different development scenarios
  */
 export const taskTypeSchema = z.enum(['feature_addition', 'refactoring', 'bug_fix', 'performance_optimization', 'general'], {
@@ -56,7 +70,13 @@ export const contextFileSchema = z.object({
   /** Estimated token count */
   tokenCount: z.number().min(0),
   /** Summary for optimized files */
-  optimizedSummary: z.string().optional()
+  optimizedSummary: z.string().optional(),
+  /** Actual relevance score from file discovery (0.0-1.0) */
+  actualRelevanceScore: z.number().min(0).max(1).optional(),
+  /** Actual confidence score from file discovery (0.0-1.0) */
+  actualConfidence: z.number().min(0).max(1).optional(),
+  /** Actual categories from file discovery */
+  actualCategories: z.array(z.string()).optional()
 }).refine(data => {
   // If optimized, must have summary
   if (data.isOptimized && data.content === null) {
@@ -244,7 +264,7 @@ export const contextCuratorInputSchema = z.object({
   /** Whether to use existing codemap cache */
   useCodeMapCache: z.boolean().default(true),
   /** Maximum age of cached codemap in minutes */
-  codeMapCacheMaxAgeMinutes: z.number().min(1).max(1440).default(120),
+  codeMapCacheMaxAgeMinutes: z.number().min(1).max(1440).default(1440),
   /** Maximum token budget for the context package */
   maxTokenBudget: z.number().min(1000).max(500000).default(250000)
 });

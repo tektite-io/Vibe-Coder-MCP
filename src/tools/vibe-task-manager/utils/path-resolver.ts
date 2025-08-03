@@ -1,6 +1,6 @@
 import path from 'path';
 import logger from '../../../logger.js';
-import { getVibeTaskManagerSecurityValidator } from '../security/vibe-task-manager-security-validator.js';
+import { UnifiedSecurityEngine, createDefaultSecurityConfig } from '../core/unified-security-engine.js';
 
 /**
  * Centralized path resolution utility for Vibe Task Manager
@@ -8,6 +8,7 @@ import { getVibeTaskManagerSecurityValidator } from '../security/vibe-task-manag
  */
 export class PathResolver {
   private static instance: PathResolver;
+  private securityEngine: UnifiedSecurityEngine | null = null;
 
   private constructor() {}
 
@@ -16,6 +17,18 @@ export class PathResolver {
       PathResolver.instance = new PathResolver();
     }
     return PathResolver.instance;
+  }
+
+  /**
+   * Get or initialize the security engine
+   */
+  private async getSecurityEngine(): Promise<UnifiedSecurityEngine> {
+    if (!this.securityEngine) {
+      const config = createDefaultSecurityConfig();
+      this.securityEngine = UnifiedSecurityEngine.getInstance(config);
+      await this.securityEngine.initialize();
+    }
+    return this.securityEngine;
   }
 
   /**
@@ -71,27 +84,49 @@ export class PathResolver {
   }
 
   /**
-   * Create a secure path within the read directory using security validator
+   * Create a secure path within the read directory using unified security engine
    */
-  createSecureReadPath(relativePath: string): string {
+  async createSecureReadPath(relativePath: string): Promise<string> {
     const readDir = this.getReadDirectory();
     const resolvedPath = path.resolve(readDir, relativePath);
 
-    // Use the security validator for consistent boundary enforcement
-    const validator = getVibeTaskManagerSecurityValidator();
-    return validator.createSecureReadPath(resolvedPath);
+    // Use the unified security engine for consistent boundary enforcement
+    const securityEngine = await this.getSecurityEngine();
+    const validationResponse = await securityEngine.validatePath(resolvedPath, 'read');
+    
+    if (!validationResponse.success) {
+      throw new Error(`Path validation failed: ${validationResponse.error?.message || 'Unknown error'}`);
+    }
+    
+    const validationResult = validationResponse.data;
+    if (!validationResult.isValid) {
+      throw new Error(`Path validation failed: ${validationResult.error || 'Path validation failed'}`);
+    }
+    
+    return validationResult.normalizedPath || resolvedPath;
   }
 
   /**
-   * Create a secure path within the output directory using security validator
+   * Create a secure path within the output directory using unified security engine
    */
-  createSecureOutputPath(relativePath: string): string {
+  async createSecureOutputPath(relativePath: string): Promise<string> {
     const outputDir = this.getOutputDirectory();
     const resolvedPath = path.resolve(outputDir, relativePath);
 
-    // Use the security validator for consistent boundary enforcement
-    const validator = getVibeTaskManagerSecurityValidator();
-    return validator.createSecureWritePath(resolvedPath);
+    // Use the unified security engine for consistent boundary enforcement
+    const securityEngine = await this.getSecurityEngine();
+    const validationResponse = await securityEngine.validatePath(resolvedPath, 'write');
+    
+    if (!validationResponse.success) {
+      throw new Error(`Path validation failed: ${validationResponse.error?.message || 'Unknown error'}`);
+    }
+    
+    const validationResult = validationResponse.data;
+    if (!validationResult.isValid) {
+      throw new Error(`Path validation failed: ${validationResult.error || 'Path validation failed'}`);
+    }
+    
+    return validationResult.normalizedPath || resolvedPath;
   }
 }
 

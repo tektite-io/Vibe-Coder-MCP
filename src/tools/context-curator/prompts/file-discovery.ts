@@ -16,6 +16,12 @@ export const FILE_DISCOVERY_SYSTEM_PROMPT = `You are an expert software architec
 
 Your task is to analyze a development request and identify the most relevant files that need to be examined, modified, or referenced during implementation.
 
+## CRITICAL FORMAT REQUIREMENT
+
+You MUST respond with ONLY a valid JSON object. Do not include any text before or after the JSON.
+Do not include markdown code blocks (no \`\`\`json or \`\`\`).
+The response must be parseable by JSON.parse() without any preprocessing.
+
 ## DISCOVERY STRATEGIES
 
 **Semantic Similarity**: 
@@ -88,6 +94,15 @@ CRITICAL: Respond with a valid JSON object matching this exact structure:
     "averageConfidence": 0.0-1.0
   }
 }
+
+COMMON FORMAT ERRORS TO AVOID:
+1. DO NOT return a single file object when asked for multiple files
+2. DO NOT return just the array without the wrapper object
+3. DO NOT use single quotes - JSON requires double quotes
+4. DO NOT include comments in the JSON
+5. DO NOT forget any required fields
+6. DO NOT use trailing commas
+7. DO NOT return text explanations before or after the JSON
 
 ## DISCOVERY GUIDELINES
 
@@ -212,7 +227,75 @@ EXAMPLE INCORRECT RESPONSES (WILL CAUSE VALIDATION FAILURE):
 - "authentication module" (abstract description - NOT ALLOWED)
 - "user interface components" (abstract description - NOT ALLOWED)
 
-Using the ${searchStrategy} strategy, identify the most relevant files for this development task. Provide your response in the required JSON format with detailed reasoning for each file selection.`;
+Using the ${searchStrategy} strategy, identify the most relevant files for this development task. Provide your response in the required JSON format with detailed reasoning for each file selection.
+
+## EXAMPLE CORRECT RESPONSE FORMAT:
+{
+  "relevantFiles": [
+    {
+      "path": "src/auth/authentication.ts",
+      "priority": "high",
+      "reasoning": "Core authentication module requiring JWT implementation",
+      "confidence": 0.95,
+      "estimatedTokens": 800,
+      "modificationLikelihood": "very_high"
+    },
+    {
+      "path": "src/auth/middleware.ts",
+      "priority": "high",
+      "reasoning": "Middleware needs updating for JWT validation",
+      "confidence": 0.9,
+      "estimatedTokens": 600,
+      "modificationLikelihood": "high"
+    }
+  ],
+  "totalFilesAnalyzed": 150,
+  "processingTimeMs": 2500,
+  "searchStrategy": "${searchStrategy}",
+  "coverageMetrics": {
+    "totalTokens": 1400,
+    "averageConfidence": 0.925
+  }
+}
+
+## EXAMPLE INCORRECT RESPONSE FORMATS (DO NOT USE):
+
+WRONG - Single file object instead of array:
+{
+  "path": "src/auth/authentication.ts",
+  "priority": "high",
+  "reasoning": "Core authentication module",
+  "confidence": 0.95,
+  "estimatedTokens": 800,
+  "modificationLikelihood": "very_high"
+}
+
+WRONG - Missing wrapper object:
+[
+  {
+    "path": "src/auth/authentication.ts",
+    "priority": "high",
+    "reasoning": "Core authentication module",
+    "confidence": 0.95,
+    "estimatedTokens": 800,
+    "modificationLikelihood": "very_high"
+  }
+]
+
+WRONG - Text before JSON:
+Here are the relevant files:
+{
+  "relevantFiles": [...]
+}
+
+WRONG - Markdown code block:
+\`\`\`json
+{
+  "relevantFiles": [...]
+}
+\`\`\`
+
+Remember: Return ONLY the JSON object, nothing else.`;
 
   return prompt;
 }
@@ -522,6 +605,112 @@ export const FILE_DISCOVERY_EXAMPLES = {
       coverageMetrics: {
         totalTokens: 2900,
         averageConfidence: 0.82
+      }
+    }
+  }
+} as const;
+
+/**
+ * Additional format examples showing edge cases and common errors
+ */
+export const FILE_DISCOVERY_FORMAT_EXAMPLES = {
+  // Example of correct empty response when no files are found
+  emptyResponse: {
+    description: 'Valid response when no relevant files are found',
+    response: {
+      relevantFiles: [],
+      totalFilesAnalyzed: 100,
+      processingTimeMs: 1000,
+      searchStrategy: 'semantic_similarity' as const,
+      coverageMetrics: {
+        totalTokens: 0,
+        averageConfidence: 0
+      }
+    }
+  },
+
+  // Example of single file response (still needs array wrapper)
+  singleFileResponse: {
+    description: 'Valid response with just one relevant file',
+    response: {
+      relevantFiles: [
+        {
+          path: 'src/config/settings.ts',
+          priority: 'high' as const,
+          reasoning: 'Configuration file that needs updating',
+          confidence: 0.9,
+          estimatedTokens: 300,
+          modificationLikelihood: 'high' as const
+        }
+      ],
+      totalFilesAnalyzed: 50,
+      processingTimeMs: 800,
+      searchStrategy: 'keyword_matching' as const,
+      coverageMetrics: {
+        totalTokens: 300,
+        averageConfidence: 0.9
+      }
+    }
+  },
+
+  // Common format errors to demonstrate what NOT to do
+  commonErrors: {
+    // Error: Returning single object when LLM finds one file
+    singleObjectError: {
+      description: 'WRONG: LLM returns single file object instead of array',
+      incorrectResponse: {
+        path: 'src/auth/login.ts',
+        priority: 'high',
+        reasoning: 'Login module needs update',
+        confidence: 0.9,
+        estimatedTokens: 500,
+        modificationLikelihood: 'high'
+      },
+      correctResponse: {
+        relevantFiles: [
+          {
+            path: 'src/auth/login.ts',
+            priority: 'high',
+            reasoning: 'Login module needs update',
+            confidence: 0.9,
+            estimatedTokens: 500,
+            modificationLikelihood: 'high'
+          }
+        ],
+        totalFilesAnalyzed: 80,
+        processingTimeMs: 1200,
+        searchStrategy: 'semantic_similarity',
+        coverageMetrics: {
+          totalTokens: 500,
+          averageConfidence: 0.9
+        }
+      }
+    },
+
+    // Error: Including text explanation
+    textExplanationError: {
+      description: 'WRONG: Including explanatory text with JSON',
+      incorrectResponse: `Based on my analysis, here are the relevant files:
+{
+  "relevantFiles": [...],
+  "totalFilesAnalyzed": 100,
+  ...
+}`,
+      correctResponse: 'Return ONLY the JSON object without any text'
+    },
+
+    // Error: Using fileScores instead of relevantFiles
+    wrongFieldNameError: {
+      description: 'WRONG: Using incorrect field names',
+      incorrectResponse: {
+        fileScores: [], // Wrong field name
+        totalFiles: 100, // Wrong field name
+        timeMs: 1000, // Wrong field name
+        strategy: 'semantic_similarity', // Wrong field name
+        metrics: { // Wrong field name
+          tokens: 1000,
+          confidence: 0.8
+        }
       }
     }
   }

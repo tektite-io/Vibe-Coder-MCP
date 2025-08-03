@@ -4,7 +4,7 @@ import path from 'path';
 import { z } from 'zod';
 import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
-import { performFormatAwareLlmCall } from '../../utils/llmHelper.js'; // Import the new helper
+import { performFormatAwareLlmCallWithCentralizedConfig } from '../../utils/llmHelper.js'; // Import the new helper
 import { performResearchQuery } from '../../utils/researchHelper.js';
 import logger from '../../logger.js';
 import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js'; // Import ToolExecutionContext
@@ -12,14 +12,18 @@ import { AppError, ToolExecutionError } from '../../utils/errors.js'; // Import 
 import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
 import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
 import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js'; // Import the new formatter
+import { getToolOutputDirectory, ensureToolOutputDirectory } from '../vibe-task-manager/security/unified-security-config.js';
 
-// Helper function to get the base output directory
+// Helper function to get the base output directory using centralized security
 function getBaseOutputDir(): string {
-  // Prioritize environment variable, resolve to ensure it's treated as an absolute path if provided
-  // Fallback to default relative to CWD
-  return process.env.VIBE_CODER_OUTPUT_DIR
-    ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
-    : path.join(process.cwd(), 'VibeCoderOutput');
+  try {
+    return getToolOutputDirectory();
+  } catch {
+    // Fallback for backward compatibility during migration
+    return process.env.VIBE_CODER_OUTPUT_DIR
+      ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
+      : path.join(process.cwd(), 'VibeCoderOutput');
+  }
 }
 
 // Define tool-specific directory using the helper
@@ -27,15 +31,21 @@ const RULES_DIR = path.join(getBaseOutputDir(), 'rules-generator');
 
 // Initialize directories if they don't exist
 export async function initDirectories() {
-  const baseOutputDir = getBaseOutputDir();
   try {
-    await fs.ensureDir(baseOutputDir); // Ensure base directory exists
-    const toolDir = path.join(baseOutputDir, 'rules-generator');
-    await fs.ensureDir(toolDir); // Ensure tool-specific directory exists
+    const toolDir = await ensureToolOutputDirectory('rules-generator');
     logger.debug(`Ensured rules directory exists: ${toolDir}`);
   } catch (error) {
-    logger.error({ err: error, path: baseOutputDir }, `Failed to ensure base output directory exists for rules-generator.`);
-    // Decide if we should re-throw or just log. Logging might be safer.
+    logger.error({ err: error }, `Failed to ensure base output directory exists for rules-generator.`);
+    // Fallback to original implementation for backward compatibility
+    const baseOutputDir = getBaseOutputDir();
+    try {
+      await fs.ensureDir(baseOutputDir);
+      const toolDir = path.join(baseOutputDir, 'rules-generator');
+      await fs.ensureDir(toolDir);
+      logger.debug(`Ensured rules directory exists (fallback): ${toolDir}`);
+    } catch (fallbackError) {
+      logger.error({ err: fallbackError, path: baseOutputDir }, `Fallback directory creation also failed.`);
+    }
   }
 }
 
@@ -276,10 +286,9 @@ export const generateRules: ToolExecutor = async (
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating rules content via LLM...');
     logs.push(`[${new Date().toISOString()}] Calling LLM for main rules generation.`);
 
-    const rulesMarkdown = await performFormatAwareLlmCall(
+    const rulesMarkdown = await performFormatAwareLlmCallWithCentralizedConfig(
       mainGenerationPrompt,
       RULES_SYSTEM_PROMPT, // Pass the system prompt
-      config,
       'rules_generation', // Logical task name
       'markdown', // Explicitly specify markdown format
       undefined, // No schema for markdown

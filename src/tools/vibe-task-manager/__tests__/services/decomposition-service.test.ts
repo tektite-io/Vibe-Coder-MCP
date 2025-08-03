@@ -156,6 +156,22 @@ vi.mock('../../services/epic-service.js', () => ({
   })
 }));
 
+// Mock epic context resolver for config propagation testing
+const mockEpicContextResolver = {
+  extractFunctionalArea: vi.fn().mockResolvedValue('authentication'),
+  resolveEpicContext: vi.fn().mockResolvedValue({
+    epicId: 'epic-001',
+    epicName: 'Test Epic',
+    source: 'created' as const,
+    confidence: 0.9,
+    created: true
+  })
+};
+
+vi.mock('../../services/epic-context-resolver.js', () => ({
+  getEpicContextResolver: vi.fn().mockReturnValue(mockEpicContextResolver)
+}));
+
 // Mock the decomposition summary generator
 vi.mock('../../services/decomposition-summary-generator.js', () => ({
   DecompositionSummaryGenerator: vi.fn().mockImplementation(() => ({
@@ -173,6 +189,50 @@ vi.mock('../../../../logger.js', () => ({
     warn: vi.fn(),
     error: vi.fn()
   }
+}));
+
+// Mock TimeoutManager to prevent config initialization warnings
+vi.mock('../../utils/timeout-manager.js', () => ({
+  TimeoutManager: {
+    getInstance: vi.fn().mockReturnValue({
+      initialize: vi.fn(),
+      isInitialized: vi.fn().mockReturnValue(true),
+      getTimeout: vi.fn().mockReturnValue(300000),
+      getComplexityAdjustedTimeout: vi.fn().mockReturnValue(300000),
+      getRetryConfig: vi.fn().mockReturnValue({
+        maxRetries: 3,
+        backoffMultiplier: 2,
+        initialDelayMs: 1000,
+        maxDelayMs: 30000,
+        enableExponentialBackoff: true
+      }),
+      withTimeout: vi.fn().mockImplementation(async (operation, fn) => {
+        return await fn();
+      }),
+      withRetry: vi.fn().mockImplementation(async (operation, fn) => {
+        return await fn();
+      })
+    })
+  },
+  getTimeoutManager: vi.fn().mockReturnValue({
+    initialize: vi.fn(),
+    isInitialized: vi.fn().mockReturnValue(true),
+    getTimeout: vi.fn().mockReturnValue(300000),
+    getComplexityAdjustedTimeout: vi.fn().mockReturnValue(300000),
+    getRetryConfig: vi.fn().mockReturnValue({
+      maxRetries: 3,
+      backoffMultiplier: 2,
+      initialDelayMs: 1000,
+      maxDelayMs: 30000,
+      enableExponentialBackoff: true
+    }),
+    withTimeout: vi.fn().mockImplementation(async (operation, fn) => {
+      return await fn();
+    }),
+    withRetry: vi.fn().mockImplementation(async (operation, fn) => {
+      return await fn();
+    })
+  })
 }));
 
 describe('DecompositionService', () => {
@@ -210,7 +270,8 @@ describe('DecompositionService', () => {
 
     // IMPORTANT: Replace the real engine with our mock after service creation
     // This is necessary because DecompositionService creates its own RDD engine instance
-    (service as Record<string, unknown>).engine = mockEngine;
+    // Use proper type assertion to avoid interfering with other service properties
+    (service as unknown as { engine: typeof mockEngine }).engine = mockEngine;
 
     mockTask = {
       id: 'T0001',
@@ -812,6 +873,398 @@ describe('DecompositionService', () => {
           context: mockContext
         })
       );
+    });
+  });
+
+  describe('config propagation for epic resolution', () => {
+    let service: DecompositionService;
+    let mockConfig: OpenRouterConfig;
+    let mockTasks: AtomicTask[];
+
+    beforeEach(async () => {
+      // Clear all previous mock calls
+      vi.clearAllMocks();
+      
+      // Create mock config using the same pattern as other tests
+      mockConfig = createMockConfig();
+
+      // Create service instance with config using constructor like other tests
+      service = new DecompositionService(mockConfig);
+      
+      // Register the service for singleton cleanup
+      registerTestSingleton('DecompositionService', service, 'cleanup');
+
+      // Mock tasks with different functional areas
+      mockTasks = [
+        {
+          id: 'task-001',
+          title: 'User authentication system',
+          description: 'Implement login and logout functionality',
+          priority: 'high' as TaskPriority,
+          type: 'development' as TaskType,
+          status: 'pending' as TaskStatus,
+          functionalArea: 'authentication' as const,
+          tags: ['auth', 'security'],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          estimatedHours: 8,
+          epicId: 'E001',
+          projectId: 'PID-TEST-001',
+          dependencies: [],
+          dependents: [],
+          filePaths: ['src/auth/login.ts'],
+          acceptanceCriteria: ['Users can login'],
+          testingRequirements: {
+            unitTests: [],
+            integrationTests: [],
+            performanceTests: [],
+            coverageTarget: 80
+          },
+          performanceCriteria: {},
+          qualityCriteria: {
+            codeQuality: [],
+            documentation: [],
+            typeScript: true,
+            eslint: true
+          },
+          integrationCriteria: {
+            compatibility: [],
+            patterns: []
+          },
+          validationMethods: {
+            automated: [],
+            manual: []
+          },
+          createdBy: 'test-user',
+          metadata: {
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            createdBy: 'test-user',
+            tags: []
+          }
+        },
+        {
+          id: 'task-002', 
+          title: 'User profile management',
+          description: 'Create and edit user profiles',
+          priority: 'medium' as TaskPriority,
+          type: 'development' as TaskType,
+          status: 'pending' as TaskStatus,
+          functionalArea: 'user-management' as const,
+          tags: ['profile', 'ui'],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          estimatedHours: 6,
+          epicId: 'E002',
+          projectId: 'PID-TEST-001',
+          dependencies: [],
+          dependents: [],
+          filePaths: ['src/profile/profile.ts'],
+          acceptanceCriteria: ['Users can edit profiles'],
+          testingRequirements: {
+            unitTests: [],
+            integrationTests: [],
+            performanceTests: [],
+            coverageTarget: 80
+          },
+          performanceCriteria: {},
+          qualityCriteria: {
+            codeQuality: [],
+            documentation: [],
+            typeScript: true,
+            eslint: true
+          },
+          integrationCriteria: {
+            compatibility: [],
+            patterns: []
+          },
+          validationMethods: {
+            automated: [],
+            manual: []
+          },
+          createdBy: 'test-user',
+          metadata: {
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            createdBy: 'test-user',
+            tags: []
+          }
+        }
+      ];
+    });
+
+    describe('config propagation through decomposition', () => {
+      it('should store config in service instance for epic generation methods', async () => {
+        // Test that the service properly stores and maintains the OpenRouter config
+        // This validates the fix for PHASE1-CONFIG-001, 002, 003
+        
+        // Verify service has config
+        expect(service).toBeDefined();
+        expect((service as unknown as { config: OpenRouterConfig }).config).toBeDefined();
+        expect((service as unknown as { config: OpenRouterConfig }).config).toEqual(mockConfig);
+        
+        // Verify config includes all required LLM mapping fields
+        const storedConfig = (service as unknown as { config: OpenRouterConfig }).config;
+        expect(storedConfig.llm_mapping).toBeDefined();
+        expect(storedConfig.llm_mapping['task_decomposition']).toBeDefined();
+        expect(storedConfig.apiKey).toBe(mockConfig.apiKey);
+        expect(storedConfig.baseUrl).toBe(mockConfig.baseUrl);
+      });
+
+      it('should pass config to epic context resolver methods when called directly', async () => {
+        // Test direct method calls to verify config propagation without async complexity
+        
+        // Clear any previous mock calls
+        vi.clearAllMocks();
+
+        // Get the private generateProjectEpics method for direct testing
+        const generateProjectEpicsMethod = (service as unknown as { generateProjectEpics: (session: Record<string, unknown>, tasks: AtomicTask[]) => Promise<void> }).generateProjectEpics;
+
+        // Mock session for epic generation
+        const mockSession = {
+          id: 'session-001',
+          projectId: 'project-001',
+          taskId: 'task-001'
+        };
+
+        try {
+          // Call generateProjectEpics directly with our mock tasks
+          await generateProjectEpicsMethod.call(service, mockSession, mockTasks);
+        } catch {
+          // Expected to fail due to mocking, but should show config was passed
+          // The important part is that the epic context resolver was called with config
+        }
+
+        // Verify that epic context resolver was called with config
+        // extractFunctionalArea should be called for each task
+        expect(mockEpicContextResolver.extractFunctionalArea).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: mockTasks[0].title,
+            description: mockTasks[0].description,
+            type: mockTasks[0].type,
+            tags: mockTasks[0].tags
+          }),
+          'project-001',
+          mockConfig
+        );
+
+        // resolveEpicContext should be called with config in resolverParams
+        expect(mockEpicContextResolver.resolveEpicContext).toHaveBeenCalledWith(
+          expect.objectContaining({
+            config: mockConfig
+          })
+        );
+      });
+    });
+
+    describe('config validation', () => {
+      it('should maintain OpenRouter config integrity throughout service lifecycle', async () => {
+        // Verify service has properly initialized config
+        expect(service).toBeDefined();
+        expect((service as unknown as { config: OpenRouterConfig }).config).toBeDefined();
+        expect((service as unknown as { config: OpenRouterConfig }).config).toEqual(mockConfig);
+        
+        // Verify all required config properties are present and correct
+        const storedConfig = (service as unknown as { config: OpenRouterConfig }).config;
+        expect(storedConfig.apiKey).toBe('test-api-key');
+        expect(storedConfig.baseUrl).toBeTruthy();
+        expect(storedConfig.geminiModel).toBe('google/gemini-2.5-flash-preview');
+        expect(storedConfig.llm_mapping).toEqual({
+          'task_decomposition': 'google/gemini-2.5-flash-preview',
+          'atomic_detection': 'google/gemini-2.5-flash-preview',
+          'intent_recognition': 'google/gemini-2.5-flash-preview',
+          'default_generation': 'google/gemini-2.5-flash-preview'
+        });
+      });
+
+      it('should pass complete config object structure to epic resolver methods', async () => {
+        // Test that all config properties are passed correctly to epic context resolver
+        
+        // Clear previous mock calls
+        vi.clearAllMocks();
+
+        // Get the private generateProjectEpics method for direct testing
+        const generateProjectEpicsMethod = (service as unknown as { generateProjectEpics: (session: Record<string, unknown>, tasks: AtomicTask[]) => Promise<void> }).generateProjectEpics;
+
+        // Mock session for epic generation
+        const mockSession = {
+          id: 'session-validation-001',
+          projectId: 'project-validation-001',
+          taskId: 'task-validation-001'
+        };
+
+        try {
+          // Call generateProjectEpics directly to validate config propagation
+          await generateProjectEpicsMethod.call(service, mockSession, [mockTasks[0]]);
+        } catch {
+          // Expected to fail due to mocking, but config should have been passed
+        }
+
+        // Verify that the config passed to epic context resolver is complete and correct
+        if (mockEpicContextResolver.resolveEpicContext.mock.calls.length > 0) {
+          const lastCall = mockEpicContextResolver.resolveEpicContext.mock.calls[
+            mockEpicContextResolver.resolveEpicContext.mock.calls.length - 1
+          ];
+          const configParam = lastCall[0].config;
+          
+          // Validate that complete config object structure is passed
+          expect(configParam).toEqual(mockConfig);
+          expect(configParam.apiKey).toBe(mockConfig.apiKey);
+          expect(configParam.baseUrl).toBe(mockConfig.baseUrl);
+          expect(configParam.llm_mapping).toEqual(mockConfig.llm_mapping);
+        }
+
+        // Also verify extractFunctionalArea received correct config
+        if (mockEpicContextResolver.extractFunctionalArea.mock.calls.length > 0) {
+          const extractCall = mockEpicContextResolver.extractFunctionalArea.mock.calls[0];
+          const configParam = extractCall[2]; // Third parameter is config
+          expect(configParam).toEqual(mockConfig);
+        }
+      });
+    });
+
+    describe('dependency analysis with persisted tasks', () => {
+      it('should perform dependency analysis only on persisted tasks', async () => {
+        // Create a mix of persisted and non-persisted (epic-prefixed) tasks
+        const persistedTask1: AtomicTask = {
+          ...mockTasks[0],
+          id: 'T001-persisted',
+          title: 'Persisted Task 1',
+          filePaths: ['task-1.yaml']
+        };
+
+        const persistedTask2: AtomicTask = {
+          ...mockTasks[0],
+          id: 'T002-persisted',
+          title: 'Persisted Task 2',
+          filePaths: ['task-2.yaml']
+        };
+
+        const epicTask1: AtomicTask = {
+          ...mockTasks[0],
+          id: 'T001-epic-1',
+          title: 'Epic Task 1 (not persisted)',
+          filePaths: [] // No file path means not persisted
+        };
+
+        const epicTask2: AtomicTask = {
+          ...mockTasks[0],
+          id: 'T001-epic-2',
+          title: 'Epic Task 2 (not persisted)',
+          filePaths: []
+        };
+
+        // Mock RDD engine to return mixed tasks
+        mockEngineInstance.decomposeTask.mockResolvedValue({
+          success: true,
+          subTasks: [persistedTask1, epicTask1, persistedTask2, epicTask2],
+          epics: [],
+          isAtomic: false,
+          depth: 1,
+          analysis: {
+            confidence: 0.9,
+            reasoning: 'Task decomposed successfully',
+            estimatedHours: 10,
+            complexityFactors: [],
+            recommendations: []
+          }
+        });
+
+        // Mock task operations to simulate persistence
+        const mockTaskOps = {
+          createTask: vi.fn()
+            .mockResolvedValueOnce({ success: true, data: persistedTask1 })
+            .mockResolvedValueOnce({ success: true, data: persistedTask2 })
+        };
+
+
+        // Replace private methods with spies
+        const performDependencyAnalysisSpy = vi.spyOn(
+          service as unknown as { performDependencyAnalysis: (session: Record<string, unknown>, tasks: AtomicTask[]) => Promise<void> },
+          'performDependencyAnalysis'
+        );
+
+        // Mock the task operations getInstance
+        vi.doMock('../../core/operations/task-operations.js', () => ({
+          getTaskOperations: vi.fn().mockReturnValue(mockTaskOps)
+        }));
+
+        const request: DecompositionRequest = {
+          taskId: 'task-001',
+          projectContext: mockContext
+        };
+
+        // Execute decomposition
+        const result = await service.execute(request);
+
+        // Verify that performDependencyAnalysis was called with only persisted tasks
+        expect(performDependencyAnalysisSpy).toHaveBeenCalled();
+        
+        // Check the tasks passed to dependency analysis
+        const callArgs = performDependencyAnalysisSpy.mock.calls[0];
+        const tasksPassedToDependencyAnalysis = callArgs[1] as AtomicTask[];
+        
+        // Should only include persisted tasks (those with filePaths)
+        expect(tasksPassedToDependencyAnalysis).toHaveLength(2);
+        expect(tasksPassedToDependencyAnalysis[0].id).toBe('T001-persisted');
+        expect(tasksPassedToDependencyAnalysis[1].id).toBe('T002-persisted');
+        
+        // Should NOT include epic-prefixed tasks
+        expect(tasksPassedToDependencyAnalysis.some(t => t.id.includes('-epic-'))).toBe(false);
+
+        expect(result.success).toBe(true);
+      });
+
+      it('should handle case when no tasks are persisted', async () => {
+        // Mock RDD engine to return only epic-prefixed tasks
+        const epicTasks = [
+          { ...mockTasks[0], id: 'T001-epic-1', filePaths: [] },
+          { ...mockTasks[0], id: 'T001-epic-2', filePaths: [] }
+        ];
+
+        mockEngineInstance.decomposeTask.mockResolvedValue({
+          success: true,
+          subTasks: epicTasks,
+          epics: [],
+          isAtomic: false,
+          depth: 1,
+          analysis: {
+            confidence: 0.9,
+            reasoning: 'Task decomposed into epics only',
+            estimatedHours: 10,
+            complexityFactors: [],
+            recommendations: []
+          }
+        });
+
+        // Mock task operations to simulate no persistence
+        const mockTaskOps = {
+          createTask: vi.fn().mockResolvedValue({ success: false })
+        };
+
+        vi.doMock('../../core/operations/task-operations.js', () => ({
+          getTaskOperations: vi.fn().mockReturnValue(mockTaskOps)
+        }));
+
+        const performDependencyAnalysisSpy = vi.spyOn(
+          service as unknown as { performDependencyAnalysis: (session: Record<string, unknown>, tasks: AtomicTask[]) => Promise<void> },
+          'performDependencyAnalysis'
+        );
+
+        const request: DecompositionRequest = {
+          taskId: 'task-002',
+          projectContext: mockContext
+        };
+
+        const result = await service.execute(request);
+
+        // Verify dependency analysis was called with empty array
+        expect(performDependencyAnalysisSpy).toHaveBeenCalled();
+        const tasksPassedToDependencyAnalysis = performDependencyAnalysisSpy.mock.calls[0][1] as AtomicTask[];
+        expect(tasksPassedToDependencyAnalysis).toHaveLength(0);
+
+        expect(result.success).toBe(true);
+      });
     });
   });
 });

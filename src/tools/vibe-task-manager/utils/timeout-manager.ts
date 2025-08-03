@@ -56,7 +56,7 @@ export interface RetryConfig {
  * Centralized timeout and retry manager
  */
 export class TimeoutManager {
-  private static instance: TimeoutManager;
+  private static instance: TimeoutManager | null = null;
   private config: VibeTaskManagerConfig['taskManager'] | null = null;
 
   private constructor() {}
@@ -69,11 +69,25 @@ export class TimeoutManager {
   }
 
   /**
+   * Check if instance exists and is initialized (without creating instance)
+   */
+  static isInstanceInitialized(): boolean {
+    return TimeoutManager.instance !== null && TimeoutManager.instance.isInitialized();
+  }
+
+  /**
    * Initialize with configuration
    */
   initialize(config: VibeTaskManagerConfig['taskManager']): void {
     this.config = config;
     logger.debug('TimeoutManager initialized with configuration');
+  }
+
+  /**
+   * Check if timeout manager has been initialized with configuration
+   */
+  isInitialized(): boolean {
+    return this.config !== null;
   }
 
   /**
@@ -437,6 +451,13 @@ export class TimeoutManager {
       issues
     };
   }
+}
+
+/**
+ * Check if timeout manager has been created and initialized
+ */
+export function isTimeoutManagerInitialized(): boolean {
+  return TimeoutManager.isInstanceInitialized();
 }
 
 /**

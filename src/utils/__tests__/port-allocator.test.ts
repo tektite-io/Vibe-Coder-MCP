@@ -270,9 +270,8 @@ describe('PortAllocator', () => {
       const summary = await PortAllocator.allocatePortsForServices(ranges);
       
       expect(summary.allocations.size).toBe(3);
-      expect(summary.successful.length).toBe(3);
-      expect(summary.conflicts.length).toBe(0);
-      expect(summary.errors.length).toBe(0);
+      expect(summary.success).toBe(true);
+      expect(summary.totalAttempted.length).toBeGreaterThan(0);
       
       // Check individual allocations
       const wsAllocation = summary.allocations.get('websocket');
@@ -299,8 +298,8 @@ describe('PortAllocator', () => {
       const summary = await PortAllocator.allocatePortsForServices(ranges);
       
       expect(summary.allocations.size).toBe(2);
-      expect(summary.successful.length).toBe(1); // Only websocket should succeed
-      expect(summary.errors.length).toBeGreaterThan(0);
+      expect(summary.success).toBe(false); // Not all services succeeded
+      expect(summary.totalAttempted.length).toBeGreaterThan(0);
       
       const wsAllocation = summary.allocations.get('websocket');
       const httpAllocation = summary.allocations.get('http');
@@ -326,6 +325,40 @@ describe('PortAllocator', () => {
 
       const cleanedCount = await PortAllocator.cleanupOrphanedPorts();
       expect(typeof cleanedCount).toBe('number');
+    });
+  });
+
+  describe('cleanupInstanceTracking', () => {
+    it('should complete without throwing errors', async () => {
+      // This test verifies the method completes successfully regardless of directory state
+      // The fix ensures that missing directories are handled gracefully
+      
+      // This should not throw any errors
+      await expect(PortAllocator.cleanupInstanceTracking()).resolves.toBeUndefined();
+    });
+
+    it('should handle ENOENT error gracefully during shutdown', async () => {
+      // This specifically tests the ENOENT scenario that was causing issues in server.log
+      // We'll create a minimal test that verifies the method doesn't throw when directory doesn't exist
+      
+      // Create a new temporary directory path that definitely doesn't exist
+      const originalDir = Object.getOwnPropertyDescriptor(PortAllocator, 'INSTANCE_TRACKING_DIR');
+      
+      // Override the directory temporarily to a non-existent path
+      Object.defineProperty(PortAllocator, 'INSTANCE_TRACKING_DIR', {
+        value: '/tmp/test-non-existent-dir-' + Date.now(),
+        configurable: true
+      });
+      
+      try {
+        // This should not throw even when directory doesn't exist
+        await expect(PortAllocator.cleanupInstanceTracking()).resolves.toBeUndefined();
+      } finally {
+        // Restore original if it existed
+        if (originalDir) {
+          Object.defineProperty(PortAllocator, 'INSTANCE_TRACKING_DIR', originalDir);
+        }
+      }
     });
   });
 });

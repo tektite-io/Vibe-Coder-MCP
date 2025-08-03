@@ -1,10 +1,11 @@
 import { performResearchQuery } from '../../../utils/researchHelper.js';
-import { performFormatAwareLlmCall } from '../../../utils/llmHelper.js';
+import { performFormatAwareLlmCall, performFormatAwareLlmCallWithCentralizedConfig } from '../../../utils/llmHelper.js';
 import { OpenRouterConfigManager } from '../../../utils/openrouter-config-manager.js';
 import type { OpenRouterConfig } from '../../../types/workflow.js';
 import logger from '../../../logger.js';
 import { EventEmitter } from 'events';
 import crypto from 'crypto';
+import { getTimeoutManager } from '../utils/timeout-manager.js';
 
 /**
  * Circuit breaker for research operations
@@ -207,6 +208,12 @@ export interface ResearchIntegrationConfig {
     extractActionItems: boolean;
     createKnowledgeBase: boolean;
   };
+  /** LLM enhancement settings */
+  enhancement: {
+    temperature: number;
+    format: 'json' | 'markdown' | 'text' | 'yaml';
+    timeoutComplexity: 'simple' | 'moderate' | 'complex' | 'critical';
+  };
 }
 
 /**
@@ -247,6 +254,11 @@ export class ResearchIntegration extends EventEmitter {
         generateSubQueries: true,
         extractActionItems: true,
         createKnowledgeBase: true
+      },
+      enhancement: {
+        temperature: 0.1, // Low temperature for consistent enhancement
+        format: 'markdown', // Default format for research enhancement
+        timeoutComplexity: 'moderate' // Research enhancement is moderately complex
       },
       ...config
     };
@@ -387,7 +399,7 @@ export class ResearchIntegration extends EventEmitter {
               qualityThreshold: this.config.qualityThresholds.good,
               maxQueries: 2,
               parallelQueries: false, // Avoid nested parallelism
-              enhanceResults: true
+              enhanceResults: false // Disable individual enhancement - will aggregate later
             },
             integration: {
               includeInDecomposition: true,
@@ -456,7 +468,7 @@ export class ResearchIntegration extends EventEmitter {
                 qualityThreshold: this.config.qualityThresholds.good,
                 maxQueries: 2,
                 parallelQueries: false,
-                enhanceResults: true
+                enhanceResults: false // Disable individual enhancement - will aggregate later
               },
               integration: {
                 includeInDecomposition: true,
@@ -480,6 +492,106 @@ export class ResearchIntegration extends EventEmitter {
               circuitBreakerFailures: this.circuitBreaker.getFailureCount(operationKey)
             }, 'Research query failed');
           }
+        }
+      }
+
+      // Apply single aggregated enhancement to all research results
+      if (researchResults.length > 0) {
+        try {
+          // Aggregate all research content for single enhancement call with validation
+          const rawAggregatedContent = researchResults
+            .map(result => result.content)
+            .filter(content => content && content.trim().length > 0) // Filter empty content
+            .join('\n\n---\n\n');
+
+          // Validate and limit content size to prevent LLM issues
+          const maxContentLength = 50000; // 50k characters max
+          const aggregatedContent = rawAggregatedContent.length > maxContentLength
+            ? rawAggregatedContent.substring(0, maxContentLength) + '\n\n[Content truncated due to length...]'
+            : rawAggregatedContent;
+
+          if (aggregatedContent.trim() && aggregatedContent.length > 100) { // Ensure meaningful content
+            const enhancementPrompt = this.buildAggregatedEnhancementPrompt(decompositionRequest, aggregatedContent);
+            
+            // Apply timeout to research enhancement LLM call using centralized config
+            const timeoutManager = getTimeoutManager();
+            const complexityAdjustedTimeout = timeoutManager.getComplexityAdjustedTimeout(
+              'llmRequest',
+              this.config.enhancement.timeoutComplexity
+            );
+            const complexityAdjustedRetryConfig = timeoutManager.getComplexityAdjustedRetryConfig(
+              this.config.enhancement.timeoutComplexity
+            );
+            
+            const enhancementResult = await timeoutManager.executeWithTimeout(
+              'llmRequest',
+              async () => performFormatAwareLlmCallWithCentralizedConfig(
+                enhancementPrompt,
+                this.getAggregatedResearchSystemPrompt(decompositionRequest),
+                'research_enhancement', // Task configured in llm_config.json
+                this.config.enhancement.format,
+                undefined, // No schema for markdown
+                this.config.enhancement.temperature
+              ),
+              complexityAdjustedTimeout,
+              complexityAdjustedRetryConfig
+            );
+
+            if (!enhancementResult.success || !enhancementResult.data) {
+              logger.warn({
+                error: enhancementResult.error,
+                timedOut: enhancementResult.timedOut,
+                researchResultsCount: researchResults.length,
+                aggregatedContentLength: aggregatedContent.length
+              }, 'Research enhancement failed, using fallback strategy');
+              
+              // Fallback: return a simple synthesis instead of enhanced content
+              const fallbackContent = this.createFallbackSynthesis(decompositionRequest, researchResults);
+              researchResults.forEach(result => {
+                result.content = fallbackContent;
+                result.performance.enhancementTime = 0; // No enhancement time for fallback
+              });
+              
+              logger.info({
+                fallbackContentLength: fallbackContent.length,
+                researchResultsCount: researchResults.length
+              }, 'Applied fallback synthesis instead of LLM enhancement');
+            } else {
+              const enhancedContent = enhancementResult.data;
+              
+              // Validate enhanced content is not empty
+              if (!enhancedContent || enhancedContent.trim().length < 50) {
+                logger.warn({
+                  enhancedContentLength: enhancedContent?.length || 0,
+                  researchResultsCount: researchResults.length
+                }, 'Enhanced content is too short, using fallback synthesis');
+                
+                const fallbackContent = this.createFallbackSynthesis(decompositionRequest, researchResults);
+                researchResults.forEach(result => {
+                  result.content = fallbackContent;
+                  result.performance.enhancementTime = 0; // No enhancement time for fallback
+                });
+              } else {
+                // Apply enhancement to all research results
+                researchResults.forEach(result => {
+                  result.content = enhancedContent;
+                  result.performance.enhancementTime = result.performance.enhancementTime || 0;
+                  result.performance.apiCalls = (result.performance.apiCalls || 1) + (1 / researchResults.length); // Distribute single enhancement call
+                });
+
+                logger.info({
+                  aggregatedContentLength: aggregatedContent.length,
+                  enhancedContentLength: enhancedContent.length,
+                  researchResultsCount: researchResults.length
+                }, 'Applied single aggregated research enhancement');
+              }
+            }
+          }
+        } catch (error) {
+          logger.warn({ 
+            err: error, 
+            researchResultsCount: researchResults.length 
+          }, 'Aggregated research enhancement failed, proceeding with raw results');
         }
       }
 
@@ -969,7 +1081,7 @@ Return only the queries, one per line, without numbering or formatting.
         metadata: {
           query: request.query,
           timestamp: startTime,
-          model: this.openRouterConfig.perplexityModel || 'perplexity/sonar-deep-research',
+          model: await this.getModelForTask('research_query'),
           qualityScore: qualityAssessment.qualityScore,
           relevanceScore: qualityAssessment.relevanceScore,
           completenessScore: qualityAssessment.completenessScore,
@@ -1607,6 +1719,112 @@ Always provide clear recommendations and highlight potential risks or challenges
         value: String(error)
       };
     }
+  }
+
+  /**
+   * Build aggregated enhancement prompt for multiple research results
+   */
+  private buildAggregatedEnhancementPrompt(
+    decompositionRequest: TaskDecompositionRequest,
+    aggregatedContent: string
+  ): string {
+    return `
+# Aggregated Research Enhancement Request
+
+## Task Context
+- **Task Description**: ${decompositionRequest.taskDescription}
+- **Domain**: ${decompositionRequest.domain || 'General'}
+- **Project Path**: ${decompositionRequest.projectPath || 'Not specified'}
+
+## Research Content to Enhance
+${aggregatedContent}
+
+## Enhancement Requirements
+Please enhance the above aggregated research content by:
+
+1. **Synthesizing Information**: Combine and synthesize information from all research sections
+2. **Removing Duplicates**: Eliminate redundant information across sections
+3. **Structuring Content**: Organize into clear, logical sections
+4. **Adding Context**: Provide task-specific context and relevance
+5. **Extracting Insights**: Identify key insights, patterns, and actionable recommendations
+6. **Technical Focus**: Emphasize technical implementation details and best practices
+7. **Practical Application**: Relate findings to the specific task decomposition context
+
+## Output Format
+Provide a well-structured, enhanced research summary that will be used for task decomposition planning.
+
+**IMPORTANT**: Your response must be substantial and informative. Do not return empty content, spaces, or minimal responses. Provide at least 500 words of meaningful, enhanced research content.
+`.trim();
+  }
+
+  /**
+   * Get system prompt for aggregated research enhancement
+   */
+  private getAggregatedResearchSystemPrompt(decompositionRequest: TaskDecompositionRequest): string {
+    return `You are an expert research analyst specializing in software development and technical project planning.
+
+Your role is to enhance and synthesize research content for task decomposition. You excel at:
+- Combining multiple research sources into coherent insights
+- Identifying patterns and best practices across different information sources  
+- Extracting actionable technical recommendations
+- Organizing complex information into clear, structured formats
+- Relating research findings to specific project contexts
+
+Context: This enhanced research will be used to improve task decomposition for "${decompositionRequest.taskDescription}" in the ${decompositionRequest.domain || 'software development'} domain.
+
+Provide a comprehensive, well-organized enhancement that synthesizes all provided research into a single, highly valuable resource for technical planning and task decomposition.`;
+  }
+
+  /**
+   * Get model for specific task using centralized configuration manager
+   */
+  private async getModelForTask(taskName: string): Promise<string> {
+    try {
+      const configManager = OpenRouterConfigManager.getInstance();
+      return await configManager.getLLMModel(taskName);
+    } catch (error) {
+      logger.warn({ err: error, taskName }, 'Failed to get model from centralized config, using fallback');
+      return this.openRouterConfig?.perplexityModel || 'perplexity/sonar';
+    }
+  }
+
+  /**
+   * Create fallback synthesis when LLM enhancement fails
+   */
+  private createFallbackSynthesis(
+    decompositionRequest: TaskDecompositionRequest,
+    researchResults: EnhancedResearchResult[]
+  ): string {
+    const taskDescription = decompositionRequest.taskDescription;
+    const domain = decompositionRequest.domain || 'software development';
+    
+    // Extract key information from research results
+    const allKeyFindings = researchResults.flatMap(r => r.insights?.keyFindings || []);
+    const allRecommendations = researchResults.flatMap(r => r.insights?.recommendations || []);
+    const allActionItems = researchResults.flatMap(r => r.insights?.actionItems || []);
+    
+    // Create basic synthesis
+    return `# Research Synthesis for ${taskDescription}
+
+## Context
+This research synthesis supports task decomposition in the ${domain} domain.
+
+## Key Findings
+${allKeyFindings.length > 0 ? allKeyFindings.slice(0, 10).map((finding, i) => `${i + 1}. ${finding}`).join('\n') : 'No specific findings available from research.'}
+
+## Recommendations  
+${allRecommendations.length > 0 ? allRecommendations.slice(0, 8).map((rec, i) => `${i + 1}. ${rec}`).join('\n') : 'Standard best practices should be followed.'}
+
+## Action Items
+${allActionItems.length > 0 ? allActionItems.slice(0, 8).map((item, i) => `${i + 1}. ${item}`).join('\n') : 'Follow standard development workflows.'}
+
+## Implementation Guidance
+- Focus on breaking down "${taskDescription}" into atomic, executable tasks
+- Consider ${domain} best practices and patterns
+- Ensure proper testing and validation at each step
+- Plan for iterative development and feedback cycles
+
+*Note: This is a fallback synthesis generated when advanced research enhancement was unavailable.*`;
   }
 }
 

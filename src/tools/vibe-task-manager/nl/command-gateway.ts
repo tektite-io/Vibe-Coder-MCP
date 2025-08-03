@@ -319,8 +319,28 @@ export class CommandGateway {
       case 'decompose_task':
         return this.validateDecomposeTask(intent, context, normalizedParams, errors, warnings, suggestions);
 
+      case 'decompose_epic':
+        return this.validateDecomposeEpic(intent, context, normalizedParams, errors, warnings, suggestions);
+
       case 'decompose_project':
         return this.validateDecomposeProject(intent, context, normalizedParams, errors, warnings, suggestions);
+
+      case 'search_files':
+        return this.validateSearchFiles(intent, context, normalizedParams, errors, warnings, suggestions);
+
+      case 'search_content':
+        return this.validateSearchContent(intent, context, normalizedParams, errors, warnings, suggestions);
+
+      case 'parse_prd':
+      case 'parse_tasks':
+      case 'import_artifact':
+        return this.validateArtifactOperation(intent, context, normalizedParams, errors, warnings, suggestions);
+
+      case 'update_project':
+        return this.validateUpdateProject(intent, context, normalizedParams, errors, warnings, suggestions);
+
+      case 'assign_task':
+        return this.validateAssignTask(intent, context, normalizedParams, errors, warnings, suggestions);
 
       default:
         errors.push(`Unsupported intent: ${intent.intent}`);
@@ -601,6 +621,49 @@ export class CommandGateway {
   }
 
   /**
+   * Validate decompose epic command
+   */
+  private validateDecomposeEpic(
+    intent: RecognizedIntent,
+    context: CommandContext,
+    params: Record<string, unknown>,
+    errors: string[],
+    warnings: string[],
+    suggestions: string[]
+  ): ValidationResult {
+    // Check for epic ID in various forms
+    const hasEpicId = params.epicId || params.epicTitle;
+
+    if (!hasEpicId) {
+      errors.push('Epic ID or epic title is required for decomposition');
+      suggestions.push('Try: "Decompose epic E001" or "Break down the authentication epic"');
+    } else {
+      // Normalize epic identifier
+      if (params.epicTitle && !params.epicId) {
+        warnings.push('Epic title provided, will attempt to resolve to epic ID');
+      }
+    }
+
+    // Validate decomposition scope if provided
+    if (params.decompositionScope) {
+      const validScopes = ['development tasks', 'implementation steps', 'technical tasks', 'all aspects'];
+      const scope = String(params.decompositionScope).toLowerCase();
+      if (!validScopes.some(validScope => scope.includes(validScope))) {
+        warnings.push('Decomposition scope may be too broad or unclear');
+        suggestions.push('Consider specifying: development tasks, implementation steps, or technical tasks');
+      }
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors,
+      warnings,
+      suggestions,
+      normalizedParams: params
+    };
+  }
+
+  /**
    * Validate decompose project command
    */
   private validateDecomposeProject(
@@ -636,6 +699,382 @@ export class CommandGateway {
       if (details.length > 1000) {
         warnings.push('Decomposition details are very long, may affect processing performance');
       }
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors,
+      warnings,
+      suggestions,
+      normalizedParams: params
+    };
+  }
+
+  /**
+   * Validate search files command
+   */
+  private validateSearchFiles(
+    intent: RecognizedIntent,
+    context: CommandContext,
+    params: Record<string, unknown>,
+    errors: string[],
+    warnings: string[],
+    suggestions: string[]
+  ): ValidationResult {
+    // Search pattern is required
+    if (!params.searchPattern && !params.fileName) {
+      errors.push('Search pattern or file name is required');
+      suggestions.push('Try: "Search for *.js files" or "Find config files"');
+    } else {
+      // Normalize search pattern
+      if (params.searchPattern) {
+        params.searchPattern = String(params.searchPattern).trim();
+        
+        // Validate search pattern format
+        if (String(params.searchPattern).length < 2) {
+          warnings.push('Search pattern is very short, may return too many results');
+        }
+      }
+      
+      if (params.fileName) {
+        params.fileName = String(params.fileName).trim();
+      }
+    }
+
+    // Validate file extensions if provided
+    if (params.fileExtensions) {
+      const extensions = Array.isArray(params.fileExtensions) 
+        ? params.fileExtensions 
+        : [params.fileExtensions];
+      
+      params.fileExtensions = extensions.map(ext => 
+        String(ext).startsWith('.') ? String(ext) : `.${ext}`
+      );
+    }
+
+    // Set default search directory if not provided
+    if (!params.searchDirectory) {
+      params.searchDirectory = context.currentProject || '.';
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors,
+      warnings,
+      suggestions,
+      normalizedParams: params
+    };
+  }
+
+  /**
+   * Validate search content command
+   */
+  private validateSearchContent(
+    intent: RecognizedIntent,
+    context: CommandContext,
+    params: Record<string, unknown>,
+    errors: string[],
+    warnings: string[],
+    suggestions: string[]
+  ): ValidationResult {
+    // Search query is required
+    if (!params.searchQuery) {
+      errors.push('Search query is required');
+      suggestions.push('Try: "Search content for authentication" or "Find code containing API"');
+    } else {
+      // Normalize search query
+      params.searchQuery = String(params.searchQuery).trim();
+      
+      // Validate search query length
+      if (String(params.searchQuery).length < 3) {
+        warnings.push('Search query is very short, may return too many results');
+        suggestions.push('Consider using a more specific search term');
+      }
+    }
+
+    // Validate regex pattern if provided
+    if (params.useRegex && params.regexPattern) {
+      try {
+        new RegExp(String(params.regexPattern));
+        params.regexPattern = String(params.regexPattern);
+      } catch {
+        errors.push('Invalid regular expression pattern');
+        suggestions.push('Check your regex syntax or use simple text search');
+      }
+    }
+
+    // Validate case sensitivity option
+    if (params.caseSensitive !== undefined) {
+      params.caseSensitive = Boolean(params.caseSensitive);
+    } else {
+      params.caseSensitive = false; // Default to case insensitive
+    }
+
+    // Set default search directory if not provided
+    if (!params.searchDirectory) {
+      params.searchDirectory = context.currentProject || '.';
+    }
+
+    // Validate file extensions if provided
+    if (params.fileExtensions) {
+      const extensions = Array.isArray(params.fileExtensions) 
+        ? params.fileExtensions 
+        : [params.fileExtensions];
+      
+      params.fileExtensions = extensions.map(ext => 
+        String(ext).startsWith('.') ? String(ext) : `.${ext}`
+      );
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors,
+      warnings,
+      suggestions,
+      normalizedParams: params
+    };
+  }
+
+  /**
+   * Validate artifact processing commands (parse_prd, parse_tasks, import_artifact)
+   */
+  private validateArtifactOperation(
+    intent: RecognizedIntent,
+    context: CommandContext,
+    params: Record<string, unknown>,
+    errors: string[],
+    warnings: string[],
+    suggestions: string[]
+  ): ValidationResult {
+    // Project name is required for all artifact operations
+    if (!params.projectName) {
+      errors.push('Project name is required for artifact operations');
+      suggestions.push('Try: "Parse PRD for project MyApp" or "Import tasks for PID-001"');
+    } else {
+      params.projectName = String(params.projectName).trim();
+    }
+
+    // File path or artifact content is required
+    if (!params.filePath && !params.artifactContent && !params.artifactData) {
+      if (intent.intent === 'parse_prd') {
+        errors.push('PRD file path or content is required');
+        suggestions.push('Try: "Parse PRD from requirements.md" or provide PRD content');
+      } else if (intent.intent === 'parse_tasks') {
+        errors.push('Task list file path or content is required');
+        suggestions.push('Try: "Parse tasks from todo.md" or provide task list content');
+      } else if (intent.intent === 'import_artifact') {
+        errors.push('Artifact file path or content is required');
+        suggestions.push('Try: "Import artifact from data.json" or provide artifact content');
+      }
+    } else {
+      // Validate file path if provided
+      if (params.filePath) {
+        params.filePath = String(params.filePath).trim();
+        
+        // Basic file path validation
+        if (!String(params.filePath).includes('.')) {
+          warnings.push('File path may be missing extension');
+        }
+        
+        // Validate file extension for specific artifact types
+        const filePath = String(params.filePath).toLowerCase();
+        if (intent.intent === 'parse_prd') {
+          if (!filePath.endsWith('.md') && !filePath.endsWith('.txt') && !filePath.endsWith('.doc')) {
+            warnings.push('PRD files are typically .md, .txt, or .doc files');
+          }
+        } else if (intent.intent === 'parse_tasks') {
+          if (!filePath.endsWith('.md') && !filePath.endsWith('.txt') && !filePath.endsWith('.json')) {
+            warnings.push('Task list files are typically .md, .txt, or .json files');
+          }
+        }
+      }
+      
+      // Normalize artifact content if provided
+      if (params.artifactContent) {
+        params.artifactContent = String(params.artifactContent).trim();
+        if (String(params.artifactContent).length < 10) {
+          warnings.push('Artifact content seems very short');
+        }
+      }
+    }
+
+    // Validate artifact type if specified
+    if (params.artifactType) {
+      const validTypes = ['prd', 'requirements', 'tasks', 'todo', 'specifications', 'documentation'];
+      const artifactType = String(params.artifactType).toLowerCase();
+      if (!validTypes.includes(artifactType)) {
+        warnings.push(`Artifact type '${artifactType}' may not be recognized`);
+        suggestions.push(`Consider using: ${validTypes.join(', ')}`);
+      }
+      params.artifactType = artifactType;
+    } else {
+      // Set default artifact type based on intent
+      if (intent.intent === 'parse_prd') {
+        params.artifactType = 'prd';
+      } else if (intent.intent === 'parse_tasks') {
+        params.artifactType = 'tasks';
+      }
+    }
+
+    // Validate parsing options
+    if (params.parseOptions) {
+      const options = params.parseOptions as Record<string, unknown>;
+      
+      // Validate extract tasks option
+      if (options.extractTasks !== undefined) {
+        options.extractTasks = Boolean(options.extractTasks);
+      }
+      
+      // Validate extract requirements option
+      if (options.extractRequirements !== undefined) {
+        options.extractRequirements = Boolean(options.extractRequirements);
+      }
+      
+      // Validate preserve structure option
+      if (options.preserveStructure !== undefined) {
+        options.preserveStructure = Boolean(options.preserveStructure);
+      }
+      
+      params.parseOptions = options;
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors,
+      warnings,
+      suggestions,
+      normalizedParams: params
+    };
+  }
+
+  /**
+   * Validate update project command
+   */
+  private validateUpdateProject(
+    intent: RecognizedIntent,
+    context: CommandContext,
+    params: Record<string, unknown>,
+    errors: string[],
+    warnings: string[],
+    suggestions: string[]
+  ): ValidationResult {
+    // Project name is required
+    if (!params.projectName) {
+      errors.push('Project name is required for update operation');
+      suggestions.push('Try: "Update project MyApp status to completed"');
+    } else {
+      params.projectName = String(params.projectName).trim();
+    }
+
+    // At least one update parameter should be provided
+    const updateableFields = ['status', 'priority', 'description', 'assignee', 'deadline'];
+    const hasUpdates = updateableFields.some(field => params[field] !== undefined);
+    
+    if (!hasUpdates) {
+      warnings.push('No specific updates provided, will prompt for changes');
+      suggestions.push('Try specifying what to update: status, priority, description, assignee, or deadline');
+    }
+
+    // Validate status if provided
+    if (params.status) {
+      const validStatuses = ['pending', 'in_progress', 'completed', 'blocked', 'cancelled'];
+      const status = String(params.status).toLowerCase().replace(/\s+/g, '_');
+      if (!validStatuses.includes(status)) {
+        errors.push(`Invalid status: ${params.status}`);
+        suggestions.push(`Valid statuses: ${validStatuses.join(', ')}`);
+      } else {
+        params.status = status;
+      }
+    }
+
+    // Validate priority if provided
+    if (params.priority) {
+      const validPriorities = ['low', 'medium', 'high', 'critical'];
+      const priority = String(params.priority).toLowerCase();
+      if (!validPriorities.includes(priority)) {
+        warnings.push(`Priority '${params.priority}' may not be recognized`);
+        suggestions.push(`Valid priorities: ${validPriorities.join(', ')}`);
+      } else {
+        params.priority = priority;
+      }
+    }
+
+    // Validate assignee if provided
+    if (params.assignee) {
+      params.assignee = String(params.assignee).trim();
+      if (String(params.assignee).length < 2) {
+        warnings.push('Assignee name seems very short');
+      }
+    }
+
+    // Normalize description if provided
+    if (params.description) {
+      params.description = String(params.description).trim();
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors,
+      warnings,
+      suggestions,
+      normalizedParams: params
+    };
+  }
+
+  /**
+   * Validate assign task command
+   */
+  private validateAssignTask(
+    intent: RecognizedIntent,
+    context: CommandContext,
+    params: Record<string, unknown>,
+    errors: string[],
+    warnings: string[],
+    suggestions: string[]
+  ): ValidationResult {
+    // Task identifier is required
+    if (!params.taskId && !params.taskTitle) {
+      errors.push('Task ID or title is required for assignment');
+      suggestions.push('Try: "Assign task T-001 to John" or "Assign authentication task to Sarah"');
+    } else {
+      if (params.taskId) {
+        params.taskId = String(params.taskId).trim();
+      }
+      if (params.taskTitle) {
+        params.taskTitle = String(params.taskTitle).trim();
+        warnings.push('Task title provided, will attempt to resolve to task ID');
+      }
+    }
+
+    // Assignee is required
+    if (!params.assignee) {
+      errors.push('Assignee is required for task assignment');
+      suggestions.push('Try: "Assign task to John" or "Assign to team-frontend"');
+    } else {
+      params.assignee = String(params.assignee).trim();
+      
+      // Validate assignee format
+      if (String(params.assignee).length < 2) {
+        errors.push('Assignee name is too short');
+      }
+      
+      // Check for common assignee patterns
+      const assignee = String(params.assignee).toLowerCase();
+      if (assignee.includes('team-') || assignee.includes('group-')) {
+        warnings.push('Assigning to a team/group - ensure the team exists');
+      }
+    }
+
+    // Validate assignment options
+    if (params.force !== undefined) {
+      params.force = Boolean(params.force);
+    } else {
+      params.force = false;
+    }
+
+    // Validate reassignment scenario
+    if (context.currentTask && params.taskId === context.currentTask) {
+      warnings.push('Task may already be assigned, use force option if needed');
     }
 
     return {
@@ -749,6 +1188,17 @@ export class CommandGateway {
         };
         break;
 
+      case 'decompose_epic':
+        toolParams.command = 'decompose';
+        toolParams.epicId = normalizedParams.epicId || normalizedParams.epicTitle;
+        toolParams.description = normalizedParams.description;
+        toolParams.options = {
+          scope: normalizedParams.decompositionScope,
+          details: normalizedParams.decompositionDetails,
+          force: normalizedParams.force || false
+        };
+        break;
+
       case 'decompose_project':
         toolParams.command = 'decompose';
         toolParams.projectName = normalizedParams.projectName;
@@ -757,6 +1207,108 @@ export class CommandGateway {
           scope: normalizedParams.decompositionScope,
           details: normalizedParams.decompositionDetails,
           force: normalizedParams.force || false
+        };
+        break;
+
+      case 'open_project':
+        toolParams.command = 'open';
+        toolParams.projectName = normalizedParams.projectName;
+        toolParams.options = {};
+        break;
+
+      case 'update_project':
+        toolParams.command = 'update';
+        toolParams.projectName = normalizedParams.projectName;
+        toolParams.updates = normalizedParams.updates || {};
+        toolParams.options = {};
+        break;
+
+      case 'search_files':
+        toolParams.command = 'search';
+        toolParams.searchType = 'files';
+        toolParams.searchPattern = normalizedParams.searchPattern || normalizedParams.fileName;
+        toolParams.options = {
+          directory: normalizedParams.searchDirectory,
+          extensions: normalizedParams.fileExtensions,
+          recursive: true
+        };
+        break;
+
+      case 'search_content':
+        toolParams.command = 'search';
+        toolParams.searchType = 'content';
+        toolParams.searchQuery = normalizedParams.searchQuery;
+        toolParams.options = {
+          directory: normalizedParams.searchDirectory,
+          extensions: normalizedParams.fileExtensions,
+          useRegex: normalizedParams.useRegex || false,
+          caseSensitive: normalizedParams.caseSensitive || false,
+          regexPattern: normalizedParams.regexPattern
+        };
+        break;
+
+      case 'parse_prd':
+        toolParams.command = 'parse';
+        toolParams.artifactType = 'prd';
+        toolParams.projectName = normalizedParams.projectName;
+        toolParams.filePath = normalizedParams.filePath;
+        toolParams.artifactContent = normalizedParams.artifactContent;
+        toolParams.options = normalizedParams.parseOptions || {};
+        break;
+
+      case 'parse_tasks':
+        toolParams.command = 'parse';
+        toolParams.artifactType = 'tasks';
+        toolParams.projectName = normalizedParams.projectName;
+        toolParams.filePath = normalizedParams.filePath;
+        toolParams.artifactContent = normalizedParams.artifactContent;
+        toolParams.options = normalizedParams.parseOptions || {};
+        break;
+
+      case 'import_artifact':
+        toolParams.command = 'import';
+        toolParams.artifactType = normalizedParams.artifactType || 'generic';
+        toolParams.projectName = normalizedParams.projectName;
+        toolParams.filePath = normalizedParams.filePath;
+        toolParams.artifactContent = normalizedParams.artifactContent;
+        toolParams.options = normalizedParams.parseOptions || {};
+        break;
+
+      case 'assign_task':
+        toolParams.command = 'assign';
+        toolParams.taskId = normalizedParams.taskId || normalizedParams.taskTitle;
+        toolParams.assignee = normalizedParams.assignee;
+        toolParams.options = {
+          force: normalizedParams.force || false
+        };
+        break;
+
+      case 'refine_task':
+        toolParams.command = 'refine';
+        toolParams.taskId = normalizedParams.taskId || normalizedParams.taskTitle;
+        toolParams.refinements = normalizedParams.description || normalizedParams.refinements;
+        toolParams.options = {
+          scope: normalizedParams.refinementScope
+        };
+        break;
+
+      case 'get_help':
+        toolParams.command = 'help';
+        toolParams.topic = normalizedParams.helpTopic || normalizedParams.topic;
+        toolParams.options = {
+          detailed: true
+        };
+        break;
+
+      case 'unrecognized_intent':
+      case 'clarification_needed':
+      case 'unknown':
+        toolParams.command = 'fallback';
+        toolParams.originalInput = normalizedParams.originalInput;
+        toolParams.suggestions = normalizedParams.suggestions || [];
+        toolParams.options = {
+          intent: intent.intent,
+          confidence: intent.confidence
         };
         break;
 

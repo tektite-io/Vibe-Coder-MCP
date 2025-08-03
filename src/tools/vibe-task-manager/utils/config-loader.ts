@@ -13,6 +13,7 @@ import {
   validateAllEnvironmentVariables
 } from './config-defaults.js';
 import logger from '../../../logger.js';
+import { getProjectRootSafe, logWorkingDirectorySafety } from '../../../utils/safe-path-resolver.js';
 import { getProjectRoot } from '../../code-map-generator/utils/pathUtils.enhanced.js';
 
 /**
@@ -116,6 +117,14 @@ export interface VibeTaskManagerConfig {
       initialDelayMs: number;
       maxDelayMs: number;
       enableExponentialBackoff: boolean;
+    };
+    // RDD Engine Configuration
+    rddConfig: {
+      maxDepth: number;
+      maxSubTasks: number;
+      minConfidence: number;
+      enableParallelDecomposition: boolean;
+      epicTimeLimit: number;
     };
     // Performance optimization settings
     performance: {
@@ -453,6 +462,14 @@ export class ConfigLoader {
             initialDelayMs: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_INITIAL_DELAY_MS),
             maxDelayMs: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_MAX_DELAY_MS),
             enableExponentialBackoff: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_ENABLE_EXPONENTIAL_BACKOFF)
+          },
+          // RDD Engine Configuration
+          rddConfig: {
+            maxDepth: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_RDD_MAX_DEPTH),
+            maxSubTasks: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_RDD_MAX_SUB_TASKS),
+            minConfidence: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_RDD_MIN_CONFIDENCE),
+            enableParallelDecomposition: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_RDD_ENABLE_PARALLEL_DECOMPOSITION),
+            epicTimeLimit: getEnvironmentValue(ENVIRONMENT_VARIABLES.VIBE_RDD_EPIC_TIME_LIMIT)
           },
           // Enhanced performance optimization for <50ms target
           performance: {
@@ -824,6 +841,54 @@ export function getVibeTaskManagerOutputDir(): string {
 }
 
 /**
+ * Runtime validation result for security configuration
+ */
+interface SecurityConfigValidationResult {
+  readonly isValid: boolean;
+  readonly errors: readonly string[];
+  readonly warnings: readonly string[];
+  readonly extractedConfig: Partial<VibeTaskManagerSecurityConfig>;
+}
+
+/**
+ * Validates extracted security configuration with strict type checking
+ */
+function validateExtractedSecurityConfig(
+  extractedConfig: Partial<VibeTaskManagerSecurityConfig>
+): SecurityConfigValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  // Validate allowedReadDirectory
+  if (!extractedConfig.allowedReadDirectory) {
+    errors.push('allowedReadDirectory is required');
+  } else if (typeof extractedConfig.allowedReadDirectory !== 'string') {
+    errors.push('allowedReadDirectory must be a string');
+  }
+
+  // Validate allowedWriteDirectory
+  if (!extractedConfig.allowedWriteDirectory) {
+    errors.push('allowedWriteDirectory is required');
+  } else if (typeof extractedConfig.allowedWriteDirectory !== 'string') {
+    errors.push('allowedWriteDirectory must be a string');
+  }
+
+  // Validate securityMode
+  if (extractedConfig.securityMode && 
+      extractedConfig.securityMode !== 'strict' && 
+      extractedConfig.securityMode !== 'permissive') {
+    errors.push('securityMode must be either "strict" or "permissive"');
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors: errors as readonly string[],
+    warnings: warnings as readonly string[],
+    extractedConfig
+  };
+}
+
+/**
  * Extracts and validates the Vibe Task Manager security configuration from the MCP client config.
  * This follows the same pattern as the Code Map Generator's extractCodeMapConfig function.
  * @param config The OpenRouter configuration object from MCP client
@@ -834,55 +899,115 @@ export function extractVibeTaskManagerSecurityConfig(config?: OpenRouterConfig):
   // Create a base security configuration object
   let securityConfig: Partial<VibeTaskManagerSecurityConfig> = {};
 
+  // Enhanced extraction logic to handle actual MCP client config structure
   if (config) {
-    // Try to extract from tools['vibe-task-manager'] first
-    const toolConfig = config.tools?.['vibe-task-manager'] as Partial<VibeTaskManagerSecurityConfig> | undefined;
+    // First try to extract from config.env (MCP client environment variables)
+    if (config.env) {
+      logger.debug({
+        configEnv: config.env,
+        hasReadDir: Boolean(config.env.VIBE_TASK_MANAGER_READ_DIR),
+        hasWriteDir: Boolean(config.env.VIBE_CODER_OUTPUT_DIR),
+        hasSecurityMode: Boolean(config.env.VIBE_TASK_MANAGER_SECURITY_MODE)
+      }, 'Extracting security config from MCP client environment variables');
 
-    // If not found, try config['vibe-task-manager']
-    const configSection = config.config?.['vibe-task-manager'] as Partial<VibeTaskManagerSecurityConfig> | undefined;
-
-    // Merge configurations if they exist
-    if (toolConfig || configSection) {
       securityConfig = {
-        ...configSection,
-        ...toolConfig,
+        allowedReadDirectory: config.env.VIBE_TASK_MANAGER_READ_DIR,
+        allowedWriteDirectory: config.env.VIBE_CODER_OUTPUT_DIR,
+        securityMode: (config.env.VIBE_TASK_MANAGER_SECURITY_MODE || 'strict') as 'strict' | 'permissive'
       };
+    }
+
+    // Fallback: Try to extract from tools['vibe-task-manager'] (legacy support)
+    if (!securityConfig.allowedReadDirectory || !securityConfig.allowedWriteDirectory) {
+      const toolConfig = config.tools?.['vibe-task-manager'] as Partial<VibeTaskManagerSecurityConfig> | undefined;
+      const configSection = config.config?.['vibe-task-manager'] as Partial<VibeTaskManagerSecurityConfig> | undefined;
+
+      if (toolConfig || configSection) {
+        logger.debug({
+          toolConfig,
+          configSection
+        }, 'Using legacy tool config extraction as fallback');
+
+        securityConfig = {
+          ...configSection,
+          ...toolConfig,
+          ...securityConfig // Preserve any values from env extraction
+        };
+      }
     }
   }
 
-  // Even if no config is provided, we'll try to use environment variables
-  logger.debug(`Extracted vibe-task-manager security config: ${JSON.stringify(securityConfig)}`);
+  logger.debug({
+    extractedSecurityConfig: securityConfig,
+    hasConfig: Boolean(config),
+    hasEnv: Boolean(config?.env),
+    configKeys: config ? Object.keys(config) : []
+  }, 'Extracted vibe-task-manager security config');
 
-  // Validate and apply defaults with environment variable fallbacks
-  const allowedReadDirectory = securityConfig.allowedReadDirectory ||
-                               process.env.VIBE_TASK_MANAGER_READ_DIR ||
-                               process.cwd();
+  // SECURITY CHECK: Log working directory safety before path resolution
+  logWorkingDirectorySafety();
 
-  const allowedWriteDirectory = securityConfig.allowedWriteDirectory ||
-                                process.env.VIBE_CODER_OUTPUT_DIR ||
-                                path.join(process.cwd(), 'VibeCoderOutput');
+  // Apply environment variable fallbacks with SAFE path resolution
+  const allowedReadDirectory: string = securityConfig.allowedReadDirectory ||
+                                      process.env.VIBE_TASK_MANAGER_READ_DIR ||
+                                      getProjectRootSafe(); // SECURITY FIX: Use safe project root
 
-  const securityMode = (securityConfig.securityMode ||
-                       process.env.VIBE_TASK_MANAGER_SECURITY_MODE ||
-                       'strict') as 'strict' | 'permissive';
+  const allowedWriteDirectory: string = securityConfig.allowedWriteDirectory ||
+                                       process.env.VIBE_CODER_OUTPUT_DIR ||
+                                       path.join(getProjectRootSafe(), 'VibeCoderOutput'); // SECURITY FIX: Use safe project root
 
-  // Validate that directories are provided
-  if (!allowedReadDirectory) {
-    throw new Error('allowedReadDirectory is required in the configuration, VIBE_TASK_MANAGER_READ_DIR environment variable, or defaults to current working directory');
+  const securityMode: 'strict' | 'permissive' = (securityConfig.securityMode ||
+                                                process.env.VIBE_TASK_MANAGER_SECURITY_MODE ||
+                                                'strict') as 'strict' | 'permissive';
+
+  // Create final configuration for validation
+  const finalConfig: VibeTaskManagerSecurityConfig = {
+    allowedReadDirectory,
+    allowedWriteDirectory,
+    securityMode
+  };
+
+  // Runtime validation
+  const validation = validateExtractedSecurityConfig(finalConfig);
+  if (!validation.isValid) {
+    const errorMessage = `Security configuration validation failed: ${validation.errors.join(', ')}`;
+    logger.error({
+      errors: validation.errors,
+      warnings: validation.warnings,
+      config: finalConfig
+    }, errorMessage);
+    throw new Error(errorMessage);
   }
 
-  if (!allowedWriteDirectory) {
-    throw new Error('allowedWriteDirectory is required in the configuration, VIBE_CODER_OUTPUT_DIR environment variable, or defaults to VibeCoderOutput');
+  // Log warnings if any
+  if (validation.warnings.length > 0) {
+    logger.warn({
+      warnings: validation.warnings
+    }, 'Security configuration has warnings');
   }
 
-  // Resolve paths to absolute paths
-  const resolvedReadDir = path.resolve(allowedReadDirectory);
-  const resolvedWriteDir = path.resolve(allowedWriteDirectory);
+  // Resolve paths to absolute paths with proper error handling
+  let resolvedReadDir: string;
+  let resolvedWriteDir: string;
+
+  try {
+    resolvedReadDir = path.resolve(allowedReadDirectory);
+    resolvedWriteDir = path.resolve(allowedWriteDirectory);
+  } catch (pathError) {
+    const errorMessage = `Failed to resolve security configuration paths: ${pathError instanceof Error ? pathError.message : String(pathError)}`;
+    logger.error({
+      allowedReadDirectory,
+      allowedWriteDirectory,
+      pathError
+    }, errorMessage);
+    throw new Error(errorMessage);
+  }
 
   logger.info({
     allowedReadDirectory: resolvedReadDir,
     allowedWriteDirectory: resolvedWriteDir,
-    securityMode
+    securityMode,
+    extractionSource: config?.env ? 'MCP client env' : 'process env fallback'
   }, 'Vibe Task Manager security configuration extracted from MCP client config');
 
   return {

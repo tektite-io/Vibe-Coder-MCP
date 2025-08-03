@@ -207,7 +207,11 @@ export class XMLFormatter {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;')
-      .split("").filter(char => char.charCodeAt(0) >= 32 || [9, 10, 13].includes(char.charCodeAt(0))).join(""); // Remove control characters
+      .split("").filter(char => {
+        const code = char.charCodeAt(0);
+        // Keep printable characters (32-126) and specific whitespace (tab, newline, carriage return)
+        return (code >= 32 && code <= 126) || [9, 10, 13].includes(code);
+      }).join(""); // Remove control characters
   }
 
   /**

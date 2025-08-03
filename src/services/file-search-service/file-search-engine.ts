@@ -2,6 +2,8 @@
  * File Search Engine - Core implementation
  *
  * High-performance file search with multiple strategies and caching.
+ * Uses streaming iterators for memory-efficient processing of large codebases
+ * without file count limitations.
  */
 
 import fs from 'fs/promises';
@@ -14,7 +16,8 @@ import {
   SearchMetrics,
   SearchStrategy,
   FuzzyMatcher,
-  GlobMatcher
+  GlobMatcher,
+  PriorityQueue
 } from './search-strategies.js';
 
 /**
@@ -132,42 +135,98 @@ export class FileSearchService {
   }
 
   /**
+   * Generic streaming search for filename-based strategies
+   * 
+   * Memory-efficient implementation that:
+   * - Processes files one at a time using async iterators
+   * - Maintains only top N results in memory via priority queue
+   * - Filters files during traversal for optimal performance
+   * - Removes previous 500-file limitation
+   * 
+   * Memory complexity: O(maxResults) instead of O(all files)
+   */
+  private async streamingSearch(
+    projectPath: string,
+    strategy: SearchStrategy,
+    options: FileSearchOptions
+  ): Promise<FileSearchResult[]> {
+    // Early validation based on strategy
+    const pattern = options.pattern || options.glob || '';
+    if (!pattern && strategy !== 'content') return [];
+    
+    // Create priority queue to maintain top results
+    const maxResults = options.maxResults || 100;
+    const resultQueue = new PriorityQueue<FileSearchResult>(
+      (a, b) => b.score - a.score, // Higher scores first
+      maxResults * 2 // Keep 2x to ensure best results after final limit
+    );
+    
+    // Set up file filtering
+    const excludeDirs = new Set([
+      'node_modules',
+      '.git',
+      'dist',
+      'build',
+      '.next',
+      'coverage',
+      ...(options.excludeDirs || [])
+    ]);
+    
+    const fileTypes = options.fileTypes ? new Set(options.fileTypes) : null;
+    
+    // Stream through files and evaluate
+    let filesProcessed = 0;
+    for await (const filePath of this.scanDirectoryIterator(
+      projectPath,
+      excludeDirs,
+      fileTypes
+    )) {
+      filesProcessed++;
+      
+      // Evaluate file against search criteria
+      const result = await this.evaluateFile(filePath, strategy, options, projectPath);
+      
+      if (result) {
+        // Only add if score is high enough for current queue
+        const minScore = resultQueue.getMinScore(r => r.score);
+        if (minScore === undefined || result.score >= minScore) {
+          resultQueue.add(result);
+        }
+      }
+      
+      // Log progress periodically
+      if (filesProcessed % 1000 === 0) {
+        logger.debug({ 
+          filesProcessed, 
+          queueSize: resultQueue.size,
+          strategy 
+        }, 'Streaming search progress');
+      }
+    }
+    
+    logger.debug({ 
+      filesProcessed, 
+      resultsFound: resultQueue.size,
+      strategy 
+    }, 'Streaming search completed');
+    
+    // Update metrics for integration with searchFiles
+    this.searchMetrics.filesScanned = filesProcessed;
+    
+    // Get final results and apply limit
+    const results = resultQueue.toArray().slice(0, maxResults);
+    
+    return results;
+  }
+
+  /**
    * Fuzzy file name search
    */
   private async fuzzySearch(
     projectPath: string,
     options: FileSearchOptions
   ): Promise<FileSearchResult[]> {
-    const pattern = options.pattern || '';
-    if (!pattern) return [];
-
-    const files = await this.collectFiles(projectPath, options);
-    const results: FileSearchResult[] = [];
-    const minScore = options.minScore || 0.3;
-
-    for (const filePath of files) {
-      const fileName = path.basename(filePath);
-      const score = FuzzyMatcher.calculateScore(
-        pattern,
-        fileName,
-        options.caseSensitive || false
-      );
-
-      if (score >= minScore) {
-        results.push({
-          filePath,
-          score,
-          matchType: 'fuzzy',
-          relevanceFactors: [`Fuzzy match score: ${score.toFixed(2)}`],
-          metadata: await this.getFileMetadata(filePath)
-        });
-      }
-    }
-
-    // Sort by score descending
-    results.sort((a, b) => b.score - a.score);
-
-    return this.limitResults(results, options.maxResults);
+    return this.streamingSearch(projectPath, 'fuzzy', options);
   }
 
   /**
@@ -177,33 +236,7 @@ export class FileSearchService {
     projectPath: string,
     options: FileSearchOptions
   ): Promise<FileSearchResult[]> {
-    const pattern = options.pattern || '';
-    if (!pattern) return [];
-
-    const files = await this.collectFiles(projectPath, options);
-    const results: FileSearchResult[] = [];
-    const searchPattern = options.caseSensitive ? pattern : pattern.toLowerCase();
-
-    for (const filePath of files) {
-      const fileName = path.basename(filePath);
-      const searchTarget = options.caseSensitive ? fileName : fileName.toLowerCase();
-
-      if (searchTarget.includes(searchPattern)) {
-        const score = searchTarget === searchPattern ? 1.0 : 0.8;
-        results.push({
-          filePath,
-          score,
-          matchType: 'exact',
-          relevanceFactors: ['Exact name match'],
-          metadata: await this.getFileMetadata(filePath)
-        });
-      }
-    }
-
-    // Sort by score descending
-    results.sort((a, b) => b.score - a.score);
-
-    return this.limitResults(results, options.maxResults);
+    return this.streamingSearch(projectPath, 'exact', options);
   }
 
   /**
@@ -213,27 +246,7 @@ export class FileSearchService {
     projectPath: string,
     options: FileSearchOptions
   ): Promise<FileSearchResult[]> {
-    const globPattern = options.glob || options.pattern || '';
-    if (!globPattern) return [];
-
-    const files = await this.collectFiles(projectPath, options);
-    const results: FileSearchResult[] = [];
-
-    for (const filePath of files) {
-      const relativePath = path.relative(projectPath, filePath);
-
-      if (GlobMatcher.matches(globPattern, relativePath)) {
-        results.push({
-          filePath,
-          score: 1.0,
-          matchType: 'glob',
-          relevanceFactors: [`Matches glob pattern: ${globPattern}`],
-          metadata: await this.getFileMetadata(filePath)
-        });
-      }
-    }
-
-    return this.limitResults(results, options.maxResults);
+    return this.streamingSearch(projectPath, 'glob', options);
   }
 
   /**
@@ -243,33 +256,106 @@ export class FileSearchService {
     projectPath: string,
     options: FileSearchOptions
   ): Promise<FileSearchResult[]> {
+    // Validate regex pattern first
     const pattern = options.pattern || '';
     if (!pattern) return [];
-
+    
     try {
-      const regex = new RegExp(pattern, options.caseSensitive ? 'g' : 'gi');
-      const files = await this.collectFiles(projectPath, options);
-      const results: FileSearchResult[] = [];
-
-      for (const filePath of files) {
-        const fileName = path.basename(filePath);
-
-        if (regex.test(fileName)) {
-          results.push({
-            filePath,
-            score: 0.9,
-            matchType: 'name',
-            relevanceFactors: [`Matches regex: ${pattern}`],
-            metadata: await this.getFileMetadata(filePath)
-          });
-        }
-      }
-
-      return this.limitResults(results, options.maxResults);
-
+      new RegExp(pattern, options.caseSensitive ? 'g' : 'gi'); // Test validity
+      return this.streamingSearch(projectPath, 'regex', options);
     } catch (error) {
       logger.error({ err: error, pattern }, 'Invalid regex pattern');
       return [];
+    }
+  }
+
+  /**
+   * Streaming content search iterator
+   * Processes files one at a time, reading contents only when needed
+   */
+  private async *contentSearchIterator(
+    projectPath: string,
+    options: FileSearchOptions
+  ): AsyncGenerator<FileSearchResult> {
+    const contentPattern = options.content || options.pattern || '';
+    if (!contentPattern) return;
+    
+    const maxFileSize = options.maxFileSize || 1024 * 1024; // 1MB default
+    
+    // Set up file filtering
+    const excludeDirs = new Set([
+      'node_modules',
+      '.git',
+      'dist',
+      'build',
+      '.next',
+      'coverage',
+      ...(options.excludeDirs || [])
+    ]);
+    
+    const fileTypes = options.fileTypes ? new Set(options.fileTypes) : null;
+    
+    // Create regex for content search
+    let regex: RegExp;
+    try {
+      regex = new RegExp(contentPattern, options.caseSensitive ? 'g' : 'gi');
+    } catch (error) {
+      logger.error({ err: error, pattern: contentPattern }, 'Invalid content search pattern');
+      return;
+    }
+    
+    // Stream through files
+    for await (const filePath of this.scanDirectoryIterator(
+      projectPath,
+      excludeDirs,
+      fileTypes
+    )) {
+      try {
+        const stats = await fs.stat(filePath);
+        
+        // Skip large files
+        if (stats.size > maxFileSize) continue;
+        
+        // Read file content
+        const content = await fs.readFile(filePath, 'utf-8');
+        const lines = content.split('\n');
+        const matchingLines: number[] = [];
+        let preview = '';
+        
+        // Search for pattern in content
+        lines.forEach((line, index) => {
+          // Reset regex lastIndex for global flag
+          regex.lastIndex = 0;
+          if (regex.test(line)) {
+            matchingLines.push(index + 1);
+            if (!preview && line.trim()) {
+              preview = line.trim().substring(0, 100);
+            }
+          }
+        });
+        
+        // Yield result if matches found
+        if (matchingLines.length > 0) {
+          yield {
+            filePath,
+            score: Math.min(0.8 + (matchingLines.length * 0.01), 1.0), // More matches = higher score
+            matchType: 'content',
+            lineNumbers: matchingLines,
+            preview: options.includeContent ? preview : undefined,
+            relevanceFactors: [`Found ${matchingLines.length} content matches`],
+            metadata: {
+              size: stats.size,
+              lastModified: stats.mtime,
+              extension: path.extname(filePath).toLowerCase()
+            }
+          };
+        }
+        
+      } catch (error) {
+        // Skip files that can't be read
+        logger.debug({ err: error, filePath }, 'Could not read file for content search');
+        continue;
+      }
     }
   }
 
@@ -282,62 +368,44 @@ export class FileSearchService {
   ): Promise<FileSearchResult[]> {
     const contentPattern = options.content || options.pattern || '';
     if (!contentPattern) return [];
-
-    const files = await this.collectFiles(projectPath, options);
-    const results: FileSearchResult[] = [];
-    const maxFileSize = options.maxFileSize || 1024 * 1024; // 1MB default
-
-    for (const filePath of files) {
-      try {
-        const stats = await fs.stat(filePath);
-
-        // Skip large files
-        if (stats.size > maxFileSize) continue;
-
-        const content = await fs.readFile(filePath, 'utf-8');
-        const lines = content.split('\n');
-        const matchingLines: number[] = [];
-        let preview = '';
-
-        // Search for pattern in content
-        const regex = new RegExp(
-          contentPattern,
-          options.caseSensitive ? 'g' : 'gi'
-        );
-
-        lines.forEach((line, index) => {
-          if (regex.test(line)) {
-            matchingLines.push(index + 1);
-            if (!preview) {
-              preview = line.trim().substring(0, 100);
-            }
-          }
-        });
-
-        if (matchingLines.length > 0) {
-          results.push({
-            filePath,
-            score: 0.8,
-            matchType: 'content',
-            lineNumbers: matchingLines,
-            preview: options.includeContent ? preview : undefined,
-            relevanceFactors: [`Found ${matchingLines.length} content matches`],
-            metadata: await this.getFileMetadata(filePath)
-          });
-        }
-
-      } catch (error) {
-        // Skip files that can't be read
-        logger.debug({ err: error, filePath }, 'Could not read file for content search');
-        continue;
+    
+    // Create priority queue for results
+    const maxResults = options.maxResults || 100;
+    const resultQueue = new PriorityQueue<FileSearchResult>(
+      (a, b) => b.score - a.score,
+      maxResults * 2
+    );
+    
+    // Process content search results
+    let filesProcessed = 0;
+    for await (const result of this.contentSearchIterator(projectPath, options)) {
+      filesProcessed++;
+      resultQueue.add(result);
+      
+      // Log progress periodically
+      if (filesProcessed % 100 === 0) {
+        logger.debug({ 
+          filesProcessed, 
+          resultsFound: resultQueue.size 
+        }, 'Content search progress');
       }
     }
-
-    return this.limitResults(results, options.maxResults);
+    
+    logger.debug({ 
+      filesProcessed, 
+      resultsFound: resultQueue.size 
+    }, 'Content search completed');
+    
+    // Update metrics for integration with searchFiles
+    this.searchMetrics.filesScanned = filesProcessed;
+    
+    // Return final results
+    return resultQueue.toArray().slice(0, maxResults);
   }
 
   /**
    * Collect files from project directory
+   * Now uses streaming iterator without file limits
    */
   private async collectFiles(
     projectPath: string,
@@ -356,24 +424,33 @@ export class FileSearchService {
 
     const fileTypes = options.fileTypes ? new Set(options.fileTypes) : null;
 
-    await this.scanDirectory(projectPath, files, excludeDirs, fileTypes, 0);
+    // Use streaming iterator to collect all files without limits
+    for await (const filePath of this.scanDirectoryIterator(
+      projectPath,
+      excludeDirs,
+      fileTypes
+    )) {
+      files.push(filePath);
+    }
 
     this.searchMetrics.filesScanned = files.length;
     return files;
   }
 
+
   /**
-   * Recursively scan directory for files with security checks
+   * Asynchronously iterate through directory files
+   * Yields file paths one at a time for memory efficiency
    */
-  private async scanDirectory(
+  private async *scanDirectoryIterator(
     dirPath: string,
-    files: string[],
     excludeDirs: Set<string>,
     fileTypes: Set<string> | null,
-    depth: number
-  ): Promise<void> {
+    depth: number = 0,
+    maxDepth: number = 25
+  ): AsyncGenerator<string> {
     // Prevent infinite recursion
-    if (depth > 25) return;
+    if (depth > maxDepth) return;
 
     try {
       // Import and use filesystem security
@@ -401,7 +478,14 @@ export class FileSearchService {
         if (entry.isDirectory()) {
           // Skip excluded directories
           if (!excludeDirs.has(entry.name)) {
-            await this.scanDirectory(fullPath, files, excludeDirs, fileTypes, depth + 1);
+            // Recursively yield from subdirectory
+            yield* this.scanDirectoryIterator(
+              fullPath, 
+              excludeDirs, 
+              fileTypes, 
+              depth + 1, 
+              maxDepth
+            );
           }
         } else if (entry.isFile()) {
           // Additional security check for files
@@ -416,7 +500,8 @@ export class FileSearchService {
             if (!fileTypes.has(ext)) continue;
           }
 
-          files.push(fullPath);
+          // Yield the file path
+          yield fullPath;
         }
       }
     } catch (error) {
@@ -432,6 +517,112 @@ export class FileSearchService {
       } else {
         logger.debug({ err: error, dirPath }, 'Could not read directory');
       }
+    }
+  }
+
+  /**
+   * Evaluate a single file against search criteria
+   * Returns a search result if the file matches, null otherwise
+   */
+  private async evaluateFile(
+    filePath: string,
+    strategy: SearchStrategy,
+    options: FileSearchOptions,
+    projectPath: string
+  ): Promise<FileSearchResult | null> {
+    const fileName = path.basename(filePath);
+    
+    switch (strategy) {
+      case 'fuzzy': {
+        const pattern = options.pattern || '';
+        if (!pattern) return null;
+        
+        const score = FuzzyMatcher.calculateScore(
+          pattern,
+          fileName,
+          options.caseSensitive || false
+        );
+        
+        const minScore = options.minScore || 0.3;
+        if (score >= minScore) {
+          return {
+            filePath,
+            score,
+            matchType: 'fuzzy',
+            relevanceFactors: [`Fuzzy match score: ${score.toFixed(2)}`],
+            metadata: await this.getFileMetadata(filePath)
+          };
+        }
+        return null;
+      }
+      
+      case 'exact': {
+        const pattern = options.pattern || '';
+        if (!pattern) return null;
+        
+        const searchPattern = options.caseSensitive ? pattern : pattern.toLowerCase();
+        const searchTarget = options.caseSensitive ? fileName : fileName.toLowerCase();
+        
+        if (searchTarget.includes(searchPattern)) {
+          const score = searchTarget === searchPattern ? 1.0 : 0.8;
+          return {
+            filePath,
+            score,
+            matchType: 'exact',
+            relevanceFactors: ['Exact name match'],
+            metadata: await this.getFileMetadata(filePath)
+          };
+        }
+        return null;
+      }
+      
+      case 'glob': {
+        const globPattern = options.glob || options.pattern || '';
+        if (!globPattern) return null;
+        
+        const relativePath = path.relative(projectPath, filePath);
+        
+        if (GlobMatcher.matches(globPattern, relativePath)) {
+          return {
+            filePath,
+            score: 1.0,
+            matchType: 'glob',
+            relevanceFactors: [`Matches glob pattern: ${globPattern}`],
+            metadata: await this.getFileMetadata(filePath)
+          };
+        }
+        return null;
+      }
+      
+      case 'regex': {
+        const pattern = options.pattern || '';
+        if (!pattern) return null;
+        
+        try {
+          const regex = new RegExp(pattern, options.caseSensitive ? 'g' : 'gi');
+          if (regex.test(fileName)) {
+            return {
+              filePath,
+              score: 0.9,
+              matchType: 'name',
+              relevanceFactors: [`Matches regex: ${pattern}`],
+              metadata: await this.getFileMetadata(filePath)
+            };
+          }
+        } catch (error) {
+          logger.error({ err: error, pattern }, 'Invalid regex pattern');
+        }
+        return null;
+      }
+      
+      case 'content': {
+        // Content search requires reading the file, handled separately
+        // This method only handles filename-based strategies
+        return null;
+      }
+      
+      default:
+        return null;
     }
   }
 

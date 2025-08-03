@@ -2,13 +2,14 @@ import path from 'path';
 import { EventEmitter } from 'events';
 import { RDDEngine, DecompositionResult, RDDConfig } from '../core/rdd-engine.js';
 import { ProjectContext } from '../types/project-context.js';
-import { AtomicTask } from '../types/task.js';
+import type { AtomicTask } from '../types/task.js';
 import { OpenRouterConfig } from '../../../types/workflow.js';
 import { getVibeTaskManagerOutputDir } from '../utils/config-loader.js';
 import { ContextEnrichmentService, ContextRequest } from './context-enrichment-service.js';
 import { AutoResearchDetector } from './auto-research-detector.js';
 import { ResearchIntegration } from '../integrations/research-integration.js';
 import { ResearchTriggerContext } from '../types/research-types.js';
+import { CodeMapIntegrationService } from '../integrations/code-map-integration.js';
 import { getTaskOperations } from '../core/operations/task-operations.js';
 import {
   EnhancedError,
@@ -23,10 +24,17 @@ import type {
 } from '../types/artifact-types.js';
 import type { TaskType } from '../types/task.js';
 import { TaskOperations } from '../core/operations/task-operations.js';
-import { WorkflowStateManager, WorkflowPhase, WorkflowState } from './workflow-state-manager.js';
+import { 
+  WorkflowStateManager, 
+  WorkflowPhase, 
+  WorkflowState,
+  resolveWorkflowIdWithMapping
+} from './workflow-state-manager.js';
 import { DecompositionSummaryGenerator, SummaryConfig } from './decomposition-summary-generator.js';
 import { getDependencyGraph, OptimizedDependencyGraph, DependencySuggestion } from '../core/dependency-graph.js';
 import { ProgressTracker, ProgressEventData } from './progress-tracker.js';
+import { JobManagerIntegrationService } from '../integrations/job-manager-integration.js';
+import { ProgressJobBridge } from '../integrations/progress-job-bridge.js';
 
 /**
  * Base interface for all decomposition events
@@ -46,6 +54,9 @@ export interface DecompositionEventData {
 export interface DecompositionStartedEvent extends DecompositionEventData {
   maxDepth: number;
   hasCustomConfig: boolean;
+  // NEW: Add stdio communication bridge fields
+  originalSessionId?: string; // Original stdio sessionId for progress bridge
+  jobId?: string; // JobId for job manager updates
 }
 
 /**
@@ -55,6 +66,9 @@ export interface DecompositionProgressEvent extends DecompositionEventData {
   progress: number;
   step: string;
   phase: string;
+  // NEW: Add stdio communication bridge fields
+  originalSessionId?: string; // Original stdio sessionId for progress bridge
+  jobId?: string; // JobId for job manager updates
 }
 
 /**
@@ -69,6 +83,9 @@ export interface DecompositionCompletedEvent extends DecompositionEventData {
   };
   duration: number;
   status: 'completed';
+  // NEW: Add stdio communication bridge fields
+  originalSessionId?: string; // Original stdio sessionId for progress bridge
+  jobId?: string; // JobId for job manager updates
 }
 
 /**
@@ -183,6 +200,7 @@ export interface DecompositionRequest {
   config?: Partial<RDDConfig>;
   sessionId?: string;
   agentId?: string;
+  originalJobId?: string; // Optional original job ID for progress updates
 }
 
 /**
@@ -196,9 +214,11 @@ export class DecompositionService extends EventEmitter {
   private contextService: ContextEnrichmentService;
   private autoResearchDetector: AutoResearchDetector;
   private researchIntegrationService: ResearchIntegration;
+  private codeMapIntegrationService: CodeMapIntegrationService;
   private workflowStateManager: WorkflowStateManager;
   private summaryGenerator: DecompositionSummaryGenerator;
   private dependencyGraphs: Map<string, OptimizedDependencyGraph> = new Map();
+  private jobManagerIntegration: JobManagerIntegrationService;
 
   constructor(config: OpenRouterConfig, summaryConfig?: Partial<SummaryConfig>) {
     super(); // Initialize EventEmitter
@@ -207,6 +227,7 @@ export class DecompositionService extends EventEmitter {
     this.contextService = ContextEnrichmentService.getInstance();
     this.autoResearchDetector = AutoResearchDetector.getInstance();
     this.researchIntegrationService = ResearchIntegration.getInstance();
+    this.codeMapIntegrationService = CodeMapIntegrationService.getInstance();
 
     // Use absolute path for workflow state persistence
     const outputDir = getVibeTaskManagerOutputDir();
@@ -214,6 +235,245 @@ export class DecompositionService extends EventEmitter {
     this.workflowStateManager = WorkflowStateManager.getInstance(workflowStatesDir);
 
     this.summaryGenerator = new DecompositionSummaryGenerator(summaryConfig);
+    this.jobManagerIntegration = JobManagerIntegrationService.getInstance();
+    
+    // Initialize progress-job bridge for seamless event integration
+    ProgressJobBridge.getInstance({
+      enableProgressMapping: true,
+      enableResourceTracking: true,
+      progressUpdateThreshold: 5,
+      debounceMs: 500
+    });
+
+    // Initialize progress tracker for sub-phase integration
+    this.initializeProgressTrackerIntegration();
+  }
+
+  /**
+   * Create enhanced job for decomposition with job manager integration
+   */
+  async createDecompositionJob(
+    request: DecompositionRequest,
+    toolName: string = 'vibe-task-manager'
+  ): Promise<string> {
+    try {
+      // If originalJobId is provided, use it instead of creating a new job
+      if (request.originalJobId) {
+        logger.info({
+          originalJobId: request.originalJobId,
+          taskId: request.task.id,
+          projectId: request.task.projectId,
+          sessionId: request.sessionId
+        }, 'Using original job ID for decomposition progress tracking');
+
+        return request.originalJobId;
+      }
+
+      // Create new enhanced job only if no original job ID provided
+      const jobId = await this.jobManagerIntegration.createTaskJob(
+        toolName,
+        {
+          taskId: request.task.id,
+          projectId: request.task.projectId,
+          sessionId: request.sessionId,
+          operation: 'decomposition'
+        },
+        {
+          taskId: request.task.id,
+          projectId: request.task.projectId || request.context.projectId,
+          operationType: 'decomposition',
+          priority: request.task.priority === 'critical' ? 'critical' :
+                   request.task.priority === 'high' ? 'high' :
+                   request.task.priority === 'low' ? 'low' : 'medium',
+          estimatedDuration: (request.task.estimatedHours || 1) * 60 * 60 * 1000, // Convert hours to milliseconds
+          resourceRequirements: {
+            memoryMB: 512, // Decomposition can be memory intensive
+            cpuWeight: 2   // Medium CPU usage
+          },
+          metadata: {
+            sessionId: request.sessionId,
+            batchId: request.sessionId,
+            retryCount: 0,
+            maxRetries: 3
+          }
+        }
+      );
+
+      logger.info({
+        jobId,
+        taskId: request.task.id,
+        projectId: request.task.projectId,
+        sessionId: request.sessionId
+      }, 'Enhanced decomposition job created');
+
+      return jobId;
+    } catch (error) {
+      logger.error({
+        err: error,
+        taskId: request.task.id,
+        sessionId: request.sessionId
+      }, 'Failed to create enhanced decomposition job');
+      throw error;
+    }
+  }
+
+  /**
+   * Update job progress for enhanced job manager integration
+   */
+  private async updateJobProgress(
+    jobId: string,
+    progress: number,
+    message?: string,
+    resourceUsage?: { peakMemoryMB?: number; averageCpuUsage?: number }
+  ): Promise<void> {
+    try {
+      await this.jobManagerIntegration.updateJobProgress(
+        jobId,
+        progress,
+        message,
+        resourceUsage
+      );
+    } catch (error) {
+      logger.debug({
+        err: error,
+        jobId,
+        progress
+      }, 'Failed to update job progress - continuing with operation');
+    }
+  }
+
+  /**
+   * Initialize integration between ProgressTracker and WorkflowStateManager sub-phases
+   */
+  private initializeProgressTrackerIntegration(): void {
+    const progressTracker = ProgressTracker.getInstance();
+
+    // Map progress tracker events to workflow sub-phases
+    const eventToSubPhaseMap: Record<string, { phase: WorkflowPhase; subPhase: string }> = {
+      'research_triggered': { phase: WorkflowPhase.DECOMPOSITION, subPhase: 'research' },
+      'research_completed': { phase: WorkflowPhase.DECOMPOSITION, subPhase: 'research' },
+      'context_gathering_started': { phase: WorkflowPhase.DECOMPOSITION, subPhase: 'context_gathering' },
+      'context_gathering_completed': { phase: WorkflowPhase.DECOMPOSITION, subPhase: 'context_gathering' },
+      'decomposition_progress': { phase: WorkflowPhase.DECOMPOSITION, subPhase: 'decomposition' },
+      'validation_started': { phase: WorkflowPhase.DECOMPOSITION, subPhase: 'validation' },
+      'validation_completed': { phase: WorkflowPhase.DECOMPOSITION, subPhase: 'validation' },
+      'dependency_detection_started': { phase: WorkflowPhase.DECOMPOSITION, subPhase: 'dependency_detection' },
+      'dependency_detection_completed': { phase: WorkflowPhase.DECOMPOSITION, subPhase: 'dependency_detection' }
+    };
+
+    // Subscribe to progress events and update workflow sub-phases
+    Object.entries(eventToSubPhaseMap).forEach(([eventType, mapping]) => {
+      progressTracker.addEventListener(eventType as 'decomposition_progress', (data) => {
+        this.handleProgressEventForSubPhase(data, mapping.phase, mapping.subPhase, eventType);
+      });
+    });
+
+    logger.debug('ProgressTracker integration initialized for workflow sub-phases');
+  }
+
+  /**
+   * Handle progress tracker events and update workflow sub-phases
+   */
+  private handleProgressEventForSubPhase(
+    data: ProgressEventData,
+    phase: WorkflowPhase,
+    subPhase: string,
+    eventType: string
+  ): void {
+    try {
+      // Use enhanced ID resolution with subtask-to-parent mapping
+      const workflowIdResult = resolveWorkflowIdWithMapping(data as unknown as { taskId?: string; metadata?: Record<string, unknown>; [key: string]: unknown });
+      if (!workflowIdResult.success) {
+        logger.debug({
+          eventType,
+          phase,
+          subPhase,
+          error: workflowIdResult.error
+        }, 'Skipping progress event - workflow ID resolution failed');
+        return; // Skip if no workflow ID available
+      }
+      
+      const workflowId = workflowIdResult.data;
+
+      // FIXED: Validate workflow phase exists before attempting to update sub-phase progress
+      const workflowExists = this.workflowStateManager.hasWorkflow(workflowId);
+      if (!workflowExists) {
+        logger.debug({
+          workflowId,
+          eventType,
+          phase,
+          subPhase
+        }, 'Skipping progress event - workflow not found');
+        return;
+      }
+
+      const phaseExists = this.workflowStateManager.hasPhase(workflowId, phase);
+      if (!phaseExists) {
+        logger.debug({
+          workflowId,
+          eventType,
+          phase,
+          subPhase
+        }, 'Skipping progress event - workflow phase not found, may be in initialization');
+        return;
+      }
+
+      // Determine progress and state based on event type
+      let progress = data.progressPercentage || 0;
+      let state: WorkflowState | undefined;
+
+      if (eventType.includes('started') || eventType.includes('triggered')) {
+        state = WorkflowState.IN_PROGRESS;
+        progress = Math.max(progress, 10); // Minimum 10% when started
+      } else if (eventType.includes('completed')) {
+        state = WorkflowState.COMPLETED;
+        progress = 100;
+      } else if (eventType.includes('progress')) {
+        state = WorkflowState.IN_PROGRESS;
+        progress = Math.max(progress, 20); // Ensure some progress for ongoing activities
+      }
+
+      // Update workflow sub-phase with graceful error handling
+      this.workflowStateManager.updateSubPhaseProgress(
+        workflowId,
+        phase,
+        subPhase,
+        progress,
+        state,
+        {
+          lastProgressEvent: eventType,
+          eventTimestamp: data.timestamp,
+          componentName: data.componentName,
+          message: data.message
+        }
+      ).then(result => {
+        if (!result.success) {
+          logger.debug({
+            error: result.error,
+            workflowId,
+            phase,
+            subPhase,
+            eventType
+          }, 'Failed to update workflow sub-phase from progress event');
+        }
+      }).catch(error => {
+        logger.debug({
+          err: error,
+          workflowId,
+          phase,
+          subPhase,
+          eventType
+        }, 'Unexpected error updating workflow sub-phase from progress event');
+      });
+
+    } catch (error) {
+      logger.debug({
+        err: error,
+        eventType,
+        phase,
+        subPhase
+      }, 'Error handling progress event for sub-phase');
+    }
   }
 
   /**
@@ -377,6 +637,24 @@ export class DecompositionService extends EventEmitter {
         }
       );
 
+      // CRITICAL: Also initialize workflow for the parent task ID to support subtask mapping
+      // When RDD engine creates subtasks like task-123-atomic-01, they map back to task-123
+      // This ensures the parent task workflow exists for proper subtask resolution
+      if (request.task.id !== sessionId) {
+        await this.workflowStateManager.initializeWorkflow(
+          request.task.id,
+          sessionId, // Use session as parent session
+          request.context.projectId,
+          {
+            taskId: request.task.id,
+            taskTitle: `Parent workflow for ${request.task.title}`,
+            maxDepth: request.config?.maxDepth || 5,
+            isParentTaskWorkflow: true, // Mark as parent task workflow
+            originalSessionId: sessionId // Reference back to main session
+          }
+        );
+      }
+
       // Complete initialization phase before starting decomposition
       // First transition to in_progress
       await this.workflowStateManager.transitionWorkflow(
@@ -411,9 +689,15 @@ export class DecompositionService extends EventEmitter {
         timestamp: new Date(),
         maxDepth: request.config?.maxDepth || 5,
         hasCustomConfig: !!request.config,
+        // NEW: Add stdio communication bridge fields
+        originalSessionId: request.sessionId,
+        jobId: sessionId,
         metadata: {
           taskTitle: request.task.title,
-          taskType: request.task.type
+          taskType: request.task.type,
+          // Add jobId and sessionId to metadata for workflow ID resolution
+          jobId: request.originalJobId || sessionId,
+          sessionId: request.sessionId
         }
       };
       this.emit('decomposition_started', startedEvent);
@@ -432,7 +716,8 @@ export class DecompositionService extends EventEmitter {
       }, 'EventEmitter: decomposition_started event emitted');
 
       // Start decomposition asynchronously with enhanced error handling
-      setTimeout(() => {
+      // FIXED: Remove setTimeout race condition - use setImmediate for proper async scheduling
+      setImmediate(() => {
         this.executeDecomposition(session, request).catch(error => {
           const errorMessage = error instanceof EnhancedError
             ? error.message
@@ -457,7 +742,7 @@ export class DecompositionService extends EventEmitter {
             step: 'execution_failed'
           });
         });
-      }, 0);
+      });
 
       return session;
 
@@ -555,7 +840,11 @@ export class DecompositionService extends EventEmitter {
       );
 
       // Emit decomposition_progress event at 10%
-      this.emitProgressEvent(session, request, 10, 'decomposition_started', 'DECOMPOSITION');
+      this.emitProgressEvent(session, request, 10, 'decomposition_started', 'DECOMPOSITION', {
+        message: `Starting decomposition of task: ${request.task.title}`,
+        taskType: request.task.type,
+        taskId: request.task.id
+      });
 
       // Update engine configuration if provided
       if (request.config) {
@@ -575,10 +864,22 @@ export class DecompositionService extends EventEmitter {
       );
 
       // Emit decomposition_progress event at 20%
-      this.emitProgressEvent(session, request, 20, 'context_enrichment_completed', 'DECOMPOSITION');
+      this.emitProgressEvent(session, request, 20, 'context_enrichment_completed', 'DECOMPOSITION', {
+        message: 'Context enrichment completed - project structure and dependencies analyzed',
+        languages: enrichedContext.languages,
+        frameworks: enrichedContext.frameworks
+      });
 
-      // Perform decomposition
-      const result = await this.engine.decomposeTask(request.task, enrichedContext);
+      // Use epic-first decomposition for better task organization
+      logger.info({
+        sessionId: session.id,
+        taskId: request.task.id,
+        projectId: request.task.projectId,
+        method: 'decomposeTaskWithEpics'
+      }, 'Using epic-first decomposition approach');
+      
+      // Perform decomposition with epic-aware strategy
+      const result = await this.engine.decomposeTaskWithEpics(request.task, enrichedContext, 0);
       session.progress = 80;
 
       // Update workflow progress
@@ -596,7 +897,10 @@ export class DecompositionService extends EventEmitter {
       // Emit decomposition_progress event at 80%
       this.emitProgressEvent(session, request, 80, 'decomposition_completed', 'DECOMPOSITION', {
         decomposedTaskCount: result.subTasks?.length || 0,
-        isAtomic: result.isAtomic
+        isAtomic: result.isAtomic,
+        message: result.isAtomic 
+          ? 'Task is already atomic - no decomposition needed'
+          : `Successfully decomposed into ${result.subTasks?.length || 0} atomic tasks`
       });
 
       // Process results
@@ -615,6 +919,12 @@ export class DecompositionService extends EventEmitter {
           taskCount: result.subTasks.length
         }, 'Starting epic generation phase');
 
+        // Emit progress event for epic generation start
+        this.emitProgressEvent(session, request, 82, 'epic_generation_started', 'DECOMPOSITION', {
+          taskCount: result.subTasks.length,
+          message: `Starting epic identification for ${result.subTasks.length} tasks`
+        });
+
         // Emit epic_generation_started event
         const epicStartedEvent = {
           sessionId: session.id,
@@ -622,6 +932,8 @@ export class DecompositionService extends EventEmitter {
           taskId: session.taskId,
           agentId: request.agentId || 'unknown',
           timestamp: new Date(),
+          originalSessionId: request.sessionId, // Include original stdio sessionId
+          jobId: session.id, // Include jobId for job manager updates
           metadata: {
             taskCount: result.subTasks.length,
             phase: 'epic_generation' as const
@@ -651,6 +963,8 @@ export class DecompositionService extends EventEmitter {
             agentId: request.agentId || 'unknown',
             timestamp: new Date(),
             status: 'completed' as const,
+            originalSessionId: request.sessionId, // Include original stdio sessionId
+            jobId: session.id, // Include jobId for job manager updates
             metadata: {
               taskCount: result.subTasks.length,
               phase: 'epic_generation' as const,
@@ -680,6 +994,8 @@ export class DecompositionService extends EventEmitter {
             agentId: request.agentId || 'unknown',
             timestamp: new Date(),
             status: 'failed' as const,
+            originalSessionId: request.sessionId, // Include original stdio sessionId
+            jobId: session.id, // Include jobId for job manager updates
             metadata: {
               taskCount: result.subTasks.length,
               phase: 'epic_generation' as const,
@@ -703,10 +1019,41 @@ export class DecompositionService extends EventEmitter {
             error: epicFailedEvent.metadata.error,
             timestamp: epicFailedEvent.timestamp.toISOString()
           }, 'EventEmitter: epic_generation_completed event emitted (failure) - tasks will use fallback epic IDs');
+
+          // FIXED: Add proper fallback epic assignment when epic generation fails completely
+          logger.info({
+            sessionId: session.id,
+            projectId: session.projectId,
+            taskCount: result.subTasks.length
+          }, 'Applying fallback epic assignment after epic generation failure');
+
+          // Create a meaningful main epic as fallback instead of leaving scaffolding epics
+          const fallbackMainEpicId = `${session.projectId}-main-epic`;
+          for (const task of result.subTasks) {
+            task.epicId = fallbackMainEpicId;
+            logger.debug({
+              taskId: task.id,
+              taskTitle: task.title,
+              assignedEpicId: fallbackMainEpicId
+            }, 'Task assigned to fallback main epic after generation failure');
+          }
+
+          logger.info({
+            sessionId: session.id,
+            fallbackEpicId: fallbackMainEpicId,
+            tasksAssigned: result.subTasks.length
+          }, 'Fallback epic assignment completed - all tasks assigned to main epic');
         }
 
         // Persist decomposed tasks to storage
         session.progress = 85;
+        
+        // Emit progress event for task persistence start
+        this.emitProgressEvent(session, request, 85, 'task_persistence_started', 'DECOMPOSITION', {
+          taskCount: result.subTasks.length,
+          message: `Starting to persist ${result.subTasks.length} decomposed tasks`
+        });
+        
         const taskOps = getTaskOperations();
         const persistedTasks: AtomicTask[] = [];
         const taskFiles: string[] = [];
@@ -730,9 +1077,37 @@ export class DecompositionService extends EventEmitter {
             if (createResult.success && createResult.data) {
               persistedTasks.push(createResult.data);
               taskIdMapping.set(subTask.id, createResult.data.id); // Map original ID to new ID
+              
+              logger.info({
+                sessionId: session.id,
+                originalTaskId: subTask.id,
+                persistedTaskId: createResult.data.id,
+                taskTitle: subTask.title,
+                epicId: subTask.epicId,
+                projectId: session.projectId,
+                persistedCount: persistedTasks.length,
+                totalTasks: result.subTasks.length
+              }, 'Task successfully persisted to storage');
+              
+              // Emit progress for each persisted task
+              const taskProgress = 85 + (persistedTasks.length / result.subTasks.length) * 5; // 85-90%
+              this.emitProgressEvent(session, request, taskProgress, 'task_persisted', 'DECOMPOSITION', {
+                persistedCount: persistedTasks.length,
+                totalTasks: result.subTasks.length,
+                currentTask: subTask.title,
+                message: `Persisted task ${persistedTasks.length}/${result.subTasks.length}: ${subTask.title}`
+              });
+              
               if (createResult.data.filePaths && createResult.data.filePaths.length > 0) {
                 taskFiles.push(...createResult.data.filePaths);
               }
+            } else {
+              logger.error({
+                sessionId: session.id,
+                taskTitle: subTask.title,
+                originalTaskId: subTask.id,
+                error: createResult.error
+              }, 'Failed to persist task - createResult was not successful');
             }
           } catch (error) {
             logger.warn({
@@ -857,7 +1232,20 @@ export class DecompositionService extends EventEmitter {
         }, 'Starting dependency analysis for decomposed tasks');
 
         try {
-          await this.performDependencyAnalysis(session, result.subTasks);
+          // Emit progress event for dependency analysis start
+          this.emitProgressEvent(session, request, 90, 'dependency_analysis_started', 'DECOMPOSITION', {
+            taskCount: session.persistedTasks?.length || 0,
+            message: `Analyzing dependencies for ${session.persistedTasks?.length || 0} tasks`
+          });
+          
+          await this.performDependencyAnalysis(session, session.persistedTasks || []);
+          
+          // Emit progress event for dependency analysis completion
+          this.emitProgressEvent(session, request, 95, 'dependency_analysis_completed', 'DECOMPOSITION', {
+            taskCount: session.persistedTasks?.length || 0,
+            message: 'Dependency analysis completed successfully'
+          });
+          
           logger.info({
             sessionId: session.id
           }, 'Dependency analysis completed successfully');
@@ -959,10 +1347,16 @@ export class DecompositionService extends EventEmitter {
         },
         duration: session.endTime!.getTime() - session.startTime.getTime(),
         status: 'completed',
+        // NEW: Add stdio communication bridge fields
+        originalSessionId: request.sessionId,
+        jobId: session.id,
         metadata: {
           hasResearchContext: !!(session as DecompositionSession & { researchInsights?: unknown }).researchInsights,
           summaryGenerated: true,
-          orchestrationTriggered: true
+          orchestrationTriggered: true,
+          // Add jobId and sessionId to metadata for workflow ID resolution
+          jobId: request.originalJobId || session.id,
+          sessionId: request.sessionId
         }
       };
       this.emit('decomposition_completed', completedEvent);
@@ -1032,6 +1426,24 @@ export class DecompositionService extends EventEmitter {
         return context;
       }
 
+      // Skip context enrichment for simple tasks (under 30 minutes)
+      if (task.estimatedHours <= 0.5 && !task.description.toLowerCase().includes('complex')) {
+        logger.debug({ 
+          taskId: task.id, 
+          estimatedHours: task.estimatedHours 
+        }, 'Skipping context enrichment for simple task');
+        return context;
+      }
+
+      // Skip enrichment if context is already enriched (has codebaseContext)
+      if (context.codebaseContext && context.codebaseContext.relevantFiles.length > 0) {
+        logger.debug({ 
+          taskId: task.id,
+          existingFiles: context.codebaseContext.relevantFiles.length 
+        }, 'Context already enriched, skipping re-enrichment');
+        return context;
+      }
+
       // Determine project path from context or use current working directory
       const projectPath = this.getProjectPath(context); // Get from project configuration
 
@@ -1055,6 +1467,31 @@ export class DecompositionService extends EventEmitter {
 
       // Gather context using the context enrichment service
       const contextResult = await this.contextService.gatherContext(contextRequest);
+
+      // NEW: Code Map Integration - Generate code map for enhanced project understanding
+      let codeMapResult = null;
+      try {
+        logger.debug({ projectPath, taskId: task.id }, 'Refreshing code map for enhanced context');
+        codeMapResult = await this.codeMapIntegrationService.refreshCodeMap(projectPath);
+        
+        if (codeMapResult.success) {
+          logger.info({ 
+            taskId: task.id, 
+            codeMapPath: codeMapResult.filePath,
+            generationTime: codeMapResult.generationTime 
+          }, 'Code map generated successfully for context enrichment');
+        } else {
+          logger.warn({ 
+            taskId: task.id, 
+            error: codeMapResult.error 
+          }, 'Code map generation failed, continuing without code map context');
+        }
+      } catch (codeMapError) {
+        logger.warn({ 
+          err: codeMapError, 
+          taskId: task.id 
+        }, 'Code map generation error, continuing without code map context');
+      }
 
       // NEW: Auto-Research Triggering Integration
       // Evaluate if research is needed based on project type, task complexity, knowledge gaps, and domain requirements
@@ -1159,7 +1596,11 @@ export class DecompositionService extends EventEmitter {
           contextSummary,
           gatheringMetrics: contextResult.metrics,
           totalContextSize: contextResult.summary.totalSize,
-          averageRelevance: contextResult.summary.averageRelevance
+          averageRelevance: contextResult.summary.averageRelevance,
+          // Add code map information if available
+          codeMapPath: codeMapResult?.success ? codeMapResult.filePath : undefined,
+          codeMapGenerated: codeMapResult?.success || false,
+          codeMapGenerationTime: codeMapResult?.generationTime
         }
       };
 
@@ -1170,8 +1611,10 @@ export class DecompositionService extends EventEmitter {
         averageRelevance: contextResult.summary.averageRelevance,
         gatheringTime: contextResult.metrics.totalTime,
         hasResearchContext: !!(finalEnhancedContext as ProjectContext & { researchInsights?: unknown }).researchInsights,
-        autoResearchTriggered: researchEvaluation.decision.shouldTriggerResearch
-      }, 'Context enrichment completed with auto-research integration');
+        autoResearchTriggered: researchEvaluation.decision.shouldTriggerResearch,
+        codeMapGenerated: codeMapResult?.success || false,
+        codeMapGenerationTime: codeMapResult?.generationTime
+      }, 'Context enrichment completed with auto-research and code map integration');
 
       return finalEnhancedContext;
 
@@ -1201,16 +1644,37 @@ export class DecompositionService extends EventEmitter {
       progress,
       step,
       phase,
+      // NEW: Add original session context for stdio communication bridge
+      originalSessionId: request.sessionId, // Include original stdio sessionId
+      jobId: request.originalJobId || session.id, // Use original job ID for progress updates if available
       metadata: {
         currentDepth: session.currentDepth,
         maxDepth: session.maxDepth,
         totalTasks: session.totalTasks,
         processedTasks: session.processedTasks,
+        // Add jobId and sessionId to metadata for workflow ID resolution
+        jobId: request.originalJobId || session.id,
+        sessionId: request.sessionId,
         ...additionalMetadata
       }
     };
 
     this.emit('decomposition_progress', progressEvent);
+
+    // Update job manager progress if jobId is available
+    if (progressEvent.jobId) {
+      this.updateJobProgress(
+        progressEvent.jobId,
+        progress,
+        `${step} - ${phase}`,
+        {
+          peakMemoryMB: process.memoryUsage().heapUsed / 1024 / 1024, // Convert bytes to MB
+          averageCpuUsage: process.cpuUsage().user / 1000000 // Convert microseconds to percentage
+        }
+      ).catch(error => {
+        logger.debug({ err: error, jobId: progressEvent.jobId }, 'Failed to update job progress');
+      });
+    }
 
     logger.info({
       event: 'decomposition_progress',
@@ -1258,6 +1722,9 @@ export class DecompositionService extends EventEmitter {
         totalTasks: session.totalTasks,
         processedTasks: session.processedTasks,
         progress: session.progress,
+        // Add jobId and sessionId to metadata for workflow ID resolution
+        jobId: request.originalJobId || session.id,
+        sessionId: request.sessionId,
         ...additionalMetadata
       }
     };
@@ -1901,6 +2368,7 @@ export class DecompositionService extends EventEmitter {
           title: `Task List: ${taskList.metadata.projectName}`,
           description: `Task list decomposition for ${taskList.metadata.filePath}`,
           type: 'development',
+          functionalArea: 'data-management',
           status: 'in_progress',
           priority: 'medium',
           projectId,
@@ -2030,6 +2498,7 @@ export class DecompositionService extends EventEmitter {
               title: taskItem.title,
               description: taskItem.description,
               type: this.determineTaskType(taskItem),
+              functionalArea: 'data-management',
               status: 'pending',
               priority: taskItem.priority,
               projectId,
@@ -2127,6 +2596,7 @@ export class DecompositionService extends EventEmitter {
           title: `Task List: ${taskList.metadata.projectName}`,
           description: `Imported from task list: ${taskList.metadata.filePath}`,
           type: 'development',
+          functionalArea: 'data-management',
           status: 'pending',
           priority: 'medium',
           projectId,
@@ -2319,6 +2789,7 @@ export class DecompositionService extends EventEmitter {
           title: `Task List: ${taskList.metadata.projectName}`,
           description: `Task list decomposition for ${taskList.metadata.filePath}`,
           type: 'development',
+          functionalArea: 'data-management',
           status: 'failed',
           priority: 'medium',
           projectId,
@@ -3478,7 +3949,7 @@ Total Research Results: ${researchResults.length}`;
       const functionalAreaGroups = new Map<string, AtomicTask[]>();
       const unassignedTasks: AtomicTask[] = [];
 
-      // Analyze tasks and group by functional area
+      // Analyze tasks and group by functional area using async LLM-powered analysis
       for (const task of tasks) {
         const taskContext = {
           title: task.title,
@@ -3487,15 +3958,29 @@ Total Research Results: ${researchResults.length}`;
           tags: task.tags || []
         };
 
-        const functionalArea = contextResolver.extractFunctionalArea(taskContext);
+        // Use async method with LLM-powered PRD analysis
+        const functionalArea = await contextResolver.extractFunctionalArea(
+          taskContext, 
+          session.projectId, 
+          this.config
+        );
 
         if (functionalArea) {
           if (!functionalAreaGroups.has(functionalArea)) {
             functionalAreaGroups.set(functionalArea, []);
           }
           functionalAreaGroups.get(functionalArea)!.push(task);
+          logger.debug({
+            taskTitle: task.title,
+            functionalArea,
+            extractionMethod: 'llm_powered'
+          }, 'Task assigned to functional area using LLM analysis');
         } else {
           unassignedTasks.push(task);
+          logger.debug({
+            taskTitle: task.title,
+            reason: 'no_functional_area_detected'
+          }, 'Task could not be assigned to functional area');
         }
       }
 
@@ -3521,7 +4006,8 @@ Total Research Results: ${researchResults.length}`;
               description: areaTasks[0].description,
               type: areaTasks[0].type || 'development',
               tags: areaTasks[0].tags || []
-            }
+            },
+            config: this.config
           };
 
           const contextResult = await contextResolver.resolveEpicContext(resolverParams);
@@ -3544,15 +4030,29 @@ Total Research Results: ${researchResults.length}`;
           logger.warn({
             err: error,
             functionalArea,
-            taskCount: areaTasks.length
+            taskCount: areaTasks.length,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined
           }, 'Failed to resolve epic for functional area, using fallback');
 
-          // Fallback epic ID
-          const fallbackEpicId = `${session.projectId}-${functionalArea}-epic`;
+          // Create a fallback epic with better naming
+          const fallbackEpicId = `${session.projectId}-${functionalArea.replace(/[^a-zA-Z0-9]/g, '-')}-epic`;
           epicMapping.set(functionalArea, fallbackEpicId);
+
+          logger.info({
+            functionalArea,
+            fallbackEpicId,
+            taskCount: areaTasks.length,
+            projectId: session.projectId
+          }, 'Generated fallback epic ID for functional area');
 
           for (const task of areaTasks) {
             task.epicId = fallbackEpicId;
+            logger.debug({
+              taskTitle: task.title,
+              assignedEpicId: fallbackEpicId,
+              functionalArea
+            }, 'Task assigned to fallback epic');
           }
         }
       }
@@ -3567,7 +4067,8 @@ Total Research Results: ${researchResults.length}`;
               description: 'General project implementation tasks',
               type: 'development' as const,
               tags: ['main', 'general']
-            }
+            },
+            config: this.config
           };
 
           const contextResult = await contextResolver.resolveEpicContext(resolverParams);
@@ -3640,7 +4141,8 @@ Total Research Results: ${researchResults.length}`;
 
       const resolverParams = {
         projectId,
-        taskContext
+        taskContext,
+        config: this.config
       };
 
       const contextResult = await contextResolver.resolveEpicContext(resolverParams);

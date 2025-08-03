@@ -1,0 +1,133 @@
+{
+  "$schema": "./src/schemas/job-timeout-config.schema.json",
+  "description": "Job timeout configuration for MCP tools",
+  "version": "1.0.0",
+  
+  "defaults": {
+    "taskExecution": 300000,
+    "llmRequest": 60000,
+    "fileOperations": 10000,
+    "networkOperations": 20000,
+    "databaseOperations": 15000,
+    "taskDecomposition": 600000,
+    "recursiveTaskDecomposition": 720000,
+    "taskRefinement": 180000,
+    "agentCommunication": 30000
+  },
+  
+  "toolTimeouts": {
+    "generate-prd": {
+      "timeoutOperation": "llmRequest",
+      "customTimeoutMs": 120000,
+      "description": "PRD generation requires research and multiple LLM calls"
+    },
+    
+    "research-manager": {
+      "timeoutOperation": "networkOperations",
+      "customTimeoutMs": 180000,
+      "description": "Research queries can take longer due to external API calls"
+    },
+    
+    "map-codebase": {
+      "timeoutOperation": "fileOperations",
+      "customTimeoutMs": 300000,
+      "description": "Code mapping can be intensive for large codebases"
+    },
+    
+    "vibe-task-manager": {
+      "timeoutOperation": "taskExecution",
+      "customTimeoutMs": 600000,
+      "description": "Task management operations can involve complex decomposition"
+    },
+    
+    "curate-context": {
+      "timeoutOperation": "taskExecution",
+      "customTimeoutMs": 240000,
+      "description": "Context curation involves code analysis and LLM processing"
+    },
+    
+    "fullstack-starter-kit-generator": {
+      "timeoutOperation": "fileOperations",
+      "customTimeoutMs": 180000,
+      "description": "Generating starter kits involves many file operations"
+    },
+    
+    "user-stories-generator": {
+      "timeoutOperation": "llmRequest",
+      "customTimeoutMs": 90000,
+      "description": "User story generation with LLM"
+    },
+    
+    "task-list-generator": {
+      "timeoutOperation": "llmRequest",
+      "customTimeoutMs": 90000,
+      "description": "Task list generation with LLM"
+    },
+    
+    "rules-generator": {
+      "timeoutOperation": "llmRequest",
+      "customTimeoutMs": 60000,
+      "description": "Rules generation is typically faster"
+    },
+    
+    "run-workflow": {
+      "timeoutOperation": "taskExecution",
+      "customTimeoutMs": 900000,
+      "description": "Workflows can run multiple tools in sequence"
+    },
+    
+    "get-job-result": {
+      "timeoutOperation": "taskExecution",
+      "customTimeoutMs": 5000,
+      "description": "Job result retrieval should be fast"
+    },
+    
+    "register-agent": {
+      "timeoutOperation": "networkOperations",
+      "customTimeoutMs": 30000,
+      "description": "Agent registration with transport setup"
+    },
+    
+    "get-agent-tasks": {
+      "timeoutOperation": "taskExecution",
+      "customTimeoutMs": 10000,
+      "description": "Task polling should be responsive"
+    },
+    
+    "submit-task-response": {
+      "timeoutOperation": "taskExecution",
+      "customTimeoutMs": 30000,
+      "description": "Task response submission"
+    },
+    
+    "process-request": {
+      "timeoutOperation": "llmRequest",
+      "customTimeoutMs": 45000,
+      "description": "Natural language processing with tool routing"
+    }
+  },
+  
+  "retryPolicy": {
+    "maxRetries": 3,
+    "backoffMultiplier": 2.0,
+    "initialDelayMs": 1000,
+    "maxDelayMs": 30000,
+    "enableExponentialBackoff": true,
+    "retryableErrors": [
+      "TIMEOUT",
+      "NETWORK_ERROR",
+      "RATE_LIMIT",
+      "TEMPORARY_FAILURE"
+    ]
+  },
+  
+  "monitoring": {
+    "enableTimeoutLogging": true,
+    "logLevel": "warn",
+    "metricsEnabled": true,
+    "alertThresholds": {
+      "timeoutRate": 0.1,
+      "averageExecutionTime": 0.8
+    }
+  }
+}

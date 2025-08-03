@@ -1,5 +1,8 @@
 import { getStorageManager } from '../core/storage/storage-manager.js';
 import logger from '../../../logger.js';
+import { promises as fs } from 'fs';
+import path from 'path';
+import { getVibeTaskManagerOutputDir } from './config-loader.js';
 
 /**
  * ID generation configuration
@@ -47,9 +50,12 @@ export interface IdGenerationResult {
 export class IdGenerator {
   private static instance: IdGenerator;
   private config: IdGeneratorConfig;
+  private counterFilePath: string;
+  private counterLock: Promise<void> = Promise.resolve();
 
   private constructor(config?: Partial<IdGeneratorConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.counterFilePath = path.join(getVibeTaskManagerOutputDir(), 'id-counters.json');
   }
 
   /**
@@ -114,108 +120,143 @@ export class IdGenerator {
   }
 
   /**
-   * Generate unique epic ID within project context
+   * Generate unique epic ID within project context with file-based counter
    * Format: E001
    */
   async generateEpicId(projectId: string): Promise<IdGenerationResult> {
-    try {
-      logger.debug({ projectId }, 'Generating epic ID');
+    // Serialize access to prevent race conditions
+    return new Promise((resolve) => {
+      this.counterLock = this.counterLock.then(async () => {
+        try {
+          logger.debug({ projectId }, 'Generating epic ID with counter lock');
 
-      // Validate project exists
-      const storageManager = await getStorageManager();
-      const projectExists = await storageManager.projectExists(projectId);
-      if (!projectExists) {
-        return {
-          success: false,
-          error: `Project ${projectId} not found`
-        };
-      }
+          // Validate project exists
+          const storageManager = await getStorageManager();
+          const projectExists = await storageManager.projectExists(projectId);
+          if (!projectExists) {
+            resolve({
+              success: false,
+              error: `Project ${projectId} not found`
+            });
+            return;
+          }
 
-      // Find unique epic ID (simple format: E001)
-      for (let counter = 1; counter <= this.config.maxRetries; counter++) {
-        const epicId = `${this.config.epicPrefix}${counter.toString().padStart(this.config.epicIdLength, '0')}`;
+          // Load current counters
+          const counters = await this.loadCounters();
+          const currentEpicCounter = counters.epics || 0;
 
-        const exists = await storageManager.epicExists(epicId);
-        if (!exists) {
-          logger.debug({ epicId, projectId, attempts: counter }, 'Generated unique epic ID');
-          return {
-            success: true,
-            id: epicId,
-            attempts: counter
-          };
+          // Find unique epic ID starting from the last counter
+          for (let counter = currentEpicCounter + 1; counter <= currentEpicCounter + this.config.maxRetries; counter++) {
+            const epicId = `${this.config.epicPrefix}${counter.toString().padStart(this.config.epicIdLength, '0')}`;
+
+            const exists = await storageManager.epicExists(epicId);
+            if (!exists) {
+              // Update and save the counter
+              counters.epics = counter;
+              await this.saveCounters(counters);
+              
+              logger.debug({ epicId, projectId, attempts: counter - currentEpicCounter }, 'Generated unique epic ID');
+              resolve({
+                success: true,
+                id: epicId,
+                attempts: counter - currentEpicCounter
+              });
+              return;
+            }
+          }
+
+          resolve({
+            success: false,
+            error: `Failed to generate unique epic ID after ${this.config.maxRetries} attempts`,
+            attempts: this.config.maxRetries
+          });
+
+        } catch (error) {
+          logger.error({ err: error, projectId }, 'Failed to generate epic ID');
+          resolve({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          });
         }
-      }
+      });
+    });
+  }
 
-      return {
-        success: false,
-        error: `Failed to generate unique epic ID after ${this.config.maxRetries} attempts`,
-        attempts: this.config.maxRetries
-      };
-
-    } catch (error) {
-      logger.error({ err: error, projectId }, 'Failed to generate epic ID');
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error)
-      };
+  /**
+   * Load counters from file
+   */
+  private async loadCounters(): Promise<Record<string, number>> {
+    try {
+      const data = await fs.readFile(this.counterFilePath, 'utf-8');
+      return JSON.parse(data);
+    } catch {
+      // File doesn't exist or is invalid, return empty counters
+      return {};
     }
   }
 
   /**
-   * Generate unique task ID within epic context
-   * Format: T0001
+   * Save counters to file atomically
    */
-  async generateTaskId(projectId: string, epicId: string): Promise<IdGenerationResult> {
-    try {
-      logger.debug({ projectId, epicId }, 'Generating task ID');
+  private async saveCounters(counters: Record<string, number>): Promise<void> {
+    const tempPath = `${this.counterFilePath}.tmp`;
+    await fs.writeFile(tempPath, JSON.stringify(counters, null, 2), 'utf-8');
+    await fs.rename(tempPath, this.counterFilePath);
+  }
 
-      // Validate project and epic exist
-      const storageManager = await getStorageManager();
-
-      const projectExists = await storageManager.projectExists(projectId);
-      if (!projectExists) {
-        return {
-          success: false,
-          error: `Project ${projectId} not found`
-        };
-      }
-
-      const epicExists = await storageManager.epicExists(epicId);
-      if (!epicExists) {
-        return {
-          success: false,
-          error: `Epic ${epicId} not found`
-        };
-      }
-
-      // Find unique task ID within epic
-      for (let counter = 1; counter <= this.config.maxRetries; counter++) {
-        const taskId = `${this.config.taskPrefix}${counter.toString().padStart(this.config.taskIdLength, '0')}`;
-
-        const exists = await storageManager.taskExists(taskId);
-        if (!exists) {
-          logger.debug({ taskId, epicId, projectId, attempts: counter }, 'Generated unique task ID');
-          return {
-            success: true,
-            id: taskId,
-            attempts: counter
-          };
+  /**
+   * Generate unique task ID globally with file-based counter
+   * Format: T0001
+   * Note: Task IDs are globally unique across all projects to prevent conflicts
+   */
+  async generateTaskId(): Promise<IdGenerationResult> {
+    // Serialize access to prevent race conditions
+    return new Promise((resolve) => {
+      this.counterLock = this.counterLock.then(async () => {
+        try {
+          logger.debug('Generating globally unique task ID with counter lock');
+          
+          // Load current counters
+          const counters = await this.loadCounters();
+          const currentTaskCounter = counters.tasks || 0;
+          
+          // Try to find an available ID starting from the last counter
+          const storageManager = await getStorageManager();
+          
+          for (let counter = currentTaskCounter + 1; counter <= currentTaskCounter + this.config.maxRetries; counter++) {
+            const taskId = `${this.config.taskPrefix}${counter.toString().padStart(this.config.taskIdLength, '0')}`;
+            
+            const exists = await storageManager.taskExists(taskId);
+            if (!exists) {
+              // Update and save the counter
+              counters.tasks = counter;
+              await this.saveCounters(counters);
+              
+              logger.debug({ taskId, attempts: counter - currentTaskCounter }, 'Generated globally unique task ID');
+              resolve({
+                success: true,
+                id: taskId,
+                attempts: counter - currentTaskCounter
+              });
+              return;
+            }
+          }
+          
+          resolve({
+            success: false,
+            error: `Failed to generate unique task ID after ${this.config.maxRetries} attempts`,
+            attempts: this.config.maxRetries
+          });
+          
+        } catch (error) {
+          logger.error({ err: error }, 'Failed to generate task ID');
+          resolve({
+            success: false,
+            error: error instanceof Error ? error.message : String(error)
+          });
         }
-      }
-
-      return {
-        success: false,
-        error: `Failed to generate unique task ID after ${this.config.maxRetries} attempts`,
-        attempts: this.config.maxRetries
-      };
-
-    } catch (error) {
-      logger.error({ err: error, projectId, epicId }, 'Failed to generate task ID');
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error)
-      };
-    }
+      });
+    });
   }
 
   /**
@@ -391,6 +432,30 @@ export class IdGenerator {
   }
 
   /**
+   * Suggest a shorter project name by extracting key terms
+   */
+  private suggestShorterName(projectName: string): string {
+    // Remove common words and extract key terms
+    const commonWords = ['a', 'an', 'the', 'for', 'with', 'using', 'that', 'this', 'based', 'web', 'app', 'application', 'system', 'platform'];
+    const words = projectName
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(word => word.length > 2 && !commonWords.includes(word))
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1));
+    
+    // Take first 3-4 key words to create a shorter name
+    const suggested = words.slice(0, Math.min(4, words.length)).join(' ');
+    
+    // If still too long, take first 2 words or abbreviate
+    if (suggested.length > 35) {
+      const abbreviated = words.slice(0, 2).join(' ');
+      return abbreviated.length <= 35 ? abbreviated : words[0];
+    }
+    
+    return suggested || projectName.substring(0, 30).trim();
+  }
+
+  /**
    * Validate project name
    */
   private validateProjectName(projectName: string): { valid: boolean; errors: string[] } {
@@ -403,7 +468,12 @@ export class IdGenerator {
         errors.push('Project name must be at least 2 characters long');
       }
       if (projectName.length > 50) {
-        errors.push('Project name must be 50 characters or less');
+        errors.push(
+          `Project name is too long (${projectName.length} characters). ` +
+          `Please use 50 characters or less for optimal file system compatibility. ` +
+          `Suggestion: Use a shorter, descriptive name like "${this.suggestShorterName(projectName)}" ` +
+          `instead of "${projectName}".`
+        );
       }
       if (!/^[a-zA-Z0-9\s\-_]+$/.test(projectName)) {
         errors.push('Project name can only contain letters, numbers, spaces, hyphens, and underscores');

@@ -94,6 +94,14 @@ export async function buildFileDependencyGraph(
           let resolvedPath: string | null = null;
           if (imp.path.startsWith('.')) { // Relative import
             resolvedPath = path.normalize(path.join(path.dirname(fileInfo.relativePath), imp.path));
+            
+            // Handle TypeScript ESM imports where .js imports map to .ts files
+            if (resolvedPath && !filePaths.has(resolvedPath) && resolvedPath.endsWith('.js')) {
+              const tsPath = resolvedPath.replace(/\.js$/, '.ts');
+              if (filePaths.has(tsPath)) {
+                resolvedPath = tsPath;
+              }
+            }
           } else {
             // Could be a project-local module (e.g. 'src/utils/helpers') or external lib
             // For now, only link if it directly matches another file's relative path (simplified)
@@ -194,6 +202,14 @@ function processFileDependencyGraphDirectly(allFilesInfo: FileInfo[]): { nodes: 
       let resolvedPath: string | null = null;
       if (imp.path.startsWith('.')) { // Relative import
         resolvedPath = path.normalize(path.join(path.dirname(fileInfo.relativePath), imp.path));
+        
+        // Handle TypeScript ESM imports where .js imports map to .ts files
+        if (resolvedPath && !filePaths.has(resolvedPath) && resolvedPath.endsWith('.js')) {
+          const tsPath = resolvedPath.replace(/\.js$/, '.ts');
+          if (filePaths.has(tsPath)) {
+            resolvedPath = tsPath;
+          }
+        }
       } else {
         // Could be a project-local module (e.g. 'src/utils/helpers') or external lib
         // For now, only link if it directly matches another file's relative path (simplified)

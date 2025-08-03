@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
-import { performFormatAwareLlmCall } from '../../utils/llmHelper.js';
+import { performFormatAwareLlmCallWithCentralizedConfig } from '../../utils/llmHelper.js';
 import { performModuleSelectionCall } from '../../utils/schemaAwareLlmHelper.js';
 import {
   moduleSelectionResponseSchema,
@@ -22,12 +22,18 @@ import { sseNotifier } from '../../services/sse-notifier/index.js';
 import { AppError, ValidationError, ParsingError, ToolExecutionError } from '../../utils/errors.js';
 import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js';
 import { YAMLComposer } from './yaml-composer.js';
+import { getToolOutputDirectory, ensureToolOutputDirectory } from '../vibe-task-manager/security/unified-security-config.js';
 
-// Helper function to get the base output directory
+// Helper function to get the base output directory using centralized security
 function getBaseOutputDir(): string {
-  return process.env.VIBE_CODER_OUTPUT_DIR
-    ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
-    : path.join(process.cwd(), 'VibeCoderOutput');
+  try {
+    return getToolOutputDirectory();
+  } catch {
+    // Fallback for backward compatibility during migration
+    return process.env.VIBE_CODER_OUTPUT_DIR
+      ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
+      : path.join(process.cwd(), 'VibeCoderOutput');
+  }
 }
 
 const STARTER_KIT_DIR = path.join(getBaseOutputDir(), 'fullstack-starter-kit-generator');
@@ -48,14 +54,21 @@ export interface FullstackStarterKitInput {
 }
 
 export async function initDirectories() {
-  const baseOutputDir = getBaseOutputDir();
   try {
-    await fs.ensureDir(baseOutputDir);
-    const toolDir = path.join(baseOutputDir, 'fullstack-starter-kit-generator');
-    await fs.ensureDir(toolDir);
+    const toolDir = await ensureToolOutputDirectory('fullstack-starter-kit-generator');
     logger.debug(`Ensured starter kit directory exists: ${toolDir}`);
   } catch (error) {
-    logger.error({ err: error, path: baseOutputDir }, `Failed to ensure base output directory exists for fullstack-starter-kit-generator.`);
+    logger.error({ err: error }, `Failed to ensure base output directory exists for fullstack-starter-kit-generator.`);
+    // Fallback to original implementation for backward compatibility
+    const baseOutputDir = getBaseOutputDir();
+    try {
+      await fs.ensureDir(baseOutputDir);
+      const toolDir = path.join(baseOutputDir, 'fullstack-starter-kit-generator');
+      await fs.ensureDir(toolDir);
+      logger.debug(`Ensured starter kit directory exists (fallback): ${toolDir}`);
+    } catch (fallbackError) {
+      logger.error({ err: fallbackError, path: baseOutputDir }, `Fallback directory creation also failed.`);
+    }
   }
 }
 
@@ -327,10 +340,9 @@ RESPOND WITH ONLY THE JSON OBJECT - NO OTHER TEXT OR FORMATTING.`;
         }, 'Schema-aware approach failed, falling back to existing method');
 
         // Fallback to existing approach
-        const llmModuleResponseRaw = await performFormatAwareLlmCall(
+        const llmModuleResponseRaw = await performFormatAwareLlmCallWithCentralizedConfig(
           moduleSelectionPrompt,
           '', // System prompt is part of main prompt for this call
-          config,
           'fullstack_starter_kit_module_selection',
           'json', // Explicitly specify JSON format
           undefined, // Schema will be inferred from task name

@@ -3,16 +3,17 @@ import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
 import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js';
 import { getBaseOutputDir, getVibeTaskManagerOutputDir, getVibeTaskManagerConfig } from './utils/config-loader.js';
-import { getTimeoutManager } from './utils/timeout-manager.js';
+import { getTimeoutManager, isTimeoutManagerInitialized } from './utils/timeout-manager.js';
 import logger from '../../logger.js';
 import { AgentOrchestrator } from './services/agent-orchestrator.js';
 import { ProjectOperations } from './core/operations/project-operations.js';
 import { DecompositionService } from './services/decomposition-service.js';
-import { jobManager } from '../../services/job-manager/index.js';
+import { jobManager, JobStatus } from '../../services/job-manager/index.js';
 import path from 'path';
 import fs from 'fs/promises';
-import { AtomicTask, Project } from './types/task.js';
+import type { AtomicTask, Project } from './types/task.js';
 import { ProjectContext } from './types/project-context.js';
+import { getUnifiedSecurityConfig } from './security/unified-security-config.js';
 
 // Input schema for the Vibe Task Manager tool
 const vibeTaskManagerInputSchema = z.object({
@@ -170,6 +171,12 @@ async function handleNaturalLanguageInput(
  */
 async function initializeVibeTaskManagerConfig(): Promise<void> {
   try {
+    // Check if timeout manager is already initialized to avoid unnecessary calls
+    if (isTimeoutManagerInitialized()) {
+      logger.debug('Vibe Task Manager already initialized, skipping configuration reload');
+      return;
+    }
+
     // Load configuration
     const config = await getVibeTaskManagerConfig();
 
@@ -497,6 +504,9 @@ async function handleCreateCommand(
     // Start project creation asynchronously
     setTimeout(async () => {
       try {
+        // Update job status to RUNNING when work begins
+        jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Starting project creation...');
+        
         const projectOps = ProjectOperations.getInstance();
         const result = await projectOps.createProject({
           name: projectName,
@@ -674,6 +684,9 @@ async function handleRunCommand(
     // Start task execution asynchronously
     setTimeout(async () => {
       try {
+        // Update job status to RUNNING when work begins
+        jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Starting task execution...');
+        
         // Import AgentOrchestrator dynamically to avoid circular dependencies
         const { AgentOrchestrator } = await import('./services/agent-orchestrator.js');
         const orchestrator = AgentOrchestrator.getInstance();
@@ -809,13 +822,21 @@ async function handleRunCommand(
           } else {
             // Fallback to dynamic context if project not found
             logger.warn({ taskId, projectId: task.projectId }, 'Project not found, using dynamic detection');
-            projectContext = await createDynamicProjectContext(process.cwd());
+            
+            // Use security config to get proper project path instead of process.cwd()
+            const securityConfig = getUnifiedSecurityConfig().getConfig();
+            const projectPath = securityConfig.allowedReadDirectory;
+            
+            projectContext = await createDynamicProjectContext(projectPath);
             projectContext.projectName = task.projectId; // Use task's project ID as name
             projectContext.description = 'Project context dynamically detected';
           }
         } else {
           // No project ID available, use dynamic detection
-          projectContext = await createDynamicProjectContext(process.cwd());
+          const securityConfig = getUnifiedSecurityConfig().getConfig();
+          const projectPath = securityConfig.allowedReadDirectory;
+          
+          projectContext = await createDynamicProjectContext(projectPath);
         }
 
         // Execute task using real AgentOrchestrator
@@ -1127,6 +1148,9 @@ async function handleRefineCommand(
     // Start task refinement asynchronously
     setTimeout(async () => {
       try {
+        // Update job status to RUNNING when work begins
+        jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Starting task refinement...');
+        
         // Import TaskRefinementService dynamically to avoid circular dependencies
         const { getTaskRefinementService } = await import('./services/task-refinement-service.js');
         const refinementService = getTaskRefinementService();
@@ -1385,6 +1409,9 @@ async function handleDecomposeCommand(
     // Start decomposition asynchronously
     setTimeout(async () => {
       try {
+        // Update job status to RUNNING when work begins
+        jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Starting project decomposition...');
+        
         // Look up the actual project ID from storage
         const { getStorageManager } = await import('./core/storage/storage-manager.js');
         const storageManager = await getStorageManager();
@@ -1433,6 +1460,7 @@ async function handleDecomposeCommand(
           title: target,
           description: description || `Decompose ${target} into manageable tasks`,
           type: 'development',
+          functionalArea: 'data-management',
           priority: 'medium',
           status: 'pending',
           projectId: matchingProject.id, // Use the actual project ID from storage
@@ -1483,7 +1511,10 @@ async function handleDecomposeCommand(
         // Get project analyzer for dynamic detection
         const { ProjectAnalyzer } = await import('./utils/project-analyzer.js');
         const projectAnalyzer = ProjectAnalyzer.getInstance();
-        const projectPath = process.cwd(); // Default to current working directory
+        
+        // Use security config to get proper project path
+        const securityConfig = getUnifiedSecurityConfig().getConfig();
+        const projectPath = securityConfig.allowedReadDirectory;
 
         // Detect project characteristics dynamically
         let languages: string[];
@@ -1514,7 +1545,7 @@ async function handleDecomposeCommand(
         // Create project context using the unified ProjectContext interface
         const projectContext: ProjectContext = {
           projectId: matchingProject.id, // Use the actual project ID from storage
-          projectPath: matchingProject.rootPath || process.cwd(),
+          projectPath: matchingProject.rootPath || securityConfig.allowedReadDirectory,
           projectName: matchingProject.name || target,
           description: matchingProject.description || `Project decomposition for ${target}`,
           languages, // Dynamic detection using existing 35+ language infrastructure
@@ -1560,21 +1591,63 @@ async function handleDecomposeCommand(
           }
         };
 
-        // Use real DecompositionService instead of mock simulation
+        // Use real DecompositionService with timeout protection
         const decompositionService = new DecompositionService(config);
 
-        // Start real decomposition
-        const decompositionSession = await decompositionService.startDecomposition({
-          task,
-          context: projectContext,
-          sessionId: jobId
-        });
+        // Add timeout protection for decomposition operations following established pattern
+        const timeoutManager = getTimeoutManager();
+
+        // IMPORTANT: sessionId vs jobId distinction
+        // - sessionId: The MCP session ID (e.g., 'stdio-session') needed for progress bridge
+        // - jobId: The unique job identifier for tracking the decomposition operation
+        // The sessionId MUST be passed to enable stdio progress updates via workflow-aware-agent-manager
+
+        // Wrap decomposition job creation with timeout protection
+        const trackingJobResult = await timeoutManager.executeWithTimeout(
+          'taskDecomposition',
+          async () => decompositionService.createDecompositionJob({
+            task,
+            context: projectContext,
+            sessionId: sessionId,
+            originalJobId: jobId // Pass original job ID to avoid dual job creation
+          })
+        );
+
+        if (!trackingJobResult.success || trackingJobResult.timedOut) {
+          throw new Error(`Failed to create decomposition job: ${trackingJobResult.error || 'Operation timed out'}`);
+        }
+
+        // Wrap decomposition start with timeout protection  
+        const decompositionSessionResult = await timeoutManager.executeWithTimeout(
+          'taskDecomposition',
+          async () => decompositionService.startDecomposition({
+            task,
+            context: projectContext,
+            sessionId: sessionId, // Use the MCP session ID for stdio bridge
+            originalJobId: jobId // Ensure original job ID is passed through
+          })
+        );
+
+        if (!decompositionSessionResult.success || decompositionSessionResult.timedOut) {
+          throw new Error(`Failed to start decomposition: ${decompositionSessionResult.error || 'Operation timed out'}`);
+        }
+
+        const decompositionSession = decompositionSessionResult.data!;
 
         // Infer project complexity from context
         const projectComplexity = inferProjectComplexity(projectContext);
         
-        // Wait for completion and get results
-        const results = await waitForDecompositionCompletion(decompositionService, decompositionSession.id, undefined, projectComplexity);
+        // Wrap decomposition completion with timeout protection
+        const resultsResult = await timeoutManager.executeWithTimeout(
+          'taskDecomposition',
+          async () => waitForDecompositionCompletion(decompositionService, decompositionSession.id, undefined, projectComplexity)
+        );
+
+        if (!resultsResult.success || resultsResult.timedOut) {
+          throw new Error(`Decomposition failed to complete: ${resultsResult.error || 'Operation timed out'}`);
+        }
+
+        const results = resultsResult.data!;
 
         logger.info({
           jobId,
@@ -1587,11 +1660,20 @@ async function handleDecomposeCommand(
         const decompositionsDir = path.join(vibeOutputDir, 'decompositions');
         const decompositionOutputPath = path.join(decompositionsDir, jobId);
 
-        // Create the decompositions directory if it doesn't exist
-        await fs.mkdir(decompositionsDir, { recursive: true });
+        // Wrap file system operations with timeout protection following established pattern
+        const directoryResult = await timeoutManager.executeWithTimeout(
+          'fileOperations',
+          async () => {
+            // Create the decompositions directory if it doesn't exist
+            await fs.mkdir(decompositionsDir, { recursive: true });
+            // Create the specific decomposition directory
+            await fs.mkdir(decompositionOutputPath, { recursive: true });
+          }
+        );
 
-        // Create the specific decomposition directory
-        await fs.mkdir(decompositionOutputPath, { recursive: true });
+        if (!directoryResult.success || directoryResult.timedOut) {
+          throw new Error(`Failed to create output directories: ${directoryResult.error || 'Operation timed out'}`);
+        }
 
         const subTasksList = results.map((task, index) =>
           `${index + 1}. **${task.title}**\n   - ${task.description}\n   - Priority: ${task.priority}\n   - Estimated: ${task.estimatedHours}h\n   - Type: ${task.type}`
@@ -1614,9 +1696,16 @@ async function handleDecomposeCommand(
           }
         };
 
-        // Save decomposition data as JSON
+        // Wrap file writing operations with timeout protection following established pattern
         const decompositionFile = path.join(decompositionOutputPath, 'decomposition.json');
-        await fs.writeFile(decompositionFile, JSON.stringify(decompositionData, null, 2));
+        const jsonWriteResult = await timeoutManager.executeWithTimeout(
+          'fileOperations',
+          async () => fs.writeFile(decompositionFile, JSON.stringify(decompositionData, null, 2))
+        );
+
+        if (!jsonWriteResult.success || jsonWriteResult.timedOut) {
+          throw new Error(`Failed to write decomposition JSON: ${jsonWriteResult.error || 'Operation timed out'}`);
+        }
 
         // Save decomposition summary as Markdown
         const markdownContent = `# Project Decomposition: ${target}
@@ -1646,7 +1735,14 @@ ${subTasksList}
 `;
 
         const markdownFile = path.join(decompositionOutputPath, 'decomposition-summary.md');
-        await fs.writeFile(markdownFile, markdownContent);
+        const markdownWriteResult = await timeoutManager.executeWithTimeout(
+          'fileOperations',
+          async () => fs.writeFile(markdownFile, markdownContent)
+        );
+
+        if (!markdownWriteResult.success || markdownWriteResult.timedOut) {
+          throw new Error(`Failed to write decomposition markdown: ${markdownWriteResult.error || 'Operation timed out'}`);
+        }
 
         logger.info({
           jobId,

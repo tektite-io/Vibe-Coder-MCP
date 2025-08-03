@@ -9,7 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import logger from '../../../logger.js';
 import { ImportInfo, ImportedItem } from '../codeMapModel.js';
-import { SecurityBoundaryValidator } from '../utils/securityBoundaryValidator.js';
+import { UnifiedSecurityConfigManager } from '../../vibe-task-manager/security/unified-security-config.js';
 
 const execAsync = promisify(exec);
 
@@ -30,12 +30,12 @@ interface ClangdIncludeResult {
  * Adapter class for Clangd integration.
  */
 export class ClangdAdapter {
-  private securityValidator: SecurityBoundaryValidator;
+  private securityValidator: UnifiedSecurityConfigManager;
   private cache: Map<string, ImportInfo[]> = new Map();
   private tempFiles: string[] = [];
 
   constructor(private allowedDir: string, private outputDir: string) {
-    this.securityValidator = new SecurityBoundaryValidator(allowedDir, outputDir);
+    this.securityValidator = UnifiedSecurityConfigManager.getInstance();
   }
 
   /**
@@ -58,7 +58,7 @@ export class ClangdAdapter {
       }
 
       // Validate file path is within security boundary
-      if (!this.securityValidator.isPathWithinAllowedDirectory(filePath)) {
+      if (!this.securityValidator.validatePathSecurity(filePath, { operation: 'read' })) {
         logger.warn({ filePath }, 'File path is outside allowed directory');
         return [];
       }

@@ -677,7 +677,7 @@ try {
     for (const fileInfo of fileInfosWithEnhancedImports) {
       try {
         // First try to get source code from cache
-        const cachedSourceCode = await getSourceCodeFromCache(fileInfo.filePath);
+        const cachedSourceCode = await getSourceCodeFromCache(fileInfo.filePath, config.allowedMappingDirectory);
         if (cachedSourceCode) {
           tempSourceCodeCache.set(fileInfo.filePath, cachedSourceCode);
         } else {

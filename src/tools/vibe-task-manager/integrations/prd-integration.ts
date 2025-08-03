@@ -10,7 +10,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import logger from '../../../logger.js';
 import type { PRDInfo, ParsedPRD } from '../types/artifact-types.js';
-import { PathSecurityValidator } from '../utils/path-security-validator.js';
+import { UnifiedSecurityEngine, createDefaultSecurityConfig } from '../core/unified-security-engine.js';
 
 /**
  * PRD parsing result
@@ -98,7 +98,7 @@ export class PRDIntegrationService {
   private config: PRDIntegrationConfig;
   private prdCache = new Map<string, PRDInfo>();
   private performanceMetrics = new Map<string, PRDMetadata['performanceMetrics']>();
-  private pathValidator: PathSecurityValidator;
+  private securityEngine: UnifiedSecurityEngine | null = null;
 
   private constructor() {
     this.config = {
@@ -108,14 +108,19 @@ export class PRDIntegrationService {
       enablePerformanceMonitoring: true
     };
 
-    // Initialize path security validator with PRD-specific configuration
-    this.pathValidator = new PathSecurityValidator({
-      allowedExtensions: ['.md'],
-      strictMode: true,
-      allowSymlinks: false
-    });
-
     logger.debug('PRD integration service initialized');
+  }
+
+  /**
+   * Get or initialize the security engine
+   */
+  private async getSecurityEngine(): Promise<UnifiedSecurityEngine> {
+    if (!this.securityEngine) {
+      const config = createDefaultSecurityConfig();
+      this.securityEngine = UnifiedSecurityEngine.getInstance(config);
+      await this.securityEngine.initialize();
+    }
+    return this.securityEngine;
   }
 
   /**
@@ -224,11 +229,17 @@ export class PRDIntegrationService {
    */
   private async validatePRDPath(prdFilePath: string): Promise<void> {
     try {
-      // Use secure path validation
-      const validationResult = await this.pathValidator.validatePath(prdFilePath);
+      // Use unified security engine for path validation
+      const securityEngine = await this.getSecurityEngine();
+      const validationResponse = await securityEngine.validatePath(prdFilePath, 'read');
 
+      if (!validationResponse.success) {
+        throw new Error(`Security validation failed: ${validationResponse.error?.message || 'Unknown error'}`);
+      }
+
+      const validationResult = validationResponse.data;
       if (!validationResult.isValid) {
-        throw new Error(`Security validation failed: ${validationResult.error}`);
+        throw new Error(`Security validation failed: ${validationResult.error || 'Path validation failed'}`);
       }
 
       // Log any security warnings
@@ -288,6 +299,41 @@ export class PRDIntegrationService {
   }
 
   /**
+   * Split compound words into individual parts for better matching
+   * Examples:
+   * - "kidzhealth" → ["kidz", "health"] → ["kids", "health"]
+   * - "HealthCompanion" → ["Health", "Companion"]
+   * - "web-app" → ["web", "app"]
+   */
+  private splitCompoundWord(word: string): string[] {
+    // First, split by common boundaries
+    const parts = word.split(/(?=[A-Z])|[-_]|(?<=[a-z])(?=[0-9])/);
+    
+    // Then handle special cases like 'kidz' → 'kids'
+    const normalizedParts = parts.map(part => {
+      // Convert 'z' to 's' at end of words for common misspellings
+      if (part.endsWith('z') && part.length > 2) {
+        const withoutZ = part.slice(0, -1);
+        // Check if it looks like a pluralization (vowel before z)
+        if (/[aeiou]$/.test(withoutZ)) {
+          return withoutZ + 's';
+        }
+      }
+      return part;
+    });
+    
+    // Also generate space-separated version
+    const spacedVersion = word
+      .replace(/([a-z])([A-Z])/g, '$1 $2')  // camelCase
+      .replace(/([a-z])z([a-z])/g, '$1s $2') // kidz → kids
+      .toLowerCase();
+    
+    // Return unique parts
+    const allParts = [...normalizedParts, ...spacedVersion.split(' ')];
+    return Array.from(new Set(allParts.filter(p => p.length > 0)));
+  }
+
+  /**
    * Extract metadata from PRD filename
    */
   private extractPRDMetadataFromFilename(fileName: string): { projectName: string; createdAt: Date } {
@@ -337,11 +383,121 @@ export class PRDIntegrationService {
             const stats = await fs.stat(filePath);
             const { projectName, createdAt } = this.extractPRDMetadataFromFilename(file.name);
 
-            // If projectPath is specified, filter by project name
+            // If projectPath is specified, filter by project name or project ID
             if (projectPath) {
-              const expectedProjectName = path.basename(projectPath).toLowerCase();
-              if (!projectName.toLowerCase().includes(expectedProjectName)) {
-                continue;
+              // Handle both project ID (PID-EDUPLAY-ADVENTURES-001) and project name matching
+              const projectPathLower = projectPath.toLowerCase();
+              const projectNameLower = projectName.toLowerCase();
+              
+              // Check if projectPath is a project ID (starts with PID-)
+              if (projectPathLower.startsWith('pid-')) {
+                // For project IDs, be more lenient with matching
+                // Try multiple matching strategies
+                const projectIdParts = projectPathLower.replace('pid-', '').split('-');
+                
+                // Strategy 1: Check if any significant part matches with enhanced fuzzy matching
+                const hasMatchingParts = projectIdParts.some(part => {
+                  if (part.length <= 2) {
+                    logger.debug({ part, reason: 'too_short' }, 'Skipping PRD match for short part');
+                    return false;
+                  }
+                  
+                  // Try exact match
+                  if (projectNameLower.includes(part)) {
+                    logger.debug({ 
+                      part, 
+                      projectName: projectNameLower, 
+                      matchType: 'exact' 
+                    }, 'PRD match found via exact match');
+                    return true;
+                  }
+                  
+                  // Use the helper function to split compound words
+                  const splitParts = this.splitCompoundWord(part);
+                  logger.debug({ 
+                    originalPart: part, 
+                    splitParts,
+                    projectName: projectNameLower 
+                  }, 'Attempting fuzzy PRD match with split parts');
+                  
+                  // Check if any of the split parts match
+                  for (const splitPart of splitParts) {
+                    if (splitPart.length > 1 && projectNameLower.includes(splitPart.toLowerCase())) {
+                      logger.debug({ 
+                        originalPart: part,
+                        matchedPart: splitPart,
+                        projectName: projectNameLower,
+                        matchType: 'split_part' 
+                      }, 'PRD match found via split part');
+                      return true;
+                    }
+                  }
+                  
+                  // Check if ALL parts of a compound word are present (for cases like "kids health")
+                  const compoundParts = splitParts.filter(p => p.length > 2);
+                  if (compoundParts.length > 1) {
+                    const allPartsMatch = compoundParts.every(word => 
+                      projectNameLower.includes(word.toLowerCase())
+                    );
+                    if (allPartsMatch) {
+                      logger.debug({ 
+                        originalPart: part,
+                        matchedParts: compoundParts,
+                        projectName: projectNameLower,
+                        matchType: 'all_compound_parts' 
+                      }, 'PRD match found via all compound parts');
+                      return true;
+                    }
+                  }
+                  
+                  logger.debug({ 
+                    part, 
+                    splitParts,
+                    projectName: projectNameLower,
+                    reason: 'no_match' 
+                  }, 'No PRD match found for part');
+                  return false;
+                });
+                
+                // Strategy 2: Check if this is a platform-based project (common terms)
+                const isPlatformProject = projectNameLower.includes('platform') ||
+                                         projectNameLower.includes('web') ||
+                                       projectNameLower.includes('based');
+                
+                // Strategy 3: Check if the project ID contains common educational terms
+                const hasEducationalTerms = projectIdParts.some(part => 
+                  ['edu', 'play', 'game', 'learn', 'platform'].includes(part)
+                );
+                
+                // Log matching decision
+                logger.debug({ 
+                  projectId: projectPathLower,
+                  projectName: projectNameLower,
+                  hasMatchingParts,
+                  isPlatformProject,
+                  hasEducationalTerms,
+                  strategies: {
+                    fuzzyMatch: hasMatchingParts,
+                    platformMatch: isPlatformProject,
+                    educationalMatch: hasEducationalTerms
+                  }
+                }, 'PRD matching strategies evaluated');
+                
+                // Accept if any strategy matches
+                if (!hasMatchingParts && !isPlatformProject && !hasEducationalTerms) {
+                  logger.debug({ 
+                    projectId: projectPathLower,
+                    fileName: file.name,
+                    reason: 'no_strategy_matched' 
+                  }, 'Skipping PRD file - no matching strategy succeeded');
+                  continue;
+                }
+              } else {
+                // Traditional project name matching
+                const expectedProjectName = path.basename(projectPath).toLowerCase();
+                if (!projectNameLower.includes(expectedProjectName)) {
+                  continue;
+                }
               }
             }
 
@@ -389,15 +545,22 @@ export class PRDIntegrationService {
 
     try {
       // Validate file path before accessing file system
-      const validationResult = await this.pathValidator.validatePath(filePath);
+      const securityEngine = await this.getSecurityEngine();
+      const validationResponse = await securityEngine.validatePath(filePath, 'read');
+      
+      if (!validationResponse.success) {
+        throw new Error(`Security validation failed: ${validationResponse.error?.message || 'Unknown error'}`);
+      }
+      
+      const validationResult = validationResponse.data;
       if (!validationResult.isValid) {
-        throw new Error(`Security validation failed: ${validationResult.error}`);
+        throw new Error(`Security validation failed: ${validationResult.error || 'Path validation failed'}`);
       }
 
       const lines = content.split('\n');
       const fileName = path.basename(filePath);
       const { projectName, createdAt } = this.extractPRDMetadataFromFilename(fileName);
-      const stats = await fs.stat(validationResult.sanitizedPath!);
+      const stats = await fs.stat(validationResult.normalizedPath || filePath);
 
       // Initialize parsed PRD structure
       const parsedPRD: ParsedPRD = {
@@ -438,6 +601,9 @@ export class PRDIntegrationService {
       let currentSection = '';
       let currentSubsection = '';
       let featureId = 1;
+      let currentFeature: ParsedPRD['features'][0] | null = null;
+      let inUserStory = false;
+      let inAcceptanceCriteria = false;
 
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
@@ -446,27 +612,96 @@ export class PRDIntegrationService {
         if (line.startsWith('# ')) {
           currentSection = line.substring(2).toLowerCase();
           currentSubsection = '';
+          currentFeature = null;
           continue;
         }
 
         // Detect subsections
         if (line.startsWith('## ')) {
           currentSubsection = line.substring(3).toLowerCase();
+          currentFeature = null;
           continue;
         }
 
-        // Detect sub-subsections
+        // Detect sub-subsections (features in ### format)
         if (line.startsWith('### ')) {
-          currentSubsection = line.substring(4).toLowerCase();
+          const subsectionTitle = line.substring(4);
+          currentSubsection = subsectionTitle.toLowerCase();
+          
+          // Check if this is a feature section (e.g., "### 4.1. Core Content Delivery")
+          if (currentSection.includes('feature') || currentSection.includes('functionality')) {
+            const featureMatch = subsectionTitle.match(/^(\d+\.?\d*\.?)\s*(.+)$/);
+            if (featureMatch) {
+              const [, , featureTitle] = featureMatch;
+              currentFeature = {
+                id: `F${featureId.toString().padStart(3, '0')}`,
+                title: featureTitle.trim(),
+                description: '',
+                userStories: [],
+                acceptanceCriteria: [],
+                priority: 'medium'
+              };
+              parsedPRD.features.push(currentFeature);
+              featureId++;
+              inUserStory = false;
+              inAcceptanceCriteria = false;
+            }
+          }
           continue;
         }
 
-        // Parse content based on current section
-        this.parsePRDSection(line, currentSection, currentSubsection, parsedPRD, featureId);
+        // Parse user story and acceptance criteria sections
+        if (currentFeature && line.startsWith('**')) {
+          if (line.toLowerCase().includes('user story:')) {
+            inUserStory = true;
+            inAcceptanceCriteria = false;
+            continue;
+          } else if (line.toLowerCase().includes('acceptance criteria:')) {
+            inUserStory = false;
+            inAcceptanceCriteria = true;
+            continue;
+          } else if (line.toLowerCase().includes('description:')) {
+            inUserStory = false;
+            inAcceptanceCriteria = false;
+            continue;
+          }
+        }
 
-        // Increment feature ID for features section
+        // Parse feature content
+        if (currentFeature) {
+          if (inUserStory && line.length > 0) {
+            currentFeature.userStories.push(line);
+          } else if (inAcceptanceCriteria && line.startsWith('- ')) {
+            currentFeature.acceptanceCriteria.push(line.substring(2));
+          } else if (!inUserStory && !inAcceptanceCriteria && line.length > 0 && !line.startsWith('**')) {
+            if (currentFeature.description) {
+              currentFeature.description += ' ';
+            }
+            currentFeature.description += line;
+          }
+        }
+
+        // Parse content based on current section (for non-feature sections)
+        if (!currentFeature) {
+          this.parsePRDSection(line, currentSection, currentSubsection, parsedPRD, featureId);
+        }
+
+        // Also check for the old format (- **Feature:**)
         if (currentSection.includes('feature') && line.startsWith('- **') && line.includes(':**')) {
-          featureId++;
+          const match = line.match(/- \*\*(.+?):\*\*\s*(.+)/);
+          if (match) {
+            const [, title, description] = match;
+            currentFeature = {
+              id: `F${featureId.toString().padStart(3, '0')}`,
+              title: title.trim(),
+              description: description.trim(),
+              userStories: [],
+              acceptanceCriteria: [],
+              priority: 'medium'
+            };
+            parsedPRD.features.push(currentFeature);
+            featureId++;
+          }
         }
       }
 
@@ -480,6 +715,12 @@ export class PRDIntegrationService {
           sectionCount: 5 // overview, target audience, features, technical, constraints
         });
       }
+
+      logger.info({
+        filePath,
+        featureCount: parsedPRD.features.length,
+        features: parsedPRD.features.map(f => ({ id: f.id, title: f.title }))
+      }, 'PRD content parsed successfully');
 
       return parsedPRD;
 

@@ -13,6 +13,8 @@ import { executeCodeMapGeneration } from '../../code-map-generator/index.js';
 import type { CodeMapGeneratorConfig } from '../../code-map-generator/types.js';
 import type { ProjectContext } from '../types/project-context.js';
 import { OpenRouterConfigManager } from '../../../utils/openrouter-config-manager.js';
+import { getTimeoutManager } from '../utils/timeout-manager.js';
+import { getJobTimeoutConfigManager } from '../../../utils/job-timeout-config-manager.js';
 
 /**
  * Code map information
@@ -240,19 +242,36 @@ export class CodeMapIntegrationService {
       // Generate job ID for tracking
       const jobId = `codemap-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
+      // Import job manager to properly register the job
+      const { jobManager } = await import('../../../services/job-manager/index.js');
+      
+      // Register the job in job manager with the generated ID
+      jobManager.createJobWithId(jobId, 'code-map-generation', params);
+      logger.debug({ jobId, projectPath }, 'Registered job in job manager for code map integration');
+
       // Get proper OpenRouter configuration from centralized manager
       const configManager = OpenRouterConfigManager.getInstance();
       const openRouterConfig = await configManager.getOpenRouterConfig();
 
-      // Execute code map generation
-      const result = await executeCodeMapGeneration(
-        params,
-        openRouterConfig,
-        {
-          sessionId: `codemap-session-${Date.now()}`,
-          transportType: 'stdio'
-        },
-        jobId
+      // Get timeout configuration for code map generation
+      const timeoutManager = getTimeoutManager();
+      const jobTimeoutConfigManager = getJobTimeoutConfigManager();
+      const toolConfig = jobTimeoutConfigManager.getToolTimeoutConfig('map-codebase');
+      const customTimeout = toolConfig?.customTimeoutMs || 300000; // 5 minutes default
+
+      // Execute code map generation with timeout protection
+      const result = await timeoutManager.raceWithTimeout(
+        'fileOperations',
+        executeCodeMapGeneration(
+          params,
+          openRouterConfig,
+          {
+            sessionId: `codemap-session-${Date.now()}`,
+            transportType: 'stdio'
+          },
+          jobId
+        ),
+        customTimeout
       );
 
       const generationTime = Date.now() - startTime;
@@ -485,7 +504,7 @@ export class CodeMapIntegrationService {
   ): Promise<ProjectContext> {
     try {
       // Ensure we have a fresh code map
-      if (this.config.autoRefresh) {
+      if (this.config.autoRefresh && await this.isCodeMapStale(projectPath)) {
         await this.refreshCodeMap(projectPath);
       }
 

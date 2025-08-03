@@ -410,6 +410,102 @@ export class MockQueueBuilder {
 }
 
 /**
+ * Mock implementation for performFormatAwareLlmCallWithCentralizedConfig
+ * Integrates with the existing mock infrastructure
+ */
+export const performFormatAwareLlmCallWithCentralizedConfig = vi.fn().mockImplementation(
+  async (
+    prompt: string,
+    systemPrompt: string,
+    logicalTaskName: string,
+    expectedFormat: 'json' | 'markdown' | 'text' | 'yaml' = 'text',
+    expectedSchema?: object,
+    _temperature: number = 0.1
+  ): Promise<string> => {
+    // Detect operation type from prompt and task name
+    const detectedOperationType = detectOperationType({
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: prompt }
+      ]
+    });
+
+    // Use existing mock response queue if available
+    if (currentTestId && mockResponseQueues.has(currentTestId)) {
+      const testQueue = mockResponseQueues.get(currentTestId)!;
+      if (testQueue.length > 0) {
+        const mockOptions = testQueue.shift()!;
+        const responseContent = mockOptions.responseContent || {};
+        return formatResponseForOperation(responseContent as LLMResponseContent, detectedOperationType);
+      }
+    }
+
+    // Generate appropriate mock response based on operation type and expected format
+    let mockResponse: object;
+
+    switch (detectedOperationType) {
+      case 'intent_recognition':
+        mockResponse = {
+          intent: 'create_task',
+          confidence: 0.85,
+          parameters: { task_title: 'mock task', type: 'development' },
+          context: { temporal: 'immediate', urgency: 'normal' },
+          alternatives: []
+        };
+        break;
+
+      case 'atomic_detection':
+        mockResponse = {
+          isAtomic: true,
+          confidence: 0.95,
+          reasoning: 'Mock atomic analysis for centralized config',
+          estimatedHours: 0.5,
+          complexityFactors: [],
+          recommendations: []
+        };
+        break;
+
+      case 'task_decomposition':
+        mockResponse = {
+          tasks: [{
+            title: 'Mock decomposed task',
+            description: 'Mock task from centralized config',
+            type: 'development',
+            priority: 'medium',
+            estimatedHours: 1,
+            acceptanceCriteria: ['Mock acceptance criterion'],
+            tags: ['mock', 'centralized']
+          }]
+        };
+        break;
+
+      default:
+        mockResponse = {
+          result: 'Mock LLM response from centralized config',
+          confidence: 0.9,
+          reasoning: 'Mock reasoning for centralized config test'
+        };
+    }
+
+    // Format response according to expected format
+    switch (expectedFormat) {
+      case 'json':
+        return JSON.stringify(mockResponse);
+      case 'yaml':
+        // Simple YAML-like format for testing
+        return Object.entries(mockResponse)
+          .map(([key, value]) => `${key}: ${typeof value === 'object' ? JSON.stringify(value) : value}`)
+          .join('\n');
+      case 'markdown':
+        return `# Mock Response\n\n${JSON.stringify(mockResponse, null, 2)}`;
+      case 'text':
+      default:
+        return typeof mockResponse === 'string' ? mockResponse : JSON.stringify(mockResponse);
+    }
+  }
+);
+
+/**
  * Performance-optimized test utilities for enhanced mock coverage
  */
 export class PerformanceTestUtils {

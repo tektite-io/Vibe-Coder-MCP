@@ -69,19 +69,29 @@ export interface BatchValidationResult {
   batchRecommendations: string[];
 }
 
-
+/**
+ * Configuration for atomic task detector
+ */
+export interface AtomicDetectorConfig {
+  readonly epicTimeLimit: number; // Maximum hours per epic
+}
 
 /**
  * Enhanced atomic task detector with contextual validation and auto-research integration
  */
 export class AtomicTaskDetector {
   private config: OpenRouterConfig;
+  private atomicConfig: AtomicDetectorConfig;
   private autoResearchDetector: AutoResearchDetector;
   private contextEnrichmentService: ContextEnrichmentService;
   private researchIntegration: ResearchIntegration;
 
-  constructor(config: OpenRouterConfig) {
+  constructor(config: OpenRouterConfig, atomicConfig?: Partial<AtomicDetectorConfig>) {
     this.config = config;
+    this.atomicConfig = {
+      epicTimeLimit: 400, // Default to 400 hours (was hardcoded to 8 hours)
+      ...atomicConfig
+    };
     this.autoResearchDetector = AutoResearchDetector.getInstance();
     this.contextEnrichmentService = ContextEnrichmentService.getInstance();
     this.researchIntegration = ResearchIntegration.getInstance();
@@ -344,13 +354,13 @@ Please provide your analysis in the following JSON format:
       validatedAnalysis.recommendations.push('Use specific, concrete descriptions instead of vague terms');
     }
 
-    // Rule 8: Epic time constraint validation
-    const epicTimeLimit = 8; // 8 hours maximum per epic
+    // Rule 8: Epic time constraint validation - now configurable through AtomicDetectorConfig
+    const epicTimeLimit: number = this.atomicConfig.epicTimeLimit;
     if (context.existingTasks && context.existingTasks.length > 0) {
       const totalEpicTime = context.existingTasks.reduce((sum, t) => sum + (t.estimatedHours || 0), 0);
       if (totalEpicTime + validatedAnalysis.estimatedHours > epicTimeLimit) {
         validatedAnalysis.confidence = Math.min(validatedAnalysis.confidence, 0.5);
-        validatedAnalysis.recommendations.push('Adding this task would exceed 8-hour epic limit');
+        validatedAnalysis.recommendations.push(`Adding this task would exceed ${epicTimeLimit}-hour epic limit`);
       }
     }
 

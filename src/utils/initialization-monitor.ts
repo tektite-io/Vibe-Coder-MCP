@@ -468,6 +468,17 @@ export class InitializationMonitor {
    * Reset singleton instance (for testing)
    */
   static reset(): void {
+    if (InitializationMonitor.instance) {
+      InitializationMonitor.instance.clear();
+    }
     InitializationMonitor.instance = null;
+  }
+
+  /**
+   * Force create new instance with configuration (for testing)
+   */
+  static createInstance(config?: Partial<MonitorConfig>): InitializationMonitor {
+    InitializationMonitor.instance = new InitializationMonitor(config);
+    return InitializationMonitor.instance;
   }
 }

@@ -15,7 +15,6 @@ import { jobManager, JobStatus } from '../../../services/job-manager/index.js';
 import { executeCodeMapGeneration } from '../../code-map-generator/index.js';
 import { OpenRouterConfig } from '../../../types/workflow.js';
 import { UnifiedSecurityConfiguration } from '../../vibe-task-manager/security/unified-security-config.js';
-import { SecurityBoundaryValidator } from '../../code-map-generator/utils/securityBoundaryValidator.js';
 import {
   ContextCuratorInput,
   ContextPackage as OriginalContextPackage,
@@ -25,7 +24,8 @@ import {
   PrioritizedFile,
   MultiStrategyFileDiscoveryResult,
   OutputFormat,
-  ContextFile
+  ContextFile,
+  PRIORITY_THRESHOLDS
 } from '../types/context-curator.js';
 import { ContextPackage as OutputContextPackage, ProcessedFile, FileReference } from '../types/output-package.js';
 
@@ -89,7 +89,6 @@ interface WorkflowContext {
   config: OpenRouterConfig;
   contextCuratorConfig?: Record<string, unknown>; // Context Curator specific config
   securityConfig?: UnifiedSecurityConfiguration; // Security configuration
-  securityValidator?: SecurityBoundaryValidator; // Security boundary validator
   currentPhase: WorkflowPhase;
   startTime: number;
 
@@ -365,12 +364,6 @@ export class ContextCuratorService {
           }
         }
       };
-
-      // Create security boundary validator with proper read/write directories
-      context.securityValidator = new SecurityBoundaryValidator(
-        allowedReadDirectory,
-        allowedWriteDirectory
-      );
 
       logger.info({
         allowedReadDirectory,
@@ -4451,9 +4444,9 @@ export class ContextCuratorService {
 
       // Determine priority level based on relevance score and confidence
       let filePriorityLevel: 'high' | 'medium' | 'low';
-      if (relevanceScore >= 0.7 && confidence >= 0.8) {
+      if (relevanceScore >= PRIORITY_THRESHOLDS.HIGH.relevanceScore && confidence >= PRIORITY_THRESHOLDS.HIGH.confidence) {
         filePriorityLevel = 'high';
-      } else if (relevanceScore >= 0.4 && confidence >= 0.6) {
+      } else if (relevanceScore >= PRIORITY_THRESHOLDS.MEDIUM.relevanceScore && confidence >= PRIORITY_THRESHOLDS.MEDIUM.confidence) {
         filePriorityLevel = 'medium';
       } else {
         filePriorityLevel = 'low';
@@ -4653,6 +4646,8 @@ ${(task.subtasks || []).map(subtask => `              <subtask id="${escapeXml(s
    */
   private async extractFileContentsWithOptimization(codemapContent: string): Promise<Map<string, string>> {
     const fileContents = new Map<string, string>();
+    const MAX_FILES = 200; // Limit files to prevent memory exhaustion
+    const MEMORY_THRESHOLD = 1024 * 1024 * 1024; // 1GB RSS limit
 
     try {
       // Parse the codemap to extract file paths and their information
@@ -4663,8 +4658,33 @@ ${(task.subtasks || []).map(subtask => `              <subtask id="${escapeXml(s
       let matchCount = 0;
       for (const match of matches) {
         matchCount++;
+        
+        // Memory monitoring - abort if RSS exceeds threshold
+        const memUsage = process.memoryUsage();
+        if (memUsage.rss > MEMORY_THRESHOLD) {
+          logger.error({ 
+            rss: Math.round(memUsage.rss / 1024 / 1024), 
+            threshold: Math.round(MEMORY_THRESHOLD / 1024 / 1024),
+            filesProcessed: matchCount - 1
+          }, 'Memory threshold exceeded, aborting file content extraction');
+          break;
+        }
+
+        // File count limit to prevent memory exhaustion
+        if (matchCount > MAX_FILES) {
+          logger.warn({ 
+            maxFiles: MAX_FILES, 
+            totalMatches: matchCount 
+          }, 'File limit reached, stopping content extraction');
+          break;
+        }
+
         const filePath = match[1].trim();
-        logger.debug(`File path match ${matchCount}: "${match[0]}" -> "${filePath}"`);
+        
+        // Reduce log spam - only log every 10th file at debug level
+        if (matchCount % 10 === 0) {
+          logger.debug(`File path match ${matchCount}: "${match[0]}" -> "${filePath}"`);
+        }
 
         try {
           // Read the file content
@@ -4686,6 +4706,12 @@ ${(task.subtasks || []).map(subtask => `              <subtask id="${escapeXml(s
               fileContents.set(filePath, content);
             }
           }
+
+          // Yield control periodically to prevent event loop blocking
+          if (matchCount % 5 === 0) {
+            await new Promise(resolve => setImmediate(resolve));
+          }
+
         } catch (error) {
           logger.warn({ filePath, error: error instanceof Error ? error.message : 'Unknown error' },
             'Failed to read file content');
@@ -5048,16 +5074,30 @@ ${(task.subtasks || []).map(subtask => `              <subtask id="${escapeXml(s
       const enhancedFiles = await this.buildEnhancedFileList(context);
 
       // Transform ContextFile[] to FileRelevance[] format
-      const fileRelevances = enhancedFiles.map(file => ({
-        file,
-        relevanceScore: {
-          score: 0.7,
-          confidence: 0.8,
-          reasoning: `Included ${file.language} file based on relevance analysis`
-        },
-        categories: ['relevant'],
-        extractedKeywords: []
-      }));
+      const fileRelevances = enhancedFiles.map(file => {
+        // Find the corresponding relevance score from the scoring phase
+        const scoreData = context.relevanceScoring?.fileScores.find(
+          score => score.filePath === file.path
+        );
+        
+        // Use actual scores from relevance scoring phase, or from file discovery, or fallback
+        const relevanceScore = scoreData?.relevanceScore ?? file.actualRelevanceScore ?? 0.5;
+        const confidence = scoreData?.confidence ?? file.actualConfidence ?? 0.5;
+        const categories = scoreData?.categories ?? file.actualCategories ?? ['relevant'];
+        const reasoning = scoreData?.reasoning ?? 
+          `Included ${file.language} file based on relevance analysis (score: ${relevanceScore.toFixed(2)}, confidence: ${confidence.toFixed(2)})`;
+        
+        return {
+          file,
+          relevanceScore: {
+            score: relevanceScore,
+            confidence: confidence,
+            reasoning: reasoning
+          },
+          categories: categories,
+          extractedKeywords: []
+        };
+      });
 
       // Create enhanced context package with codemap content
       const contextPackage: ContextPackage = {
@@ -5189,6 +5229,11 @@ ${(task.subtasks || []).map(subtask => `              <subtask id="${escapeXml(s
           }
         }
 
+        // Find the corresponding file discovery result to get actual scores
+        const discoveryFile = context.fileDiscovery?.relevantFiles.find(
+          f => f.path === fileScore.filePath
+        );
+
         const enhancedFile: ContextFile = {
           size: fileStats?.size || 0,
           path: fileScore.filePath,
@@ -5197,7 +5242,11 @@ ${(task.subtasks || []).map(subtask => `              <subtask id="${escapeXml(s
           language,
           isOptimized,
           tokenCount: actualTokenCount,
-          optimizedSummary: isOptimized ? 'Content optimized for relevance' : undefined
+          optimizedSummary: isOptimized ? 'Content optimized for relevance' : undefined,
+          // Add actual scores from file discovery
+          actualRelevanceScore: discoveryFile?.confidence,
+          actualConfidence: discoveryFile?.confidence,
+          actualCategories: discoveryFile ? [discoveryFile.priority] : undefined
         };
 
         enhancedFiles.push(enhancedFile);
@@ -5240,6 +5289,11 @@ ${(task.subtasks || []).map(subtask => `              <subtask id="${escapeXml(s
           }
         }
 
+        // Find the corresponding file discovery result for fallback case
+        const fallbackDiscoveryFile = context.fileDiscovery?.relevantFiles.find(
+          f => f.path === fileScore.filePath
+        );
+
         enhancedFiles.push({
           size: 0,
           path: fileScore.filePath,
@@ -5248,7 +5302,11 @@ ${(task.subtasks || []).map(subtask => `              <subtask id="${escapeXml(s
           language: 'unknown',
           isOptimized: false,
           tokenCount: fallbackTokenCount,
-          optimizedSummary: undefined
+          optimizedSummary: undefined,
+          // Add actual scores from file discovery for fallback case
+          actualRelevanceScore: fallbackDiscoveryFile?.confidence,
+          actualConfidence: fallbackDiscoveryFile?.confidence,
+          actualCategories: fallbackDiscoveryFile ? [fallbackDiscoveryFile.priority] : undefined
         });
       }
     }
@@ -5349,6 +5407,124 @@ ${(task.subtasks || []).map(subtask => `              <subtask id="${escapeXml(s
     });
 
     return Array.from(keywords).slice(0, 10); // Limit to top 10 keywords
+  }
+
+  /**
+   * Calculate fallback score when LLM scoring fails
+   * Uses heuristics based on file path, extension, and keywords
+   */
+  private calculateFallbackScore(filePath: string, userPrompt: string): { score: number; confidence: number; reasoning: string } {
+    let score = 0.3; // Base score
+    let confidence = 0.5; // Base confidence
+    const reasons: string[] = [];
+
+    // Normalize file path
+    const normalizedPath = filePath.toLowerCase();
+    const fileName = path.basename(normalizedPath);
+    const extension = path.extname(normalizedPath);
+
+    // Extract keywords from user prompt
+    const promptKeywords = this.extractKeywords('', userPrompt);
+
+    // Check file path importance patterns
+    const importantPaths = [
+      { pattern: /^(src|lib|core|app)\//, score: 0.15, reason: 'Core source directory' },
+      { pattern: /^(components|services|utils|helpers)\//, score: 0.12, reason: 'Utility directory' },
+      { pattern: /^(models|entities|types)\//, score: 0.12, reason: 'Data model directory' },
+      { pattern: /^(api|routes|controllers)\//, score: 0.12, reason: 'API directory' },
+      { pattern: /^(config|settings)\//, score: 0.1, reason: 'Configuration directory' },
+      { pattern: /^(test|tests|spec|__tests__)\//, score: 0.05, reason: 'Test directory' },
+      { pattern: /^(docs|documentation)\//, score: 0.03, reason: 'Documentation directory' },
+      { pattern: /^(node_modules|vendor|dependencies)\//, score: -0.2, reason: 'External dependency' }
+    ];
+
+    for (const { pattern, score: pathScore, reason } of importantPaths) {
+      if (pattern.test(normalizedPath)) {
+        score += pathScore;
+        reasons.push(reason);
+        break;
+      }
+    }
+
+    // Check file name patterns
+    const importantFileNames = [
+      { pattern: /^(index|main|app)\.(js|ts|jsx|tsx)$/, score: 0.15, reason: 'Entry point file' },
+      { pattern: /^(config|settings|env)/i, score: 0.1, reason: 'Configuration file' },
+      { pattern: /\.(service|controller|model|entity)\.(js|ts)$/, score: 0.12, reason: 'Core logic file' },
+      { pattern: /\.(component|view)\.(jsx|tsx|vue)$/, score: 0.1, reason: 'UI component' },
+      { pattern: /\.(test|spec)\.(js|ts|jsx|tsx)$/, score: 0.05, reason: 'Test file' }
+    ];
+
+    for (const { pattern, score: nameScore, reason } of importantFileNames) {
+      if (pattern.test(fileName)) {
+        score += nameScore;
+        reasons.push(reason);
+        break;
+      }
+    }
+
+    // Check file extension importance
+    const extensionScores: Record<string, { score: number; confidence: number }> = {
+      '.ts': { score: 0.1, confidence: 0.1 },
+      '.tsx': { score: 0.1, confidence: 0.1 },
+      '.js': { score: 0.08, confidence: 0.08 },
+      '.jsx': { score: 0.08, confidence: 0.08 },
+      '.py': { score: 0.08, confidence: 0.08 },
+      '.java': { score: 0.08, confidence: 0.08 },
+      '.go': { score: 0.08, confidence: 0.08 },
+      '.rs': { score: 0.08, confidence: 0.08 },
+      '.cpp': { score: 0.08, confidence: 0.08 },
+      '.c': { score: 0.08, confidence: 0.08 },
+      '.json': { score: 0.06, confidence: 0.05 },
+      '.yaml': { score: 0.06, confidence: 0.05 },
+      '.yml': { score: 0.06, confidence: 0.05 },
+      '.md': { score: 0.03, confidence: 0.03 }
+    };
+
+    if (extension && extensionScores[extension]) {
+      score += extensionScores[extension].score;
+      confidence += extensionScores[extension].confidence;
+      reasons.push(`${extension} file`);
+    }
+
+    // Check directory depth (shallower = more important)
+    const depth = normalizedPath.split('/').length - 1;
+    if (depth <= 2) {
+      score += 0.1;
+      reasons.push('Root level file');
+    } else if (depth <= 4) {
+      score += 0.05;
+      reasons.push('Shallow directory depth');
+    } else if (depth > 6) {
+      score -= 0.05;
+      reasons.push('Deep directory nesting');
+    }
+
+    // Keyword matching between file path and user prompt
+    const pathKeywords = this.extractKeywords(filePath, '');
+    const matchingKeywords = pathKeywords.filter(keyword => 
+      promptKeywords.some(promptKeyword => 
+        keyword.includes(promptKeyword) || promptKeyword.includes(keyword)
+      )
+    );
+
+    if (matchingKeywords.length > 0) {
+      const keywordBoost = Math.min(matchingKeywords.length * 0.1, 0.3);
+      score += keywordBoost;
+      confidence += keywordBoost * 0.5;
+      reasons.push(`Keyword matches: ${matchingKeywords.join(', ')}`);
+    }
+
+    // Ensure score and confidence are within bounds
+    score = Math.max(0.1, Math.min(0.9, score));
+    confidence = Math.max(0.2, Math.min(0.8, confidence));
+
+    // Build reasoning string
+    const reasoning = reasons.length > 0 
+      ? `Fallback scoring: ${reasons.join('; ')}` 
+      : 'Fallback scoring: Default heuristics applied';
+
+    return { score, confidence, reasoning };
   }
 
 }

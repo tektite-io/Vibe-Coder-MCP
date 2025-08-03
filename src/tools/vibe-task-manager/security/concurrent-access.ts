@@ -86,7 +86,9 @@ export interface LockAuditEvent {
  */
 export class ConcurrentAccessManager {
   private static instance: ConcurrentAccessManager | null = null;
-  private config: ConcurrentAccessConfig;
+  private config: ConcurrentAccessConfig | null = null;
+  private userConfig: Partial<ConcurrentAccessConfig> | undefined;
+  private initialized = false;
   private activeLocks: Map<string, LockInfo> = new Map();
   private lockWaiters: Map<string, Array<{ resolve: (value: LockAcquisitionResult) => void; reject: (reason?: unknown) => void; timeout: NodeJS.Timeout }>> = new Map();
   private auditEvents: LockAuditEvent[] = [];
@@ -96,31 +98,57 @@ export class ConcurrentAccessManager {
   private auditCounter = 0;
 
   private constructor(config?: Partial<ConcurrentAccessConfig>) {
-    const isTestEnv = process.env.NODE_ENV === 'test';
+    // Store user config for lazy initialization
+    this.userConfig = config;
 
-    // Get configurable timeout values from timeout manager
-    const timeoutManager = getTimeoutManager();
-    const retryConfig = timeoutManager.getRetryConfig();
+    logger.info('Concurrent Access Manager initialized (background tasks deferred)');
+  }
 
-    this.config = {
-      lockDirectory: isTestEnv
-        ? path.join(process.cwd(), 'tmp', 'test-locks')
-        : this.getOSAwareLockDirectory(),
-      defaultLockTimeout: isTestEnv ? 5000 : timeoutManager.getTimeout('databaseOperations'), // Configurable
-      maxLockTimeout: isTestEnv ? 10000 : timeoutManager.getTimeout('taskExecution'), // Configurable
-      deadlockDetectionInterval: isTestEnv ? 1000 : 10000, // Keep static for performance
-      lockCleanupInterval: isTestEnv ? 2000 : 60000, // Keep static for performance
-      maxRetryAttempts: retryConfig.maxRetries, // Configurable
-      retryDelayMs: isTestEnv ? 100 : retryConfig.initialDelayMs, // Configurable
-      enableDeadlockDetection: !isTestEnv, // Disable in tests for performance
-      enableLockAuditTrail: true, // Keep enabled for statistics tracking
-      ...config
-    };
+  /**
+   * Lazy configuration getter - initializes timeout values only when first accessed
+   */
+  private getConfig(): ConcurrentAccessConfig {
+    if (!this.config) {
+      const isTestEnv = process.env.NODE_ENV === 'test';
 
-    this.initializeLockDirectory();
-    this.startBackgroundTasks();
+      // Get configurable timeout values from timeout manager at runtime
+      const timeoutManager = getTimeoutManager();
+      const retryConfig = timeoutManager.getRetryConfig();
 
-    logger.info({ config: this.config }, 'Concurrent Access Manager initialized');
+      this.config = {
+        lockDirectory: isTestEnv
+          ? path.join(process.cwd(), 'tmp', 'test-locks')
+          : this.getOSAwareLockDirectory(),
+        defaultLockTimeout: isTestEnv ? 5000 : timeoutManager.getTimeout('databaseOperations'), // Configurable
+        maxLockTimeout: isTestEnv ? 10000 : timeoutManager.getTimeout('taskExecution'), // Configurable
+        deadlockDetectionInterval: isTestEnv ? 1000 : 10000, // Keep static for performance
+        lockCleanupInterval: isTestEnv ? 2000 : 60000, // Keep static for performance
+        maxRetryAttempts: retryConfig.maxRetries, // Configurable
+        retryDelayMs: isTestEnv ? 100 : retryConfig.initialDelayMs, // Configurable
+        enableDeadlockDetection: !isTestEnv, // Disable in tests for performance
+        enableLockAuditTrail: true, // Keep enabled for statistics tracking
+        ...this.userConfig
+      };
+
+      logger.debug('Concurrent Access Manager configuration initialized with timeout values');
+      
+      // Trigger deferred initialization on first config access
+      this.ensureInitialized();
+    }
+
+    return this.config;
+  }
+
+  /**
+   * Ensure background tasks are initialized (deferred from constructor)
+   */
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      this.initialized = true;
+      await this.initializeLockDirectory();
+      this.startBackgroundTasks();
+      logger.debug('Concurrent Access Manager background tasks initialized');
+    }
   }
 
   /**
@@ -165,7 +193,7 @@ export class ConcurrentAccessManager {
     }
   ): Promise<LockAcquisitionResult> {
     const startTime = Date.now();
-    const timeout = Math.min(options?.timeout || this.config.defaultLockTimeout, this.config.maxLockTimeout);
+    const timeout = Math.min(options?.timeout || this.getConfig().defaultLockTimeout, this.getConfig().maxLockTimeout);
     const lockId = `lock_${++this.lockCounter}_${Date.now()}`;
 
     try {
@@ -207,7 +235,7 @@ export class ConcurrentAccessManager {
 
       this.activeLocks.set(lockId, lock);
 
-      if (this.config.enableLockAuditTrail) {
+      if (this.getConfig().enableLockAuditTrail) {
         this.logAuditEvent('acquire', lockId, resource, owner, options?.sessionId, Date.now() - startTime, {
           operation,
           timeout
@@ -272,7 +300,7 @@ export class ConcurrentAccessManager {
 
       const duration = Date.now() - lock.acquiredAt.getTime();
 
-      if (this.config.enableLockAuditTrail) {
+      if (this.getConfig().enableLockAuditTrail) {
         this.logAuditEvent('release', lockId, lock.resource, lock.owner, lock.sessionId, duration);
       }
 
@@ -298,11 +326,11 @@ export class ConcurrentAccessManager {
    * Atomic lock acquisition using file system
    */
   private async atomicLockAcquisition(lock: LockInfo): Promise<void> {
-    const lockFilePath = path.join(this.config.lockDirectory, `${this.sanitizeResourceName(lock.resource)}.lock`);
+    const lockFilePath = path.join(this.getConfig().lockDirectory, `${this.sanitizeResourceName(lock.resource)}.lock`);
 
     try {
       // Ensure directory exists
-      await fs.ensureDir(this.config.lockDirectory);
+      await fs.ensureDir(this.getConfig().lockDirectory);
 
       // Use exclusive file creation for atomicity
       const lockData = JSON.stringify(lock, null, 2);
@@ -460,7 +488,7 @@ export class ConcurrentAccessManager {
    */
   private async initializeLockDirectory(): Promise<void> {
     try {
-      await fs.ensureDir(this.config.lockDirectory);
+      await fs.ensureDir(this.getConfig().lockDirectory);
 
       // Clean up any stale lock files on startup
       await this.cleanupStaleLocks();
@@ -475,15 +503,15 @@ export class ConcurrentAccessManager {
    * Start background tasks
    */
   private startBackgroundTasks(): void {
-    if (this.config.enableDeadlockDetection) {
+    if (this.getConfig().enableDeadlockDetection) {
       this.deadlockDetectionTimer = setInterval(() => {
         this.detectDeadlocks();
-      }, this.config.deadlockDetectionInterval);
+      }, this.getConfig().deadlockDetectionInterval);
     }
 
     this.cleanupTimer = setInterval(() => {
       this.cleanupExpiredLocks();
-    }, this.config.lockCleanupInterval);
+    }, this.getConfig().lockCleanupInterval);
   }
 
   /**
@@ -601,11 +629,11 @@ export class ConcurrentAccessManager {
    */
   private async cleanupStaleLocks(): Promise<void> {
     try {
-      const lockFiles = await fs.readdir(this.config.lockDirectory);
+      const lockFiles = await fs.readdir(this.getConfig().lockDirectory);
 
       for (const file of lockFiles) {
         if (file.endsWith('.lock')) {
-          const lockFilePath = path.join(this.config.lockDirectory, file);
+          const lockFilePath = path.join(this.getConfig().lockDirectory, file);
           const lock = await this.readLockFile(lockFilePath);
 
           if (lock && this.isLockExpired(lock)) {
@@ -645,7 +673,7 @@ export class ConcurrentAccessManager {
    * Remove file lock
    */
   private async removeFileLock(lock: LockInfo): Promise<void> {
-    const lockFilePath = path.join(this.config.lockDirectory, `${this.sanitizeResourceName(lock.resource)}.lock`);
+    const lockFilePath = path.join(this.getConfig().lockDirectory, `${this.sanitizeResourceName(lock.resource)}.lock`);
 
     try {
       await fs.remove(lockFilePath);
@@ -673,7 +701,7 @@ export class ConcurrentAccessManager {
     duration?: number,
     metadata?: Record<string, unknown>
   ): void {
-    if (!this.config.enableLockAuditTrail) return;
+    if (!this.getConfig().enableLockAuditTrail) return;
 
     const auditEvent: LockAuditEvent = {
       id: `lock_audit_${++this.auditCounter}_${Date.now()}`,

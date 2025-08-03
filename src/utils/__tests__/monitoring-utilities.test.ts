@@ -112,7 +112,7 @@ describe('InitializationMonitor', () => {
     });
 
     it('should respect maximum tracked services limit', () => {
-      const monitor = InitializationMonitor.getInstance({ maxTrackedServices: 2 });
+      const monitor = InitializationMonitor.createInstance({ maxTrackedServices: 2 });
 
       monitor.startServiceInitialization('Service1');
       monitor.startServiceInitialization('Service2');
@@ -201,7 +201,7 @@ describe('InitializationMonitor', () => {
 
   describe('Slow Initialization Detection', () => {
     it('should detect slow initialization', () => {
-      const monitor = InitializationMonitor.getInstance({ slowInitThreshold: 1000 });
+      const monitor = InitializationMonitor.createInstance({ slowInitThreshold: 1000 });
       const serviceName = 'SlowService';
 
       monitor.startServiceInitialization(serviceName);
@@ -248,7 +248,7 @@ describe('InitializationMonitor', () => {
 
   describe('Statistics and Reporting', () => {
     it('should provide accurate statistics', () => {
-      const monitor = InitializationMonitor.getInstance();
+      const monitor = InitializationMonitor.createInstance();
 
       // Create some services with different states
       monitor.startServiceInitialization('CompletedService');
@@ -363,7 +363,7 @@ describe('InitializationMonitor', () => {
     });
 
     it('should respect dependency tracking configuration', () => {
-      const monitor = InitializationMonitor.getInstance({ trackDependencies: false });
+      const monitor = InitializationMonitor.createInstance({ trackDependencies: false });
 
       monitor.startServiceInitialization('Service1', ['Dep1']);
       monitor.startServiceInitialization('Service2', ['Service1']);

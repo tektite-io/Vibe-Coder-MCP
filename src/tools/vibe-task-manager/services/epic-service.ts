@@ -1,4 +1,4 @@
-import { Epic, AtomicTask, TaskStatus, TaskPriority } from '../types/task.js';
+import { Epic, AtomicTask, TaskStatus, TaskPriority, FunctionalArea } from '../types/task.js';
 import { getStorageManager } from '../core/storage/storage-manager.js';
 import { getTaskOperations } from '../core/operations/task-operations.js';
 import { getIdGenerator } from '../utils/id-generator.js';
@@ -14,6 +14,7 @@ export interface CreateEpicParams {
   description: string;
   projectId: string;
   priority?: TaskPriority;
+  functionalArea?: FunctionalArea;
   estimatedHours?: number;
   tags?: string[];
   dependencies?: string[];
@@ -158,6 +159,11 @@ export class EpicService {
 
       const epicId = idResult.id!;
 
+      // Get centralized configuration for epic time limit
+      const { getVibeTaskManagerConfig } = await import('../utils/config-loader.js');
+      const config = await getVibeTaskManagerConfig();
+      const epicTimeLimit: number = config?.taskManager?.rddConfig?.epicTimeLimit || 400;
+
       // Create epic object
       const epic: Epic = {
         id: epicId,
@@ -165,8 +171,9 @@ export class EpicService {
         description: params.description,
         status: 'pending',
         priority: params.priority || 'medium',
+        functionalArea: params.functionalArea || 'data-management',
         projectId: params.projectId,
-        estimatedHours: params.estimatedHours || 40,
+        estimatedHours: params.estimatedHours || epicTimeLimit,
         taskIds: [],
         dependencies: params.dependencies || [],
         dependents: [],

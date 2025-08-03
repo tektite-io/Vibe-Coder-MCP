@@ -9,7 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import logger from '../../../logger.js';
 import { ImportInfo, ImportedItem } from '../codeMapModel.js';
-import { SecurityBoundaryValidator } from '../utils/securityBoundaryValidator.js';
+import { UnifiedSecurityConfigManager } from '../../vibe-task-manager/security/unified-security-config.js';
 import { SemgrepRuleGenerator } from './semgrepRuleGenerator.js';
 import { resolveImport } from '../utils/importResolver.js';
 import { ImportResolver, ImportResolverOptions } from './importResolver.js';
@@ -61,13 +61,13 @@ interface SemgrepMatch {
  * Adapter class for Semgrep integration.
  */
 export class SemgrepAdapter implements ImportResolver {
-  private securityValidator: SecurityBoundaryValidator;
+  private securityManager: UnifiedSecurityConfigManager;
   private ruleGenerator: SemgrepRuleGenerator;
   private cache: Map<string, ImportInfo[]> = new Map();
   private tempFiles: string[] = [];
 
   constructor(private allowedDir: string, private outputDir: string) {
-    this.securityValidator = new SecurityBoundaryValidator(allowedDir, outputDir);
+    this.securityManager = UnifiedSecurityConfigManager.getInstance();
     this.ruleGenerator = new SemgrepRuleGenerator();
   }
 
@@ -91,8 +91,9 @@ export class SemgrepAdapter implements ImportResolver {
       }
 
       // Validate file path is within security boundary
-      if (!this.securityValidator.isPathWithinAllowedDirectory(filePath)) {
-        logger.warn({ filePath }, 'File path is outside allowed directory');
+      const validation = this.securityManager.validatePathSecurity(filePath, { operation: 'read' });
+      if (!validation.isValid) {
+        logger.warn({ filePath, error: validation.error }, 'File path validation failed');
         return [];
       }
 

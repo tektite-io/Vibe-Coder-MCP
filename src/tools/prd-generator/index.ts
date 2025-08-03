@@ -4,7 +4,7 @@ import path from 'path';
 import { z } from 'zod';
 import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
-import { performFormatAwareLlmCall } from '../../utils/llmHelper.js'; // Import the format-aware helper
+import { performFormatAwareLlmCallWithCentralizedConfig } from '../../utils/llmHelper.js'; // Import the format-aware helper
 import { performResearchQuery } from '../../utils/researchHelper.js';
 import logger from '../../logger.js';
 import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js'; // Import ToolExecutionContext
@@ -12,30 +12,40 @@ import { AppError, ToolExecutionError } from '../../utils/errors.js'; // Import 
 import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
 import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
 import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js'; // Import the new formatter
+import { getToolOutputDirectory, ensureToolOutputDirectory } from '../vibe-task-manager/security/unified-security-config.js';
 
-// Helper function to get the base output directory
+// Helper function to get the base output directory using centralized security
 function getBaseOutputDir(): string {
-  // Prioritize environment variable, resolve to ensure it's treated as an absolute path if provided
-  // Fallback to default relative to CWD
-  return process.env.VIBE_CODER_OUTPUT_DIR
-    ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
-    : path.join(process.cwd(), 'VibeCoderOutput');
+  try {
+    return getToolOutputDirectory();
+  } catch {
+    // Fallback for backward compatibility during migration
+    return process.env.VIBE_CODER_OUTPUT_DIR
+      ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
+      : path.join(process.cwd(), 'VibeCoderOutput');
+  }
 }
 
-// Define tool-specific directory using the helper
-const PRD_DIR = path.join(getBaseOutputDir(), 'prd-generator');
-
 // Initialize directories if they don't exist
-export async function initDirectories() {
-  const baseOutputDir = getBaseOutputDir();
+export async function initDirectories(): Promise<string> {
   try {
-    await fs.ensureDir(baseOutputDir); // Ensure base directory exists
-    const toolDir = path.join(baseOutputDir, 'prd-generator');
-    await fs.ensureDir(toolDir); // Ensure tool-specific directory exists
+    const toolDir = await ensureToolOutputDirectory('prd-generator');
     logger.debug(`Ensured PRD directory exists: ${toolDir}`);
+    return toolDir;
   } catch (error) {
-    logger.error({ err: error, path: baseOutputDir }, `Failed to ensure base output directory exists for prd-generator.`);
-    // Decide if we should re-throw or just log. Logging might be safer.
+    logger.error({ err: error }, `Failed to ensure base output directory exists for prd-generator.`);
+    // Fallback to original implementation for backward compatibility
+    const baseOutputDir = getBaseOutputDir();
+    try {
+      await fs.ensureDir(baseOutputDir);
+      const toolDir = path.join(baseOutputDir, 'prd-generator');
+      await fs.ensureDir(toolDir);
+      logger.debug(`Ensured PRD directory exists (fallback): ${toolDir}`);
+      return toolDir;
+    } catch (fallbackError) {
+      logger.error({ err: fallbackError, path: baseOutputDir }, `Fallback directory creation also failed.`);
+      throw fallbackError;
+    }
   }
 }
 
@@ -176,13 +186,13 @@ export const generatePRD: ToolExecutor = async (
       logs.push(`[${new Date().toISOString()}] Starting PRD generation for: ${productDescription.substring(0, 50)}...`);
 
       // Ensure directories are initialized before writing
-      await initDirectories();
+      const prdDir = await initDirectories();
 
-    // Generate a filename for storing the PRD (using the potentially configured PRD_DIR)
+    // Generate a filename for storing the PRD
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const sanitizedName = productDescription.substring(0, 30).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      const sanitizedName = productDescription.substring(0, 60).toLowerCase().replace(/[^a-z0-9]+/g, '-');
       const filename = `${timestamp}-${sanitizedName}-prd.md`;
-      filePath = path.join(PRD_DIR, filename); // Assign to outer scope variable
+      filePath = path.join(prdDir, filename); // Assign to outer scope variable
 
       // ---> Step 2.5(PRD).6: Add Progress Updates (Research Start) <---
       logger.info({ jobId, inputs: { productDescription: productDescription.substring(0, 50) } }, "PRD Generator: Starting pre-generation research...");
@@ -241,10 +251,9 @@ export const generatePRD: ToolExecutor = async (
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Generating PRD content via LLM...');
     logs.push(`[${new Date().toISOString()}] Calling LLM for main PRD generation.`);
 
-    const prdMarkdown = await performFormatAwareLlmCall(
+    const prdMarkdown = await performFormatAwareLlmCallWithCentralizedConfig(
       mainGenerationPrompt,
       PRD_SYSTEM_PROMPT, // Pass the system prompt
-      config,
       'prd_generation', // Logical task name
       'markdown', // Explicitly specify markdown format
       undefined, // No schema for markdown
@@ -274,9 +283,16 @@ export const generatePRD: ToolExecutor = async (
     logs.push(`[${new Date().toISOString()}] Saving PRD to ${filePath}.`);
 
     // Save the result
-    await fs.writeFile(filePath, formattedResult, 'utf8');
-    logger.info({ jobId }, `PRD generated and saved to ${filePath}`);
-    logs.push(`[${new Date().toISOString()}] PRD saved successfully.`);
+    try {
+      await fs.writeFile(filePath, formattedResult, 'utf8');
+      logger.info({ jobId }, `PRD generated and saved to ${filePath}`);
+      logs.push(`[${new Date().toISOString()}] PRD saved successfully.`);
+    } catch (fileError) {
+      const errorDetails = fileError instanceof Error ? fileError.message : String(fileError);
+      logger.error({ err: fileError, jobId, filePath }, `Failed to write PRD file: ${errorDetails}`);
+      logs.push(`[${new Date().toISOString()}] File write error: ${errorDetails} for path: ${filePath}`);
+      throw new AppError(`Failed to save PRD file to ${filePath}: ${errorDetails}`, { code: 'FILE_WRITE_ERROR', filePath }, fileError as Error);
+    }
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `PRD saved successfully.`);
 
     // ---> Step 2.5(PRD).7: Update Final Result/Error Handling (Set Success Result) <---

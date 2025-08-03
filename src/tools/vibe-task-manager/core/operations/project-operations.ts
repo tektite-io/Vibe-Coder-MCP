@@ -143,13 +143,17 @@ export class ProjectOperations {
       const projectId = idResult.id!;
 
       // Determine optimal agent configuration based on project characteristics
-      const agentConfig = await this.determineOptimalAgentConfig(params, config as unknown as Record<string, unknown>);
+      const agentResult = await this.determineOptimalAgentConfig(params, config as unknown as Record<string, unknown>);
 
       // Create default project configuration
       const defaultConfig: ProjectConfig = {
         maxConcurrentTasks: config.taskManager.maxConcurrentTasks,
         defaultTaskTemplate: config.taskManager.defaultTaskTemplate,
-        agentConfig,
+        agentConfig: {
+          maxAgents: agentResult.maxAgents,
+          defaultAgent: agentResult.defaultAgent,
+          agentCapabilities: agentResult.agentCapabilities
+        },
         performanceTargets: {
           maxResponseTime: config.taskManager.performanceTargets.maxResponseTime,
           maxMemoryUsage: config.taskManager.performanceTargets.maxMemoryUsage,
@@ -189,6 +193,16 @@ export class ProjectOperations {
         }
       };
 
+      // Merge detected tech stack with provided params (params takes precedence)
+      const finalTechStack = {
+        languages: params.techStack?.languages?.length ? params.techStack.languages : 
+                  (agentResult.detectedTechStack?.languages || []),
+        frameworks: params.techStack?.frameworks?.length ? params.techStack.frameworks : 
+                   (agentResult.detectedTechStack?.frameworks || []),
+        tools: params.techStack?.tools?.length ? params.techStack.tools : 
+               (agentResult.detectedTechStack?.tools || [])
+      };
+
       // Create project object with proper path resolution
       const project: Project = {
         id: projectId,
@@ -198,11 +212,7 @@ export class ProjectOperations {
         config: projectConfig,
         epicIds: [],
         rootPath: this.resolveProjectRootPath(params.rootPath),
-        techStack: params.techStack || {
-          languages: [],
-          frameworks: [],
-          tools: []
-        },
+        techStack: finalTechStack,
         metadata: {
           createdAt: new Date(),
           updatedAt: new Date(),
@@ -225,6 +235,43 @@ export class ProjectOperations {
       }
 
       logger.info({ projectId, projectName: params.name }, 'Project created successfully');
+
+      // Create main epic for the project to ensure proper task organization
+      try {
+        const { getEpicService } = await import('../../services/epic-service.js');
+        const epicService = getEpicService();
+        
+        const epicResult = await epicService.createEpic({
+          title: `${params.name} Main Development`,
+          description: `Main epic for ${params.name} project. All initial tasks will be organized under this epic.`,
+          projectId: projectId,
+          priority: 'high',
+          functionalArea: 'data-management',
+          tags: ['main-epic', 'auto-generated']
+        }, createdBy);
+        
+        if (epicResult.success) {
+          logger.info({
+            projectId,
+            epicId: epicResult.data!.id,
+            epicTitle: epicResult.data!.title
+          }, 'Main epic created for project');
+          
+          // Update project with main epic ID
+          const project = createResult.data!;
+          project.epicIds.push(epicResult.data!.id);
+        } else {
+          logger.warn({
+            projectId,
+            error: epicResult.error
+          }, 'Failed to create main epic for project - project creation will continue');
+        }
+      } catch (error) {
+        logger.warn({
+          err: error,
+          projectId
+        }, 'Error creating main epic - project creation will continue');
+      }
 
       return {
         success: true,
@@ -655,7 +702,16 @@ export class ProjectOperations {
   private async determineOptimalAgentConfig(
     params: CreateProjectParams,
     config: Record<string, unknown>
-  ): Promise<{ maxAgents: number; defaultAgent: string; agentCapabilities: Record<string, string[] | boolean> }> {
+  ): Promise<{ 
+    maxAgents: number; 
+    defaultAgent: string; 
+    agentCapabilities: Record<string, string[] | boolean>;
+    detectedTechStack?: {
+      languages: string[];
+      frameworks: string[];
+      tools: string[];
+    }
+  }> {
     try {
       logger.debug({
         projectName: params.name,
@@ -714,10 +770,20 @@ export class ProjectOperations {
         techStackBasis: { languages, frameworks, tools }
       }, 'Optimal agent configuration determined');
 
+      // Return configuration with detected tech stack if it was enhanced
+      const wasDetected = languages.length > 0 || frameworks.length > 0 || tools.length > 0;
+      
       return {
         maxAgents,
         defaultAgent: optimalAgent,
-        agentCapabilities
+        agentCapabilities,
+        ...(wasDetected && {
+          detectedTechStack: {
+            languages,
+            frameworks,
+            tools
+          }
+        })
       };
 
     } catch (error) {

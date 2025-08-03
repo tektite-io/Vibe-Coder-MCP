@@ -42,7 +42,7 @@ if ! command -v npm &> /dev/null; then
 fi
 print_status "npm is installed."
 
-# Check Node.js version (require v18+)
+# Check Node.js version (require v20+)
 echo "Checking Node.js version..."
 if ! command -v node &> /dev/null; then
     print_error "Node.js is not installed. Please install Node.js first."
@@ -51,12 +51,66 @@ if ! command -v node &> /dev/null; then
 fi
 
 node_version=$(node -v | cut -d "v" -f 2 | cut -d "." -f 1)
-if [ "$node_version" -lt 18 ]; then
-    print_error "Node.js v18+ is required (found v$(node -v)). Please upgrade Node.js."
+if [ "$node_version" -lt 20 ]; then
+    print_error "Node.js v20+ is required (found v$(node -v)). Please upgrade Node.js."
     echo "Visit: https://nodejs.org/"
     exit 1
 fi
 print_status "Node.js version check passed (found v$(node -v))."
+
+# Check disk space
+echo "Checking available disk space..."
+if command -v df &> /dev/null; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS uses different df syntax
+        available_space=$(df -m . | awk 'NR==2 {print $4}')
+    else
+        # Linux
+        available_space=$(df -BM . | awk 'NR==2 {print $4}' | sed 's/M//')
+    fi
+    
+    if [ -n "$available_space" ] && [ "$available_space" -lt 500 ]; then
+        print_warning "Less than 500MB free disk space available."
+        print_warning "Installation may fail. Please free up disk space."
+    fi
+else
+    print_warning "Cannot check disk space. Ensure you have at least 500MB free."
+fi
+
+# Check memory availability
+echo "Checking system memory..."
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS
+    total_memory=$(sysctl -n hw.memsize | awk '{print int($1/1024/1024)}')
+elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    # Linux
+    total_memory=$(grep MemTotal /proc/meminfo | awk '{print int($2/1024)}')
+else
+    total_memory=0
+fi
+
+if [ "$total_memory" -gt 0 ] && [ "$total_memory" -lt 4096 ]; then
+    print_warning "Less than 4GB RAM detected (${total_memory}MB)."
+    print_warning "Large projects may experience performance issues."
+fi
+
+# Check network connectivity
+echo "Checking network connectivity..."
+if ! ping -c 1 -W 1 registry.npmjs.org &> /dev/null && ! curl -s --head registry.npmjs.org &> /dev/null; then
+    print_warning "Cannot reach npm registry. Check internet connection."
+    print_warning "Installation may fail without network access."
+fi
+
+# Check git configuration
+echo "Checking git configuration..."
+if ! git config --get user.name &> /dev/null; then
+    print_warning "Git user.name not configured. Consider running:"
+    echo "   git config --global user.name \"Your Name\""
+fi
+if ! git config --get user.email &> /dev/null; then
+    print_warning "Git user.email not configured. Consider running:"
+    echo "   git config --global user.email \"your.email@example.com\""
+fi
 
 # Check npm cache and clean if needed
 echo "Checking npm cache health..."

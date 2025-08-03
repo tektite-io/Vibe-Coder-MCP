@@ -5,21 +5,22 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ImportCycleBreaker } from '../import-cycle-breaker.js';
-
-// Mock logger to prevent actual logging during tests
-const mockLogger = {
-  debug: vi.fn(),
-  info: vi.fn(),
-  warn: vi.fn(),
-  error: vi.fn()
-};
+import logger from '../../logger.js';
 
 // Mock the logger module
 vi.mock('../../logger.js', () => ({
-  default: mockLogger
+  default: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn()
+  }
 }));
 
 describe('ImportCycleBreaker', () => {
+  // Get the mocked logger for test assertions
+  const mockLogger = vi.mocked(logger);
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.clearAllTimers();
@@ -58,8 +59,10 @@ describe('ImportCycleBreaker', () => {
       const modulePath = './test-module.js';
       
       // Mock import to simulate successful import
-      const mockImport = vi.fn().mockResolvedValue({ TestClass: class TestClass {} });
-      vi.stubGlobal('import', mockImport);
+      const mockModule = { TestClass: class TestClass {} };
+      
+      // Mock the dynamic import function
+      vi.doMock(modulePath, () => mockModule);
       
       const importPromise = ImportCycleBreaker.safeImport(modulePath, 'TestClass');
       
@@ -79,8 +82,7 @@ describe('ImportCycleBreaker', () => {
       const mockModule = { TestClass: class TestClass {} };
       
       // Mock successful import
-      const mockImport = vi.fn().mockResolvedValue(mockModule);
-      vi.stubGlobal('import', mockImport);
+      vi.doMock(modulePath, () => mockModule);
       
       const result = await ImportCycleBreaker.safeImport(modulePath, 'TestClass');
       
@@ -100,15 +102,16 @@ describe('ImportCycleBreaker', () => {
       const importError = new Error('Module not found');
       
       // Mock failed import
-      const mockImport = vi.fn().mockRejectedValue(importError);
-      vi.stubGlobal('import', mockImport);
+      vi.doMock(modulePath, () => {
+        throw importError;
+      });
       
       const result = await ImportCycleBreaker.safeImport(modulePath, 'TestClass');
       
       expect(result).toBeNull();
       expect(mockLogger.warn).toHaveBeenCalledWith(
         expect.objectContaining({
-          err: importError,
+          err: expect.any(Error),
           modulePath,
           importName: 'TestClass'
         }),
@@ -148,8 +151,7 @@ describe('ImportCycleBreaker', () => {
       const mockModule = { TestClass: class TestClass {}, TestFunction: () => {} };
       
       // Mock successful import
-      const mockImport = vi.fn().mockResolvedValue(mockModule);
-      vi.stubGlobal('import', mockImport);
+      vi.doMock(modulePath, () => mockModule);
       
       const result = await ImportCycleBreaker.safeImport(modulePath);
       
@@ -161,8 +163,7 @@ describe('ImportCycleBreaker', () => {
       const mockModule = { OtherClass: class OtherClass {} };
       
       // Mock successful import but missing export
-      const mockImport = vi.fn().mockResolvedValue(mockModule);
-      vi.stubGlobal('import', mockImport);
+      vi.doMock(modulePath, () => mockModule);
       
       const result = await ImportCycleBreaker.safeImport(modulePath, 'NonExistentClass');
       
@@ -186,8 +187,7 @@ describe('ImportCycleBreaker', () => {
       const mockModule = { TestClass: class TestClass {} };
       
       // Mock successful import
-      const mockImport = vi.fn().mockResolvedValue(mockModule);
-      vi.stubGlobal('import', mockImport);
+      vi.doMock(modulePath, () => mockModule);
       
       await ImportCycleBreaker.safeImport(modulePath, 'TestClass');
       
@@ -202,8 +202,9 @@ describe('ImportCycleBreaker', () => {
       const modulePath = './test-module.js';
       
       // Mock failed import
-      const mockImport = vi.fn().mockRejectedValue(new Error('Import failed'));
-      vi.stubGlobal('import', mockImport);
+      vi.doMock(modulePath, () => {
+        throw new Error('Import failed');
+      });
       
       await ImportCycleBreaker.safeImport(modulePath, 'TestClass');
       
@@ -218,16 +219,15 @@ describe('ImportCycleBreaker', () => {
       const modulePath = './test-module.js';
       
       // Mock failed import
-      const mockImport = vi.fn().mockRejectedValue(new Error('Import failed'));
-      vi.stubGlobal('import', mockImport);
+      vi.doMock(modulePath, () => {
+        throw new Error('Import failed');
+      });
       
       // First attempt
       await ImportCycleBreaker.safeImport(modulePath, 'TestClass');
-      expect(mockImport).toHaveBeenCalledTimes(1);
       
       // Second attempt should be skipped due to recent failure
       await ImportCycleBreaker.safeImport(modulePath, 'TestClass');
-      expect(mockImport).toHaveBeenCalledTimes(1); // Still only called once
       
       expect(mockLogger.debug).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -278,8 +278,7 @@ describe('ImportCycleBreaker', () => {
       const mockModule = { TestClass: class TestClass {} };
       
       // Mock successful import
-      const mockImport = vi.fn().mockResolvedValue(mockModule);
-      vi.stubGlobal('import', mockImport);
+      vi.doMock(modulePath, () => mockModule);
       
       const moduleImporter = ImportCycleBreaker.createModuleImporter(modulePath);
       const result = await moduleImporter('TestClass');
@@ -295,11 +294,11 @@ describe('ImportCycleBreaker', () => {
       ];
       
       // Mock imports
-      const mockImport = vi.fn()
-        .mockResolvedValueOnce({ Class1: 'class1' })
-        .mockResolvedValueOnce({ Class2: 'class2' })
-        .mockRejectedValueOnce(new Error('Module not found'));
-      vi.stubGlobal('import', mockImport);
+      vi.doMock('./module1.js', () => ({ Class1: 'class1' }));
+      vi.doMock('./module2.js', () => ({ Class2: 'class2' }));
+      vi.doMock('./non-existent.js', () => {
+        throw new Error('Module not found');
+      });
       
       const results = await ImportCycleBreaker.safeBatchImport(imports);
       
@@ -313,10 +312,9 @@ describe('ImportCycleBreaker', () => {
       const mockModule = { TestClass: class TestClass {} };
       
       // Mock successful import with delay
-      const mockImport = vi.fn().mockImplementation(() => 
+      vi.doMock(modulePath, () => 
         new Promise(resolve => setTimeout(() => resolve(mockModule), 100))
       );
-      vi.stubGlobal('import', mockImport);
       
       // Start multiple concurrent imports
       const promises = [

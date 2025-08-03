@@ -524,6 +524,36 @@ export class WorkflowAwareAgentManager extends EventEmitter {
             logger.error({ err: error, data }, 'Error handling decomposition completed');
           });
         });
+
+        decompositionServiceAny.on('decomposition_failed', (data: Record<string, unknown>) => {
+          this.handleDecompositionFailed(data).catch(error => {
+            logger.error({ err: error, data }, 'Error handling decomposition failed');
+          });
+        });
+
+        decompositionServiceAny.on('epic_generation_started', (data: Record<string, unknown>) => {
+          this.handleEpicGenerationStarted(data).catch(error => {
+            logger.error({ err: error, data }, 'Error handling epic generation started');
+          });
+        });
+
+        decompositionServiceAny.on('epic_generation_completed', (data: Record<string, unknown>) => {
+          this.handleEpicGenerationCompleted(data).catch(error => {
+            logger.error({ err: error, data }, 'Error handling epic generation completed');
+          });
+        });
+
+        decompositionServiceAny.on('task_list_started', (data: Record<string, unknown>) => {
+          this.handleTaskListStarted(data).catch(error => {
+            logger.error({ err: error, data }, 'Error handling task list started');
+          });
+        });
+
+        decompositionServiceAny.on('task_list_completed', (data: Record<string, unknown>) => {
+          this.handleTaskListCompleted(data).catch(error => {
+            logger.error({ err: error, data }, 'Error handling task list completed');
+          });
+        });
       } else {
         logger.debug('DecompositionService does not support event listeners, using fallback mode');
       }
@@ -739,7 +769,7 @@ export class WorkflowAwareAgentManager extends EventEmitter {
    * Handle decomposition started
    */
   private async handleDecompositionStarted(data: Record<string, unknown>): Promise<void> {
-    const { sessionId, agentId, taskId, projectId } = data;
+    const { sessionId, agentId, taskId, projectId, originalSessionId, jobId } = data;
 
     if (!agentId || typeof agentId !== 'string') return;
 
@@ -754,13 +784,52 @@ export class WorkflowAwareAgentManager extends EventEmitter {
         decompositionStarted: new Date()
       }
     });
+
+    // NEW: Bridge to stdio communication for decomposition started
+    if (originalSessionId && jobId) {
+      const bridgeStartTime = Date.now();
+      try {
+        const { sseNotifier } = await import('../../../services/sse-notifier/index.js');
+        const { JobStatus } = await import('../../../services/job-manager/index.js');
+        
+        sseNotifier.sendProgress(
+          originalSessionId as string,
+          jobId as string,
+          JobStatus.RUNNING,
+          'Decomposition started - analyzing task complexity',
+          0
+        );
+
+        const bridgeExecutionTime = Date.now() - bridgeStartTime;
+        logger.info({
+          originalSessionId,
+          jobId,
+          step: 'decomposition_started',
+          bridgeExecutionTime,
+          performance: {
+            bridgeLatency: bridgeExecutionTime,
+            timestamp: new Date().toISOString()
+          }
+        }, 'Progress bridge: decomposition started forwarded to stdio client');
+      } catch (error) {
+        const bridgeExecutionTime = Date.now() - bridgeStartTime;
+        logger.error({
+          err: error,
+          originalSessionId,
+          jobId,
+          bridgeExecutionTime,
+          errorType: error instanceof Error ? error.constructor.name : 'Unknown',
+          errorMessage: error instanceof Error ? error.message : String(error)
+        }, 'Progress bridge: failed to send decomposition started to stdio client');
+      }
+    }
   }
 
   /**
    * Handle decomposition progress
    */
   private async handleDecompositionProgress(data: Record<string, unknown>): Promise<void> {
-    const { sessionId, agentId, progress } = data;
+    const { sessionId, agentId, progress, originalSessionId, jobId, step } = data;
 
     if (!agentId || typeof agentId !== 'string' || typeof progress !== 'number') return;
 
@@ -768,13 +837,101 @@ export class WorkflowAwareAgentManager extends EventEmitter {
       sessionId: sessionId as string,
       lastDecompositionUpdate: new Date()
     });
+
+    // NEW: Bridge to stdio communication for decomposition progress
+    if (originalSessionId && jobId) {
+      const bridgeStartTime = Date.now();
+      try {
+        const { sseNotifier } = await import('../../../services/sse-notifier/index.js');
+        const { JobStatus } = await import('../../../services/job-manager/index.js');
+        
+        // Create descriptive progress message based on step
+        let progressMessage = `Decomposition ${progress}% complete`;
+        const metadata = data.metadata as Record<string, unknown> || {};
+        
+        if (step) {
+          switch (step as string) {
+            case 'decomposition_started':
+              progressMessage = 'Decomposition started - analyzing task complexity';
+              break;
+            case 'context_enrichment_completed':
+              progressMessage = 'Context analysis complete - beginning decomposition';
+              break;
+            case 'epic_generation_started':
+              progressMessage = `Epic identification started - analyzing ${metadata.taskCount || 0} tasks`;
+              break;
+            case 'epic_generation_completed':
+              progressMessage = `Epic identification completed - functional areas identified`;
+              break;
+            case 'task_persistence_started':
+              progressMessage = `Task persistence started - saving ${metadata.taskCount || 0} tasks`;
+              break;
+            case 'task_persisted':
+              progressMessage = metadata.message as string || `Task ${metadata.persistedCount}/${metadata.totalTasks} persisted`;
+              break;
+            case 'dependency_analysis_started':
+              progressMessage = `Dependency analysis started - mapping task relationships`;
+              break;
+            case 'dependency_analysis_completed':
+              progressMessage = 'Dependency analysis completed - task graph generated';
+              break;
+            case 'decomposition_completed':
+              progressMessage = `Decomposition completed - ${metadata.persistedTasks || 0} tasks ready`;
+              break;
+            case 'task_processing':
+              progressMessage = `Processing ${metadata.currentTaskTitle || 'task'} - ${metadata.processedTasks}/${metadata.totalTasks}`;
+              break;
+            default:
+              progressMessage = `Decomposition ${progress}% complete - ${step}`;
+          }
+        }
+        
+        sseNotifier.sendProgress(
+          originalSessionId as string,
+          jobId as string,
+          JobStatus.RUNNING,
+          progressMessage,
+          progress as number
+        );
+
+        const bridgeExecutionTime = Date.now() - bridgeStartTime;
+        logger.info({
+          originalSessionId,
+          jobId,
+          progress,
+          step,
+          progressMessage,
+          bridgeExecutionTime,
+          performance: {
+            bridgeLatency: bridgeExecutionTime,
+            progressValue: progress,
+            timestamp: new Date().toISOString()
+          }
+        }, 'Progress bridge: decomposition progress forwarded to stdio client');
+      } catch (error) {
+        const bridgeExecutionTime = Date.now() - bridgeStartTime;
+        logger.error({
+          err: error,
+          originalSessionId,
+          jobId,
+          progress,
+          step,
+          bridgeExecutionTime,
+          errorType: error instanceof Error ? error.constructor.name : 'Unknown',
+          errorMessage: error instanceof Error ? error.message : String(error)
+        }, 'Progress bridge: failed to send decomposition progress to stdio client');
+      }
+    }
   }
 
   /**
    * Handle decomposition completed
    */
   private async handleDecompositionCompleted(data: Record<string, unknown>): Promise<void> {
-    const { sessionId, agentId, success = true } = data;
+    const { sessionId, agentId, status, originalSessionId, jobId, totalTasks, persistedTasks } = data;
+    
+    // Extract success from status field (since decomposition events use 'status' not 'success')
+    const success = status === 'completed';
 
     if (!agentId || typeof agentId !== 'string') return;
 
@@ -782,6 +939,260 @@ export class WorkflowAwareAgentManager extends EventEmitter {
       sessionId: sessionId as string,
       decompositionCompleted: new Date()
     });
+
+    // NEW: Bridge to stdio communication for decomposition completed
+    if (originalSessionId && jobId) {
+      try {
+        const { sseNotifier } = await import('../../../services/sse-notifier/index.js');
+        const { JobStatus } = await import('../../../services/job-manager/index.js');
+        
+        // Create completion message with task count information
+        const taskCount = persistedTasks || totalTasks || 0;
+        const completionMessage = success 
+          ? `Decomposition completed successfully - ${taskCount} tasks generated`
+          : 'Decomposition completed with issues - check results for details';
+        
+        sseNotifier.sendProgress(
+          originalSessionId as string,
+          jobId as string,
+          success ? JobStatus.COMPLETED : JobStatus.FAILED,
+          completionMessage,
+          100
+        );
+
+        logger.debug({
+          originalSessionId,
+          jobId,
+          success,
+          taskCount,
+          completionMessage
+        }, 'Progress bridge: forwarded decomposition completion to stdio client');
+      } catch (error) {
+        logger.warn({
+          err: error,
+          originalSessionId,
+          jobId,
+          success
+        }, 'Failed to send decomposition completion to stdio client');
+      }
+    }
+  }
+
+  /**
+   * Handle decomposition failed
+   */
+  private async handleDecompositionFailed(data: Record<string, unknown>): Promise<void> {
+    const { sessionId, agentId, error, originalSessionId, jobId } = data;
+
+    if (!agentId || typeof agentId !== 'string') return;
+
+    await this.completeAgentActivity(agentId, false, {
+      sessionId: sessionId as string,
+      decompositionFailed: new Date(),
+      error: error as Record<string, unknown>
+    });
+
+    // Bridge to stdio communication for decomposition failed
+    if (originalSessionId && jobId) {
+      try {
+        const { sseNotifier } = await import('../../../services/sse-notifier/index.js');
+        const { JobStatus } = await import('../../../services/job-manager/index.js');
+        
+        const errorMessage = error && typeof error === 'object' && 'message' in error 
+          ? `Decomposition failed: ${error.message}`
+          : 'Decomposition failed - check logs for details';
+        
+        sseNotifier.sendProgress(
+          originalSessionId as string,
+          jobId as string,
+          JobStatus.FAILED,
+          errorMessage,
+          0
+        );
+
+        logger.debug({
+          originalSessionId,
+          jobId,
+          error
+        }, 'Progress bridge: forwarded decomposition failure to stdio client');
+      } catch (bridgeError) {
+        logger.warn({
+          err: bridgeError,
+          originalSessionId,
+          jobId,
+          error
+        }, 'Failed to send decomposition failure to stdio client');
+      }
+    }
+  }
+
+  /**
+   * Handle epic generation started
+   */
+  private async handleEpicGenerationStarted(data: Record<string, unknown>): Promise<void> {
+    const { agentId, originalSessionId, jobId, metadata } = data;
+
+    if (!agentId || typeof agentId !== 'string') return;
+
+    // Bridge to stdio communication for epic generation started
+    if (originalSessionId && jobId) {
+      try {
+        const { sseNotifier } = await import('../../../services/sse-notifier/index.js');
+        const { JobStatus } = await import('../../../services/job-manager/index.js');
+        
+        const taskCount = metadata && typeof metadata === 'object' && 'taskCount' in metadata 
+          ? metadata.taskCount 
+          : 'multiple';
+        
+        sseNotifier.sendProgress(
+          originalSessionId as string,
+          jobId as string,
+          JobStatus.RUNNING,
+          `Epic generation started - organizing ${taskCount} tasks`,
+          82
+        );
+
+        logger.debug({
+          originalSessionId,
+          jobId,
+          taskCount
+        }, 'Progress bridge: forwarded epic generation started to stdio client');
+      } catch (error) {
+        logger.warn({
+          err: error,
+          originalSessionId,
+          jobId
+        }, 'Failed to send epic generation started to stdio client');
+      }
+    }
+  }
+
+  /**
+   * Handle epic generation completed
+   */
+  private async handleEpicGenerationCompleted(data: Record<string, unknown>): Promise<void> {
+    const { agentId, status, originalSessionId, jobId, metadata } = data;
+
+    if (!agentId || typeof agentId !== 'string') return;
+
+    const success = status === 'completed';
+
+    // Bridge to stdio communication for epic generation completed
+    if (originalSessionId && jobId) {
+      try {
+        const { sseNotifier } = await import('../../../services/sse-notifier/index.js');
+        const { JobStatus } = await import('../../../services/job-manager/index.js');
+        
+        const taskCount = metadata && typeof metadata === 'object' && 'taskCount' in metadata 
+          ? metadata.taskCount 
+          : 'multiple';
+        
+        const completionMessage = success 
+          ? `Epic generation completed - ${taskCount} tasks organized into epics`
+          : 'Epic generation completed with issues - tasks may use default epic';
+        
+        sseNotifier.sendProgress(
+          originalSessionId as string,
+          jobId as string,
+          JobStatus.RUNNING,
+          completionMessage,
+          85
+        );
+
+        logger.debug({
+          originalSessionId,
+          jobId,
+          success,
+          taskCount,
+          completionMessage
+        }, 'Progress bridge: forwarded epic generation completion to stdio client');
+      } catch (error) {
+        logger.warn({
+          err: error,
+          originalSessionId,
+          jobId,
+          success
+        }, 'Failed to send epic generation completion to stdio client');
+      }
+    }
+  }
+
+  /**
+   * Handle task list started
+   */
+  private async handleTaskListStarted(data: Record<string, unknown>): Promise<void> {
+    const { agentId, originalSessionId, jobId } = data;
+
+    if (!agentId || typeof agentId !== 'string') return;
+
+    // Bridge to stdio communication for task list processing started
+    if (originalSessionId && jobId) {
+      try {
+        const { sseNotifier } = await import('../../../services/sse-notifier/index.js');
+        const { JobStatus } = await import('../../../services/job-manager/index.js');
+        
+        sseNotifier.sendProgress(
+          originalSessionId as string,
+          jobId as string,
+          JobStatus.RUNNING,
+          'Task list processing started - persisting tasks to storage',
+          86
+        );
+
+        logger.debug({
+          originalSessionId,
+          jobId
+        }, 'Progress bridge: forwarded task list started to stdio client');
+      } catch (error) {
+        logger.warn({
+          err: error,
+          originalSessionId,
+          jobId
+        }, 'Failed to send task list started to stdio client');
+      }
+    }
+  }
+
+  /**
+   * Handle task list completed
+   */
+  private async handleTaskListCompleted(data: Record<string, unknown>): Promise<void> {
+    const { agentId, originalSessionId, jobId, totalTasks, persistedTasks } = data;
+
+    if (!agentId || typeof agentId !== 'string') return;
+
+    // Bridge to stdio communication for task list processing completed
+    if (originalSessionId && jobId) {
+      try {
+        const { sseNotifier } = await import('../../../services/sse-notifier/index.js');
+        const { JobStatus } = await import('../../../services/job-manager/index.js');
+        
+        const taskCount = persistedTasks || totalTasks || 0;
+        const completionMessage = `Task list processing completed - ${taskCount} tasks persisted to storage`;
+        
+        sseNotifier.sendProgress(
+          originalSessionId as string,
+          jobId as string,
+          JobStatus.RUNNING,
+          completionMessage,
+          90
+        );
+
+        logger.debug({
+          originalSessionId,
+          jobId,
+          taskCount,
+          completionMessage
+        }, 'Progress bridge: forwarded task list completion to stdio client');
+      } catch (error) {
+        logger.warn({
+          err: error,
+          originalSessionId,
+          jobId,
+          taskCount: persistedTasks || totalTasks || 0
+        }, 'Failed to send task list completion to stdio client');
+      }
+    }
   }
 
   /**

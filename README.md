@@ -61,7 +61,7 @@ Follow these micro-steps to get the Vibe Coder MCP server running and connected 
 1. **Check Node.js Version:**
    * Open a terminal or command prompt.
    * Run `node -v`
-   * Ensure the output shows v18.0.0 or higher (required).
+   * Ensure the output shows v20.0.0 or higher (required).
    * If not installed or outdated: Download from [nodejs.org](https://nodejs.org/).
 
 2. **Check Git Installation:**
@@ -1129,6 +1129,94 @@ We welcome contributions! Please see our contributing guidelines and ensure all 
 - **TypeScript**: Use strict TypeScript with proper typing
 - **Documentation**: Update relevant documentation for changes
 - **Performance**: Consider performance impact of changes
+
+## Common Troubleshooting
+
+### OpenRouter API Key Issues
+
+**Problem**: Tools fail with authentication errors
+- **Solution**: Verify your OpenRouter API key is correctly set in `.env`
+- **Check**: Ensure the key has no extra spaces or quotes
+- **Verify**: Test your key at [openrouter.ai](https://openrouter.ai)
+- **Credits**: Ensure you have sufficient credits in your OpenRouter account
+
+### Path Configuration Problems
+
+**Problem**: "Path not found" or "Access denied" errors
+- **Solution**: Use absolute paths with forward slashes (/) in all configurations
+- **Windows**: Convert paths like `C:\Users\name` to `C:/Users/name`
+- **Permissions**: Ensure the user has read/write access to configured directories
+- **Environment Variables**: Verify `VIBE_CODER_OUTPUT_DIR`, `CODE_MAP_ALLOWED_DIR`, and `VIBE_TASK_MANAGER_READ_DIR` are set correctly
+
+### Build Failures
+
+**Problem**: TypeScript compilation errors
+- **Solution**: Run `npm run clean && npm run build`
+- **Dependencies**: Delete `node_modules` and `package-lock.json`, then run `npm install`
+- **Node Version**: Ensure Node.js v20+ is installed (`node -v`)
+- **TypeScript**: Check for syntax errors with `npm run lint`
+
+### Test Failures
+
+**Problem**: Tests fail during setup or CI/CD
+- **Environment**: Ensure `.env` file exists with valid `OPENROUTER_API_KEY`
+- **Memory**: Tests may fail on systems with <4GB RAM
+- **Network**: Some tests require internet connectivity
+- **Cleanup**: Run `npm run clean` before running tests
+
+### Memory/Performance Issues
+
+**Problem**: High memory usage or slow performance
+- **Large Codebases**: Code Map Tool may consume significant memory for projects with >10,000 files
+- **Solution**: Increase Node.js memory limit: `NODE_OPTIONS='--max-old-space-size=4096' npm start`
+- **Caching**: Clear cache directories in `VibeCoderOutput/` if they grow too large
+- **Monitoring**: Use `npm run test:memory` to identify memory leaks
+
+### MCP Client Connection Issues
+
+**Problem**: Server not detected by AI assistant
+- **Paths**: Verify all paths in MCP configuration use forward slashes and are absolute
+- **Restart**: Completely close and restart your AI assistant application
+- **Logs**: Check `LOG_LEVEL=debug` in configuration for detailed error messages
+- **Transport**: Ensure `"transport": "stdio"` is set correctly
+- **Disabled**: Verify `"disabled": false` in your configuration
+
+### Tool-Specific Issues
+
+**Vibe Task Manager**:
+- If natural language commands fail, try using structured commands
+- Check `VibeCoderOutput/vibe-task-manager/` for project files
+- Ensure project names don't contain special characters
+
+**Code Map Tool**:
+- For permission errors, verify `CODE_MAP_ALLOWED_DIR` is set
+- Large repositories may timeout - try smaller subdirectories
+- Some languages require additional setup (see tool README)
+
+**Context Curator**:
+- If codemap generation fails, check recent codemaps in cache
+- Verify sufficient disk space for large context packages
+- Check file permissions in target directories
+
+### Network and Proxy Issues
+
+**Problem**: Cannot reach external services
+- **Proxy**: Set `HTTP_PROXY` and `HTTPS_PROXY` environment variables if behind a proxy
+- **SSL**: For SSL issues, try `NODE_TLS_REJECT_UNAUTHORIZED=0` (development only)
+- **Firewall**: Ensure firewall allows outbound HTTPS connections
+- **DNS**: Try using public DNS servers if resolution fails
+
+### Getting Help
+
+If issues persist:
+1. Check existing issues at [GitHub Issues](https://github.com/freshtechbro/vibe-coder-mcp/issues)
+2. Enable debug logging: `LOG_LEVEL=debug`
+3. Collect error messages and logs
+4. Create a new issue with:
+   - Node.js version (`node -v`)
+   - Operating system
+   - Error messages
+   - Steps to reproduce
 
 ## License
 

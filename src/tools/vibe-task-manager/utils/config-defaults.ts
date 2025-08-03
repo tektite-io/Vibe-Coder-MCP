@@ -221,7 +221,7 @@ export const ENVIRONMENT_VARIABLES: Record<string, EnvironmentVariableConfig> = 
 
   VIBE_TASK_DECOMPOSITION_TIMEOUT: {
     key: 'VIBE_TASK_DECOMPOSITION_TIMEOUT',
-    defaultValue: 900000, // Increased to 15 minutes for complex projects
+    defaultValue: 300000, // 5 minutes for decomposition
     type: 'number',
     required: false,
     description: 'Task decomposition timeout in milliseconds',
@@ -257,7 +257,7 @@ export const ENVIRONMENT_VARIABLES: Record<string, EnvironmentVariableConfig> = 
 
   VIBE_LLM_REQUEST_TIMEOUT: {
     key: 'VIBE_LLM_REQUEST_TIMEOUT',
-    defaultValue: 120000, // Increased to 2 minutes for complex decomposition
+    defaultValue: 60000, // 1 minute for LLM requests
     type: 'number',
     required: false,
     description: 'LLM request timeout in milliseconds',
@@ -346,6 +346,52 @@ export const ENVIRONMENT_VARIABLES: Record<string, EnvironmentVariableConfig> = 
     required: false,
     description: 'Security mode for task manager',
     validation: (value: unknown) => typeof value === 'string' && ['strict', 'permissive'].includes(value)
+  },
+
+  // RDD Engine Configuration
+  VIBE_RDD_MAX_DEPTH: {
+    key: 'VIBE_RDD_MAX_DEPTH',
+    defaultValue: 5,
+    type: 'number',
+    required: false,
+    description: 'Maximum decomposition depth for RDD engine',
+    validation: (value: unknown) => typeof value === 'number' && value >= 1 && value <= 10
+  },
+
+  VIBE_RDD_MAX_SUB_TASKS: {
+    key: 'VIBE_RDD_MAX_SUB_TASKS',
+    defaultValue: 400,
+    type: 'number',
+    required: false,
+    description: 'Maximum number of sub-tasks per decomposition (increased from 48 for realistic enterprise coverage)',
+    validation: (value: unknown) => typeof value === 'number' && value >= 10 && value <= 1000
+  },
+
+  VIBE_RDD_MIN_CONFIDENCE: {
+    key: 'VIBE_RDD_MIN_CONFIDENCE',
+    defaultValue: 0.8,
+    type: 'number',
+    required: false,
+    description: 'Minimum confidence threshold for atomic task detection',
+    validation: (value: unknown) => typeof value === 'number' && value >= 0.1 && value <= 1.0
+  },
+
+  VIBE_RDD_ENABLE_PARALLEL_DECOMPOSITION: {
+    key: 'VIBE_RDD_ENABLE_PARALLEL_DECOMPOSITION',
+    defaultValue: true,
+    type: 'boolean',
+    required: false,
+    description: 'Enable parallel decomposition processing',
+    transform: (value: string) => value.toLowerCase() === 'true'
+  },
+
+  VIBE_RDD_EPIC_TIME_LIMIT: {
+    key: 'VIBE_RDD_EPIC_TIME_LIMIT',
+    defaultValue: 400,
+    type: 'number',
+    required: false,
+    description: 'Maximum hours per epic (increased from 8 hours for realistic project scope)',
+    validation: (value: unknown) => typeof value === 'number' && value >= 8 && value <= 2000
   },
 
   // LLM Model Fallback

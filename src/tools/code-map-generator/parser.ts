@@ -66,8 +66,16 @@ const GRAMMARS_BASE_DIR = resolveProjectPath('src/tools/code-map-generator/gramm
 logger.info(`Grammar files directory: ${GRAMMARS_BASE_DIR}`);
 // Also log the project root and current working directory to help with debugging
 logger.info(`Project root directory: ${getProjectRoot()}`);
-logger.info(`Current working directory: ${process.cwd()}`);
+const currentWorkingDirectory = process.cwd();
+logger.info(`Current working directory: ${currentWorkingDirectory}`);
 logger.info(`Module directory (__dirname): ${__dirname}`);
+
+// SECURITY CHECK: Detect if working directory has been compromised
+if (currentWorkingDirectory === '/' || currentWorkingDirectory === '') {
+  logger.error('CRITICAL SECURITY ISSUE: Working directory has been changed to root (/). This could compromise security boundaries.');
+  logger.error('RECOMMENDATION: All file operations should use absolute paths from getProjectRoot() instead of process.cwd()');
+  logger.warn('Continuing with absolute path resolution to maintain security...');
+}
 
 // languageConfigurations is already exported below
 
@@ -919,14 +927,10 @@ export async function getSourceCodeFromCache(filePath: string, allowedDir?: stri
         return await fileContentManager.getContent(filePath, allowedDir);
       }
 
-      // Otherwise, try to get from in-memory cache only
-      const metadata = await fileContentManager.getMetadata(filePath);
-      if (metadata) {
-        logger.debug(`Found metadata for ${filePath} in FileContentManager`);
-        // Return content from FileContentManager
-        // Use an empty string as allowedDir to bypass security check (we already verified metadata exists)
-        return await fileContentManager.getContent(filePath, '');
-      }
+      // If no allowedDir provided, we cannot safely access file content
+      // All callers should provide allowedDir for security compliance
+      logger.warn({ filePath }, 'getSourceCodeFromCache called without allowedDir - security boundary cannot be validated');
+      return null;
     } catch (error) {
       logger.debug(`Error getting source code from FileContentManager: ${error}`);
     }

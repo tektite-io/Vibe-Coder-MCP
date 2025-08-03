@@ -746,9 +746,9 @@ class TransportManager {
    * Log comprehensive startup summary with enhanced port allocation details
    */
   private logStartupSummary(allocationSummary: AllocationSummary): void {
-    const successful = allocationSummary.successful;
+    const successful = Array.from(allocationSummary.allocations.values()).filter(r => r.success);
     const attempted = allocationSummary.totalAttempted;
-    const conflicts = allocationSummary.conflicts;
+    const conflicts: number[] = [];
     const serviceDetails: Record<string, {
       port?: number;
       status: string;
@@ -777,7 +777,7 @@ class TransportManager {
       };
 
       if (allocation.success) {
-        successful.push(allocation.port);
+        // successful is already an array of PortAllocationResult objects
       } else {
         conflicts.push(...allocation.attempted);
       }

@@ -101,7 +101,8 @@ export class ToolRegistry {
      */
     public registerTool(definition: ToolDefinition): void {
         if (this.tools.has(definition.name)) {
-            logger.warn(`Tool "${definition.name}" is already registered. Overwriting.`);
+            logger.warn(`Tool "${definition.name}" is already registered. Skipping duplicate registration.`);
+            return; // Skip duplicate registration instead of overwriting
         }
         this.tools.set(definition.name, definition);
         logger.info(`Registered tool: ${definition.name}`);
@@ -122,6 +123,26 @@ export class ToolRegistry {
      */
     public getAllTools(): ToolDefinition[] {
         return Array.from(this.tools.values());
+    }
+
+    /**
+     * Gets registration statistics for monitoring.
+     * @returns Object with registration stats
+     */
+    public getRegistrationStats(): { totalRegistered: number; toolNames: string[] } {
+        return {
+            totalRegistered: this.tools.size,
+            toolNames: Array.from(this.tools.keys())
+        };
+    }
+
+    /**
+     * Checks if a tool is already registered.
+     * @param toolName The name of the tool to check.
+     * @returns True if the tool is registered, false otherwise.
+     */
+    public isToolRegistered(toolName: string): boolean {
+        return this.tools.has(toolName);
     }
 
      /**
@@ -317,6 +338,16 @@ export async function executeTool(
     // Alternative: Re-throw a specific ToolExecutionError
     // throw new ToolExecutionError(`Execution failed for tool '${toolName}'`, errorContext, error instanceof Error ? error : undefined);
   }
+}
+
+/**
+ * Checks if a tool is already registered.
+ * @param toolName The name of the tool to check.
+ * @returns True if the tool is registered, false otherwise.
+ */
+export function isToolRegistered(toolName: string): boolean {
+    const registry = ToolRegistry.getInstance();
+    return registry.isToolRegistered(toolName);
 }
 
 /**

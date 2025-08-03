@@ -1,4 +1,19 @@
 /**
+ * MCP Client Environment Variables Interface
+ * Represents environment variables passed from MCP client configuration
+ */
+export interface MCPEnvironmentVariables {
+  readonly VIBE_TASK_MANAGER_READ_DIR?: string;
+  readonly VIBE_CODER_OUTPUT_DIR?: string;
+  readonly CODE_MAP_ALLOWED_DIR?: string;
+  readonly VIBE_TASK_MANAGER_SECURITY_MODE?: 'strict' | 'permissive';
+  readonly LOG_LEVEL?: string;
+  readonly NODE_ENV?: string;
+  readonly LLM_CONFIG_PATH?: string;
+  readonly [key: string]: string | undefined;
+}
+
+/**
  * Configuration options for using OpenRouter API
  */
 export interface OpenRouterConfig {
@@ -11,6 +26,9 @@ export interface OpenRouterConfig {
   // Tool-specific configurations
   tools?: Record<string, unknown>;
   config?: Record<string, unknown>;
+  
+  // MCP Client environment variables (optional)
+  env?: MCPEnvironmentVariables;
 }
 
 

@@ -50,35 +50,148 @@ export class EntityExtractors {
 
     // Look for project name in quotes or after keywords
     const projectPatterns = [
-      // Quoted patterns (highest priority)
+      // PID patterns (highest priority) - Format: PID-PROJECTNAME-NNN
+      /\b(PID-[A-Z0-9-]+)\b/i,
+      // Quoted patterns (second highest priority)
       /called\s+["']([^"']+)["']/i,
       /project\s+["']([^"']+)["']/i,
       /["']([^"']+)["']\s+project/i,
       /for\s+["']([^"']+)["']/i,
       // Multi-word patterns without quotes (capture until end of string or common stop words)
-      /called\s+([A-Za-z0-9\s\-_]+?)(?:\s+(?:project|task|file|document|prd|tasks?|list|into|with|for|using|through|via|detailed|comprehensive|development)|\s*$)/i,
-      /project\s+([A-Za-z0-9\s\-_]+?)(?:\s+(?:project|task|file|document|prd|tasks?|list|into|with|for|using|through|via|detailed|comprehensive|development)|\s*$)/i,
-      /for\s+(?:the\s+)?([A-Za-z0-9\s\-_]+?)(?:\s+(?:project|task|file|document|prd|tasks?|list|into|with|for|using|through|via|detailed|comprehensive|development)|\s*$)/i,
-      // Single word patterns (fallback)
-      /called\s+(\w+)/i,
-      /project\s+(\w+)/i,
-      /for\s+(\w+)/i
+      // Limit capture to reasonable project name length (max ~5 words or until punctuation/stop words)
+      /called\s+([A-Za-z0-9\-_]+(?:\s+[A-Za-z0-9\-_]+){0,4})(?=\s+[-–—]|\s+(?:project|task|file|document|prd|tasks?|list|into|with|for|using|through|via|detailed|comprehensive|development)|\s*$)/i,
+      /project\s+(?!for\s)([A-Za-z0-9\-_]+(?:\s+[A-Za-z0-9\-_]+){0,4})(?=\s+[-–—]|\s+(?:project|task|file|document|prd|tasks?|list|into|with|for|using|through|via|detailed|comprehensive|development)|\s*$)/i,
+      /for\s+(?:the\s+)?([A-Za-z0-9\-_]+(?:\s+[A-Za-z0-9\-_]+){0,4})(?=\s+[-–—]|\s+(?:project|task|file|document|prd|tasks?|list|into|with|for|using|through|via|detailed|comprehensive|development)|\s*$)/i,
+      // Single word patterns (fallback - only if multi-word didn't match)
+      /called\s+([A-Za-z0-9\-_]+)(?:\s|$)/i,
+      /project\s+(?!for\s)([A-Za-z0-9\-_]+)(?:\s|$)/i,
+      /for\s+(?:the\s+)?([A-Za-z0-9\-_]+)(?:\s|$)/i
     ];
 
-    for (const pattern of projectPatterns) {
+    // Blacklist of common verb phrases that should not be project names
+    const blacklistedPhrases = [
+      'should be set up',
+      'needs to be',
+      'must be',
+      'has to be',
+      'will be',
+      'would be',
+      'could be',
+      'can be',
+      'should be',
+      'is being',
+      'was being',
+      'has been',
+      'have been'
+    ];
+
+    // Collect all matches with their metadata
+    interface ProjectMatch {
+      name: string;
+      priority: number;
+      position: number;
+      hasDashSeparator: boolean;
+      pattern: RegExp;
+    }
+
+    const allMatches: ProjectMatch[] = [];
+
+    projectPatterns.forEach((pattern, priority) => {
       const projectMatch = text.match(pattern);
       if (projectMatch) {
         let projectName = projectMatch[1].trim();
 
         // Clean up common artifacts
         projectName = projectName.replace(/\s+/g, ' '); // Normalize whitespace
-        projectName = projectName.replace(/\s+(project|task|file|document|prd|tasks?|list|into|with|for|using|through|via|detailed|comprehensive|development)$/i, ''); // Remove trailing keywords
+        
+        // Check if the name ends with a dash separator (indicates higher quality match)
+        const hasDashSeparator = text.substring(projectMatch.index! + projectMatch[0].length).match(/^\s*[-–—]/);
+        
+        // Handle specific project ID patterns with dash separators
+        const projectIdWithDescMatch = projectName.match(/^([A-Z0-9]+(?:-[A-Z0-9]+)*)\s*[-–—]\s+/i);
+        if (projectIdWithDescMatch && projectIdWithDescMatch[1].includes('-')) {
+          projectName = projectIdWithDescMatch[1];
+        } else {
+          // Remove trailing dashes and keywords if no project ID pattern
+          projectName = projectName.replace(/\s*[-–—]\s*$/, ''); // Remove trailing dashes
+          projectName = projectName.replace(/\s+(project|task|file|document|prd|tasks?|list|into|with|for|using|through|via|detailed|comprehensive|development)$/i, ''); // Remove trailing keywords
+        }
 
-        if (projectName.length > 0) {
-          entities.projectName = projectName;
-          break;
+        // Skip if the name is in the blacklist
+        const lowerName = projectName.toLowerCase();
+        const isBlacklisted = blacklistedPhrases.some(phrase => lowerName === phrase || lowerName.includes(phrase));
+        
+        if (projectName.length > 0 && !isBlacklisted) {
+          allMatches.push({
+            name: projectName,
+            priority: priority,
+            position: projectMatch.index!,
+            hasDashSeparator: !!hasDashSeparator,
+            pattern: pattern
+          });
         }
       }
+    });
+
+    // Select the best match based on scoring
+    if (allMatches.length > 0) {
+      // Sort by: priority (lower is better), then position (earlier is better), then dash separator (true is better)
+      allMatches.sort((a, b) => {
+        // First, compare by priority (lower number = higher priority)
+        if (a.priority !== b.priority) {
+          return a.priority - b.priority;
+        }
+        
+        // For same priority, prefer matches with dash separators
+        if (a.hasDashSeparator !== b.hasDashSeparator) {
+          return b.hasDashSeparator ? 1 : -1;
+        }
+        
+        // Finally, prefer earlier matches in the text
+        return a.position - b.position;
+      });
+
+      const bestMatch = allMatches[0];
+      
+      // Log when we're choosing between multiple matches
+      if (allMatches.length > 1) {
+        logger.debug({
+          selectedMatch: bestMatch.name,
+          allMatches: allMatches.map(m => ({
+            name: m.name,
+            priority: m.priority,
+            position: m.position,
+            hasDashSeparator: m.hasDashSeparator
+          })),
+          originalText: text
+        }, 'Multiple project name matches found, selected best match');
+      }
+
+      // Handle truncation for the best match
+      let projectName = bestMatch.name;
+      if (projectName.length > 50) {
+        // Try to truncate at a word boundary
+        const truncated = projectName.substring(0, 50);
+        const lastSpace = truncated.lastIndexOf(' ');
+        
+        if (lastSpace > 30) {
+          // Truncate at last word boundary if it's reasonable
+          projectName = truncated.substring(0, lastSpace).trim();
+        } else {
+          // Otherwise just take first 50 chars
+          projectName = truncated.trim();
+        }
+        
+        // Log warning about truncation
+        logger.warn({
+          originalLength: bestMatch.name.length,
+          truncatedLength: projectName.length,
+          originalName: bestMatch.name,
+          truncatedName: projectName
+        }, 'Project name truncated to meet 50 character limit');
+      }
+      
+      entities.projectName = projectName;
     }
 
     return entities;
@@ -123,6 +236,60 @@ export class EntityExtractors {
     const typeMatch = text.match(/\b(development|testing|documentation|research|bug|feature)\b/i);
     if (typeMatch) {
       entities.type = typeMatch[1].toLowerCase();
+    }
+
+    return entities;
+  }
+
+  /**
+   * Extract epic information from text
+   */
+  static epicInfo(text: string, _match: RegExpMatchArray): Record<string, unknown> {
+    const entities: Record<string, unknown> = {};
+
+    // Extract epic title - try patterns with and without quotes
+    const titlePatterns = [
+      /epic\s+["']([^"']+)["']/i,
+      /["']([^"']+)["']\s+epic/i,
+      /for\s+["']([^"']+)["']/i,
+      /called\s+["']([^"']+)["']/i,
+      /to\s+["']([^"']+)["']/i,
+      // Patterns without quotes
+      /called\s+(\w+)/i,
+      /for\s+(\w+)/i,
+      /epic\s+(\w+)/i,
+      /(\w+)\s+epic/i
+    ];
+
+    for (const pattern of titlePatterns) {
+      const titleMatch = text.match(pattern);
+      if (titleMatch) {
+        entities.epicTitle = titleMatch[1].trim();
+        break;
+      }
+    }
+
+    // Extract epic ID patterns
+    const epicIdPatterns = [
+      /epic\s+([E]\d+)/i,
+      /([E]\d+)/i,
+      /epic\s+id\s+(\w+)/i,
+      /id\s+(\w+)/i
+    ];
+
+    for (const pattern of epicIdPatterns) {
+      const idMatch = text.match(pattern);
+      if (idMatch) {
+        entities.epicId = idMatch[1].trim();
+        break;
+      }
+    }
+
+    // Extract priority
+    const priorityMatch = text.match(/\b(low|medium|high|critical)\s+priority\b/i) ||
+                         text.match(/priority\s+(low|medium|high|critical)\b/i);
+    if (priorityMatch) {
+      entities.priority = priorityMatch[1].toLowerCase();
     }
 
     return entities;
@@ -419,6 +586,38 @@ export class IntentPatternEngine {
       ]
     });
 
+    // Project opening patterns
+    this.addPattern('open_project', {
+      id: 'open_project_basic',
+      intent: 'open_project',
+      patterns: [
+        'open\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'switch\\s+to\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'work\\s+on\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'continue\\s+(?:with\\s+)?(?:the\\s+)?(?:\\w+\\s+)?project',
+        'load\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'access\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        // Natural variations
+        '(?:let\'s\\s+)?(?:open|switch|work|continue)\\s+(?:with\\s+|on\\s+)?(?:the\\s+)?(?:\\w+\\s+)?project',
+        'i\\s+(?:want\\s+to\\s+|need\\s+to\\s+)?(?:open|work\\s+on|switch\\s+to)\\s+(?:the\\s+)?(?:\\w+\\s+)?project',
+        'can\\s+(?:you\\s+)?(?:open|load|switch\\s+to)\\s+(?:the\\s+)?(?:\\w+\\s+)?project'
+      ],
+      keywords: ['open', 'switch', 'work', 'continue', 'load', 'access', 'project'],
+      requiredEntities: ['projectName'],
+      optionalEntities: [],
+      priority: 10,
+      active: true,
+      examples: [
+        'Open the web app project',
+        'Switch to mobile project',
+        'Work on the API project',
+        'Continue with project "E-commerce Platform"',
+        'Load the streaming project',
+        'I want to work on the mobile project',
+        'Can you open the backend project?'
+      ]
+    });
+
     // Task creation patterns
     this.addPattern('create_task', {
       id: 'create_task_basic',
@@ -576,6 +775,48 @@ export class IntentPatternEngine {
         'Break down the authentication task',
         'Split up this task',
         'Decompose the login feature task'
+      ]
+    });
+
+    // Epic decomposition patterns
+    this.addPattern('decompose_epic', {
+      id: 'decompose_epic_basic',
+      intent: 'decompose_epic',
+      patterns: [
+        'decompose\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'break\\s+down\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'split\\s+(?:up\\s+)?(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'divide\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'breakdown\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'decompose\\s+epic\\s+\\w+',
+        'break\\s+down\\s+epic\\s+\\w+',
+        // Natural language variations
+        'analyze\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'plan\\s+(?:out\\s+)?(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'organize\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'structure\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'outline\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        // Conversational patterns
+        '(?:can\\s+you\\s+)?(?:decompose|break\\s+down|analyze)\\s+(?:this\\s+|the\\s+)?epic',
+        'i\\s+(?:want\\s+to\\s+|need\\s+to\\s+)?(?:decompose|break\\s+down|analyze)\\s+(?:this\\s+|the\\s+)?epic',
+        '(?:let\'s\\s+)?(?:decompose|break\\s+down|analyze)\\s+(?:this\\s+|the\\s+)?epic',
+        // Task-oriented patterns
+        'create\\s+tasks\\s+for\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'generate\\s+tasks\\s+for\\s+(?:the\\s+)?(?:\\w+\\s+)?epic',
+        'break\\s+epic\\s+into\\s+tasks',
+        'convert\\s+epic\\s+to\\s+tasks'
+      ],
+      keywords: ['decompose', 'break down', 'split', 'divide', 'breakdown', 'epic', 'analyze', 'plan', 'organize', 'tasks'],
+      requiredEntities: [],
+      optionalEntities: ['epicId', 'epicName', 'description'],
+      priority: 10,
+      active: true,
+      examples: [
+        'Decompose epic E001',
+        'Break down the authentication epic',
+        'Split up this epic',
+        'Create tasks for the user management epic',
+        'Decompose the payment processing epic into tasks'
       ]
     });
 
@@ -1020,6 +1261,7 @@ export class IntentPatternEngine {
       case 'list_tasks':
         Object.assign(entities, EntityExtractors.statusInfo(originalText, match));
         Object.assign(entities, EntityExtractors.agentInfo(originalText, match));
+        Object.assign(entities, EntityExtractors.projectName(originalText, match));
         break;
       case 'check_status':
         Object.assign(entities, EntityExtractors.statusInfo(originalText, match));
@@ -1031,6 +1273,10 @@ export class IntentPatternEngine {
         break;
       case 'decompose_task':
         Object.assign(entities, EntityExtractors.taskInfo(originalText, match));
+        Object.assign(entities, EntityExtractors.descriptionInfo(originalText, match));
+        break;
+      case 'decompose_epic':
+        Object.assign(entities, EntityExtractors.epicInfo(originalText, match));
         Object.assign(entities, EntityExtractors.descriptionInfo(originalText, match));
         break;
       case 'decompose_project':
@@ -1055,6 +1301,10 @@ export class IntentPatternEngine {
       case 'import_artifact':
         Object.assign(entities, EntityExtractors.projectName(originalText, match));
         Object.assign(entities, EntityExtractors.artifactInfo(originalText, match));
+        break;
+      case 'update_project':
+        Object.assign(entities, EntityExtractors.projectName(originalText, match));
+        Object.assign(entities, EntityExtractors.general(originalText, match));
         break;
     }
 

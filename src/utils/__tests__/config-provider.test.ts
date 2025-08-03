@@ -89,7 +89,7 @@ describe('Configuration Provider', () => {
         baseUrl: 'https://test.openrouter.ai/api/v1',
         apiKey: 'ci-test-key-safe-provider',
         geminiModel: 'google/gemini-2.5-flash-preview-05-20',
-        perplexityModel: 'perplexity/llama-3.1-sonar-small-128k-online'
+        perplexityModel: 'perplexity/sonar'
       });
       
       expect(config.llm_mapping).toBeDefined();
