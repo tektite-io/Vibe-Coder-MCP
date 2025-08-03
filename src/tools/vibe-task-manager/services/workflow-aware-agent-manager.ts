@@ -847,6 +847,8 @@ export class WorkflowAwareAgentManager extends EventEmitter {
         
         // Create descriptive progress message based on step
         let progressMessage = `Decomposition ${progress}% complete`;
+        const metadata = data.metadata as Record<string, unknown> || {};
+        
         if (step) {
           switch (step as string) {
             case 'decomposition_started':
@@ -855,11 +857,29 @@ export class WorkflowAwareAgentManager extends EventEmitter {
             case 'context_enrichment_completed':
               progressMessage = 'Context analysis complete - beginning decomposition';
               break;
+            case 'epic_generation_started':
+              progressMessage = `Epic identification started - analyzing ${metadata.taskCount || 0} tasks`;
+              break;
+            case 'epic_generation_completed':
+              progressMessage = `Epic identification completed - functional areas identified`;
+              break;
+            case 'task_persistence_started':
+              progressMessage = `Task persistence started - saving ${metadata.taskCount || 0} tasks`;
+              break;
+            case 'task_persisted':
+              progressMessage = metadata.message as string || `Task ${metadata.persistedCount}/${metadata.totalTasks} persisted`;
+              break;
+            case 'dependency_analysis_started':
+              progressMessage = `Dependency analysis started - mapping task relationships`;
+              break;
+            case 'dependency_analysis_completed':
+              progressMessage = 'Dependency analysis completed - task graph generated';
+              break;
             case 'decomposition_completed':
-              progressMessage = 'Decomposition completed - validating results';
+              progressMessage = `Decomposition completed - ${metadata.persistedTasks || 0} tasks ready`;
               break;
             case 'task_processing':
-              progressMessage = 'Processing tasks - applying atomic constraints';
+              progressMessage = `Processing ${metadata.currentTaskTitle || 'task'} - ${metadata.processedTasks}/${metadata.totalTasks}`;
               break;
             default:
               progressMessage = `Decomposition ${progress}% complete - ${step}`;

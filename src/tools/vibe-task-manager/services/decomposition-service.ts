@@ -840,7 +840,11 @@ export class DecompositionService extends EventEmitter {
       );
 
       // Emit decomposition_progress event at 10%
-      this.emitProgressEvent(session, request, 10, 'decomposition_started', 'DECOMPOSITION');
+      this.emitProgressEvent(session, request, 10, 'decomposition_started', 'DECOMPOSITION', {
+        message: `Starting decomposition of task: ${request.task.title}`,
+        taskType: request.task.type,
+        taskId: request.task.id
+      });
 
       // Update engine configuration if provided
       if (request.config) {
@@ -860,10 +864,22 @@ export class DecompositionService extends EventEmitter {
       );
 
       // Emit decomposition_progress event at 20%
-      this.emitProgressEvent(session, request, 20, 'context_enrichment_completed', 'DECOMPOSITION');
+      this.emitProgressEvent(session, request, 20, 'context_enrichment_completed', 'DECOMPOSITION', {
+        message: 'Context enrichment completed - project structure and dependencies analyzed',
+        languages: enrichedContext.languages,
+        frameworks: enrichedContext.frameworks
+      });
 
-      // Perform decomposition
-      const result = await this.engine.decomposeTask(request.task, enrichedContext);
+      // Use epic-first decomposition for better task organization
+      logger.info({
+        sessionId: session.id,
+        taskId: request.task.id,
+        projectId: request.task.projectId,
+        method: 'decomposeTaskWithEpics'
+      }, 'Using epic-first decomposition approach');
+      
+      // Perform decomposition with epic-aware strategy
+      const result = await this.engine.decomposeTaskWithEpics(request.task, enrichedContext, 0);
       session.progress = 80;
 
       // Update workflow progress
@@ -881,7 +897,10 @@ export class DecompositionService extends EventEmitter {
       // Emit decomposition_progress event at 80%
       this.emitProgressEvent(session, request, 80, 'decomposition_completed', 'DECOMPOSITION', {
         decomposedTaskCount: result.subTasks?.length || 0,
-        isAtomic: result.isAtomic
+        isAtomic: result.isAtomic,
+        message: result.isAtomic 
+          ? 'Task is already atomic - no decomposition needed'
+          : `Successfully decomposed into ${result.subTasks?.length || 0} atomic tasks`
       });
 
       // Process results
@@ -899,6 +918,12 @@ export class DecompositionService extends EventEmitter {
           projectId: session.projectId,
           taskCount: result.subTasks.length
         }, 'Starting epic generation phase');
+
+        // Emit progress event for epic generation start
+        this.emitProgressEvent(session, request, 82, 'epic_generation_started', 'DECOMPOSITION', {
+          taskCount: result.subTasks.length,
+          message: `Starting epic identification for ${result.subTasks.length} tasks`
+        });
 
         // Emit epic_generation_started event
         const epicStartedEvent = {
@@ -1022,6 +1047,13 @@ export class DecompositionService extends EventEmitter {
 
         // Persist decomposed tasks to storage
         session.progress = 85;
+        
+        // Emit progress event for task persistence start
+        this.emitProgressEvent(session, request, 85, 'task_persistence_started', 'DECOMPOSITION', {
+          taskCount: result.subTasks.length,
+          message: `Starting to persist ${result.subTasks.length} decomposed tasks`
+        });
+        
         const taskOps = getTaskOperations();
         const persistedTasks: AtomicTask[] = [];
         const taskFiles: string[] = [];
@@ -1045,9 +1077,37 @@ export class DecompositionService extends EventEmitter {
             if (createResult.success && createResult.data) {
               persistedTasks.push(createResult.data);
               taskIdMapping.set(subTask.id, createResult.data.id); // Map original ID to new ID
+              
+              logger.info({
+                sessionId: session.id,
+                originalTaskId: subTask.id,
+                persistedTaskId: createResult.data.id,
+                taskTitle: subTask.title,
+                epicId: subTask.epicId,
+                projectId: session.projectId,
+                persistedCount: persistedTasks.length,
+                totalTasks: result.subTasks.length
+              }, 'Task successfully persisted to storage');
+              
+              // Emit progress for each persisted task
+              const taskProgress = 85 + (persistedTasks.length / result.subTasks.length) * 5; // 85-90%
+              this.emitProgressEvent(session, request, taskProgress, 'task_persisted', 'DECOMPOSITION', {
+                persistedCount: persistedTasks.length,
+                totalTasks: result.subTasks.length,
+                currentTask: subTask.title,
+                message: `Persisted task ${persistedTasks.length}/${result.subTasks.length}: ${subTask.title}`
+              });
+              
               if (createResult.data.filePaths && createResult.data.filePaths.length > 0) {
                 taskFiles.push(...createResult.data.filePaths);
               }
+            } else {
+              logger.error({
+                sessionId: session.id,
+                taskTitle: subTask.title,
+                originalTaskId: subTask.id,
+                error: createResult.error
+              }, 'Failed to persist task - createResult was not successful');
             }
           } catch (error) {
             logger.warn({
@@ -1172,7 +1232,20 @@ export class DecompositionService extends EventEmitter {
         }, 'Starting dependency analysis for decomposed tasks');
 
         try {
-          await this.performDependencyAnalysis(session, result.subTasks);
+          // Emit progress event for dependency analysis start
+          this.emitProgressEvent(session, request, 90, 'dependency_analysis_started', 'DECOMPOSITION', {
+            taskCount: session.persistedTasks?.length || 0,
+            message: `Analyzing dependencies for ${session.persistedTasks?.length || 0} tasks`
+          });
+          
+          await this.performDependencyAnalysis(session, session.persistedTasks || []);
+          
+          // Emit progress event for dependency analysis completion
+          this.emitProgressEvent(session, request, 95, 'dependency_analysis_completed', 'DECOMPOSITION', {
+            taskCount: session.persistedTasks?.length || 0,
+            message: 'Dependency analysis completed successfully'
+          });
+          
           logger.info({
             sessionId: session.id
           }, 'Dependency analysis completed successfully');
@@ -1353,6 +1426,24 @@ export class DecompositionService extends EventEmitter {
         return context;
       }
 
+      // Skip context enrichment for simple tasks (under 30 minutes)
+      if (task.estimatedHours <= 0.5 && !task.description.toLowerCase().includes('complex')) {
+        logger.debug({ 
+          taskId: task.id, 
+          estimatedHours: task.estimatedHours 
+        }, 'Skipping context enrichment for simple task');
+        return context;
+      }
+
+      // Skip enrichment if context is already enriched (has codebaseContext)
+      if (context.codebaseContext && context.codebaseContext.relevantFiles.length > 0) {
+        logger.debug({ 
+          taskId: task.id,
+          existingFiles: context.codebaseContext.relevantFiles.length 
+        }, 'Context already enriched, skipping re-enrichment');
+        return context;
+      }
+
       // Determine project path from context or use current working directory
       const projectPath = this.getProjectPath(context); // Get from project configuration
 
@@ -1380,8 +1471,8 @@ export class DecompositionService extends EventEmitter {
       // NEW: Code Map Integration - Generate code map for enhanced project understanding
       let codeMapResult = null;
       try {
-        logger.debug({ projectPath, taskId: task.id }, 'Generating code map for enhanced context');
-        codeMapResult = await this.codeMapIntegrationService.generateCodeMap(projectPath);
+        logger.debug({ projectPath, taskId: task.id }, 'Refreshing code map for enhanced context');
+        codeMapResult = await this.codeMapIntegrationService.refreshCodeMap(projectPath);
         
         if (codeMapResult.success) {
           logger.info({ 

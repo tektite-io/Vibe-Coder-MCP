@@ -6,6 +6,7 @@ import { AtomicTaskDetector, AtomicityAnalysis } from './atomic-detector.js';
 import { ProjectContext } from '../types/project-context.js';
 import { getPrompt } from '../services/prompt-service.js';
 import { getTimeoutManager } from '../utils/timeout-manager.js';
+import { getIdGenerator } from '../utils/id-generator.js';
 import logger from '../../../logger.js';
 
 /**
@@ -197,7 +198,7 @@ export class RDDEngine {
       epicTimeLimit: this.rddConfig.epicTimeLimit
     });
     
-    this.circuitBreaker = new DecompositionCircuitBreaker(3, 2, 60000); // 3 attempts, 2 failures, 1 minute cooldown
+    this.circuitBreaker = new DecompositionCircuitBreaker(3, 2, 15000); // 3 attempts, 2 failures, 15 second cooldown
     
     // Apply centralized configuration asynchronously after construction
     this.initializeCentralizedConfig().catch(error => {
@@ -426,7 +427,7 @@ export class RDDEngine {
             )
           );
 
-          subTasks = this.parseSplitResponse(response, task);
+          subTasks = await this.parseSplitResponse(response, task);
           
           // Emit progress for successful parsing
           this.emitTaskProgress(task.id, 'decomposition', 'progress', 60, 
@@ -753,9 +754,35 @@ PROJECT CONTEXT:
 - Frameworks: ${context.frameworks?.join(', ') || 'not specified'}
 - Build Tools: ${context.buildTools?.join(', ') || 'not specified'}
 
-Identify 2-5 major functional areas (epics) that this work should be grouped into.
+Identify all major functional areas (epics) needed for this work. Create as many epics as necessary to properly organize the project - no artificial limits.
 
-Respond with valid JSON only:
+VALID FUNCTIONAL AREAS (choose from these only):
+- authentication: User login, security, and access control features
+- user-management: User profiles, preferences, and account management
+- content-management: Content creation, editing, and organization
+- data-management: Data storage, retrieval, and processing
+- integration: External API connections and third-party services
+- admin: Administrative functions and system configuration
+- ui-components: User interface components and interactions
+- performance: Optimization, caching, and efficiency improvements
+- frontend: Client-side logic, React/Vue/Angular components, UI state management
+- backend: Server-side logic, APIs, business rules, middleware, services
+- database: Schema design, migrations, queries, indexes, data optimization
+
+EPIC COUNT GUIDANCE (based on project complexity):
+- Small features (1-2 days work): 1-3 epics
+- Medium features (1 week work): 3-7 epics
+- Large features (2-4 weeks work): 7-15 epics
+- Enterprise features (1+ months work): 15-30+ epics
+
+Multiple epics can share the same functionalArea if they represent different aspects of that area.
+For example: "User Authentication System" and "OAuth Integration" can both use functionalArea: "authentication".
+
+IMPORTANT: You MUST respond with valid JSON only. Never return plain text explanations.
+If unable to identify epics, return {"epics": []} instead of plain text.
+The functionalArea field MUST be one of the valid functional areas listed above.
+
+Respond with valid JSON in exactly this format:
 {
   "epics": [
     {
@@ -818,7 +845,15 @@ ORIGINAL TASK:
 - Description: ${originalTask.description}
 - Type: ${originalTask.type}
 
-Generate 3-8 atomic tasks that belong to this epic. Each task should be 5-10 minutes of work.
+Generate ALL atomic tasks needed to fully implement this epic. Do not limit the number - create as many as necessary.
+Each task should be 5-10 minutes of work and truly atomic (single responsibility, one file change).
+
+TASK COUNT GUIDANCE (based on epic complexity):
+- Simple epics (basic CRUD, simple UI): 5-15 tasks
+- Medium complexity epics (auth flows, integrations): 15-40 tasks
+- High complexity epics (complex features, systems): 40-100 tasks
+
+The number of tasks should reflect the actual work needed, not arbitrary limits.
 
 Respond with valid JSON only using the enhanced format from the decomposition prompt:
 {
@@ -872,16 +907,39 @@ Respond with valid JSON only using the enhanced format from the decomposition pr
    */
   private parseEpicIdentificationResponse(jsonResponse: string): EpicIdentificationResponse {
     try {
-      const parsed: unknown = JSON.parse(jsonResponse);
+      // Enhanced JSON extraction to handle edge cases
+      let parsedJson: unknown;
       
-      if (typeof parsed !== 'object' || parsed === null) {
+      // First try direct parsing
+      try {
+        parsedJson = JSON.parse(jsonResponse);
+      } catch {
+        // Try to extract JSON from mixed content
+        const jsonMatch = jsonResponse.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          // Check for plain text responses
+          if (jsonResponse.toLowerCase().includes('based on') || jsonResponse.toLowerCase().includes('unable to')) {
+            logger.warn('LLM returned plain text for epic identification - treating as empty epic list');
+            return { epics: [] };
+          }
+          throw new Error('No JSON found in epic identification response');
+        }
+        parsedJson = JSON.parse(jsonMatch[0]);
+      }
+      
+      if (typeof parsedJson !== 'object' || parsedJson === null) {
         throw new Error('Response must be an object');
       }
       
-      const obj = parsed as Record<string, unknown>;
+      const obj = parsedJson as Record<string, unknown>;
       
       if (!('epics' in obj) || !Array.isArray(obj.epics)) {
-        throw new Error('Response must contain epics array');
+        // Handle case where LLM returns empty or malformed response
+        logger.warn({ 
+          responseKeys: Object.keys(obj),
+          responseSnippet: JSON.stringify(obj).substring(0, 100)
+        }, 'Epic identification response missing epics array');
+        return { epics: [] };
       }
       
       const epics = obj.epics as unknown[];
@@ -1019,14 +1077,16 @@ Respond with valid JSON only using the enhanced format from the decomposition pr
     
     return rawEpics.map((epic): EpicStructure => {
       // Validate functional area
-      let functionalArea: EpicStructure['functionalArea'] = 'admin'; // default fallback
+      let functionalArea: EpicStructure['functionalArea'] = 'integration'; // default fallback
       if (validFunctionalAreas.includes(epic.functionalArea as EpicStructure['functionalArea'])) {
         functionalArea = epic.functionalArea as EpicStructure['functionalArea'];
       } else {
         logger.warn({ 
           epicName: epic.name, 
-          invalidFunctionalArea: epic.functionalArea 
-        }, 'Invalid functional area, using fallback');
+          invalidFunctionalArea: epic.functionalArea,
+          validAreas: validFunctionalAreas,
+          defaultUsed: 'integration'
+        }, 'Invalid functional area returned by LLM, using default fallback');
       }
       
       // Validate priority
@@ -1224,7 +1284,9 @@ Provide your task decomposition in the following JSON format:
 CRITICAL REMINDER:
 - Use "tasks" not "subtasks" in your response
 - If any task takes more than 10 minutes, break it down further!
-- Ensure total time of all tasks doesn't exceed epic's 8-hour limit`;
+- Ensure total time of all tasks doesn't exceed epic's 8-hour limit
+- ALWAYS respond with valid JSON, never plain text
+- If unable to decompose, return {"tasks": []} with an explanation in the task description`;
   }
 
 
@@ -1393,44 +1455,77 @@ CRITICAL REMINDER:
   /**
    * Parse the LLM response for task splitting
    */
-  private parseSplitResponse(response: string, originalTask: AtomicTask): AtomicTask[] {
+  private async parseSplitResponse(response: string, originalTask: AtomicTask): Promise<AtomicTask[]> {
     try {
       // Add null safety check for response
       if (!response || typeof response !== 'string') {
         throw new Error('Invalid or empty response received from LLM');
       }
 
+      // First try to extract JSON from the response
+      // Enhanced regex to handle more edge cases
       const jsonMatch = response.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
+        // If no JSON found, check if it's a plain text error response
+        if (response.toLowerCase().includes('based on') || response.toLowerCase().includes('prd content')) {
+          logger.warn({ 
+            taskId: originalTask.id, 
+            responseSnippet: response.substring(0, 100) 
+          }, 'LLM returned plain text instead of JSON - likely empty PRD issue');
+          throw new Error('LLM returned plain text explanation instead of JSON task list. This often indicates an empty or unparseable PRD.');
+        }
         throw new Error('No JSON found in response');
       }
 
-      const parsed = JSON.parse(jsonMatch[0]);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(jsonMatch[0]);
+      } catch (parseError) {
+        // Try to clean up common JSON issues
+        const cleanedJson = jsonMatch[0]
+          .replace(/,\s*}/g, '}') // Remove trailing commas
+          .replace(/,\s*]/g, ']') // Remove trailing commas in arrays
+          .replace(/'/g, '"'); // Replace single quotes with double quotes
+        
+        try {
+          parsed = JSON.parse(cleanedJson);
+        } catch (secondParseError) {
+          logger.error({ 
+            originalError: parseError,
+            secondError: secondParseError,
+            jsonSnippet: jsonMatch[0].substring(0, 200)
+          }, 'Failed to parse JSON even after cleanup');
+          throw new Error(`JSON parsing failed: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`);
+        }
+      }
 
       // Validate response structure first
-      const validation = this.validateResponseStructure(parsed);
+      const validation = this.validateResponseStructure(parsed as Record<string, unknown>);
       if (!validation.isValid) {
         // Check if we can convert an analysis-only response
         if (validation.canConvert) {
           logger.warn({
             taskId: originalTask.id,
-            responseKeys: Object.keys(parsed),
+            responseKeys: Object.keys(parsed as Record<string, unknown>),
             conversionReason: 'LLM returned analysis fields without tasks array'
           }, 'Converting analysis-only response to atomic task');
-          return this.convertAnalysisOnlyResponse(parsed, originalTask);
+          return this.convertAnalysisOnlyResponse(parsed as Record<string, unknown>, originalTask);
         }
         throw new Error(validation.error || 'Invalid response structure');
       }
 
+      // Now we know parsed is a valid object, cast it
+      const parsedResponse = parsed as Record<string, unknown>;
+
       // Support both "tasks" and "subTasks" for backward compatibility, but prefer "tasks"
-      let tasksArray = parsed.tasks || parsed.subTasks;
+      let tasksArray = parsedResponse.tasks || parsedResponse.subTasks;
 
       // Handle case where LLM returns a single task object instead of an array
       if (!tasksArray) {
         // Check if the parsed object itself is a single task (has title, description, etc.)
-        if (parsed.title && parsed.description) {
+        if (parsedResponse.title && parsedResponse.description) {
           logger.info({ taskId: originalTask.id }, 'LLM returned single task object, converting to array');
-          tasksArray = [parsed];
+          tasksArray = [parsedResponse];
         } else {
           throw new Error('Invalid response format: no tasks array or single task found');
         }
@@ -1440,8 +1535,20 @@ CRITICAL REMINDER:
         throw new Error('Invalid tasks array in response');
       }
 
-      return tasksArray.map((taskData: Record<string, unknown>, index: number) => {
-        const decomposedTaskId = `${originalTask.id}-${String(index + 1).padStart(2, '0')}`;
+      const tasks = await Promise.all(tasksArray.map(async (taskData: Record<string, unknown>, index: number) => {
+        // Use unique ID generation instead of predictable pattern
+        const idGenerator = getIdGenerator();
+        const idResult = await idGenerator.generateTaskId();
+        const decomposedTaskId = idResult.success ? idResult.id! : `${originalTask.id}-${String(index + 1).padStart(2, '0')}`;
+        
+        logger.debug({
+          originalTaskId: originalTask.id,
+          newTaskId: decomposedTaskId,
+          taskIndex: index,
+          taskTitle: taskData.title as string,
+          epicId: originalTask.epicId,
+          projectId: originalTask.projectId
+        }, 'Generated unique task ID for decomposed task');
 
         return {
           id: decomposedTaskId,
@@ -1494,7 +1601,9 @@ CRITICAL REMINDER:
             tags: Array.isArray(taskData.tags) ? taskData.tags : originalTask.tags
           }
         };
-      });
+      }));
+      
+      return tasks;
 
     } catch (error) {
       logger.warn({ err: error, response, taskId: originalTask.id }, 'Failed to parse split response, falling back to default task generation');

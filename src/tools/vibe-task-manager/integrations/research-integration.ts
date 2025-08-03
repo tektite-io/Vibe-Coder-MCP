@@ -1081,7 +1081,7 @@ Return only the queries, one per line, without numbering or formatting.
         metadata: {
           query: request.query,
           timestamp: startTime,
-          model: this.openRouterConfig.perplexityModel || 'perplexity/sonar-deep-research',
+          model: await this.getModelForTask('research_query'),
           qualityScore: qualityAssessment.qualityScore,
           relevanceScore: qualityAssessment.relevanceScore,
           completenessScore: qualityAssessment.completenessScore,
@@ -1773,6 +1773,19 @@ Your role is to enhance and synthesize research content for task decomposition. 
 Context: This enhanced research will be used to improve task decomposition for "${decompositionRequest.taskDescription}" in the ${decompositionRequest.domain || 'software development'} domain.
 
 Provide a comprehensive, well-organized enhancement that synthesizes all provided research into a single, highly valuable resource for technical planning and task decomposition.`;
+  }
+
+  /**
+   * Get model for specific task using centralized configuration manager
+   */
+  private async getModelForTask(taskName: string): Promise<string> {
+    try {
+      const configManager = OpenRouterConfigManager.getInstance();
+      return await configManager.getLLMModel(taskName);
+    } catch (error) {
+      logger.warn({ err: error, taskName }, 'Failed to get model from centralized config, using fallback');
+      return this.openRouterConfig?.perplexityModel || 'perplexity/sonar';
+    }
   }
 
   /**

@@ -1597,13 +1597,18 @@ async function handleDecomposeCommand(
         // Add timeout protection for decomposition operations following established pattern
         const timeoutManager = getTimeoutManager();
 
+        // IMPORTANT: sessionId vs jobId distinction
+        // - sessionId: The MCP session ID (e.g., 'stdio-session') needed for progress bridge
+        // - jobId: The unique job identifier for tracking the decomposition operation
+        // The sessionId MUST be passed to enable stdio progress updates via workflow-aware-agent-manager
+
         // Wrap decomposition job creation with timeout protection
         const trackingJobResult = await timeoutManager.executeWithTimeout(
           'taskDecomposition',
           async () => decompositionService.createDecompositionJob({
             task,
             context: projectContext,
-            sessionId: jobId,
+            sessionId: sessionId,
             originalJobId: jobId // Pass original job ID to avoid dual job creation
           })
         );
@@ -1612,15 +1617,13 @@ async function handleDecomposeCommand(
           throw new Error(`Failed to create decomposition job: ${trackingJobResult.error || 'Operation timed out'}`);
         }
 
-        const trackingJobId = trackingJobResult.data!;
-
         // Wrap decomposition start with timeout protection  
         const decompositionSessionResult = await timeoutManager.executeWithTimeout(
           'taskDecomposition',
           async () => decompositionService.startDecomposition({
             task,
             context: projectContext,
-            sessionId: trackingJobId, // Use the tracking job ID (which is the original job ID)
+            sessionId: sessionId, // Use the MCP session ID for stdio bridge
             originalJobId: jobId // Ensure original job ID is passed through
           })
         );

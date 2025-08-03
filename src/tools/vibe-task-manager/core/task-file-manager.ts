@@ -17,7 +17,7 @@ import { AtomicTask } from '../types/task.js';
 import { FileOperationResult } from '../utils/file-utils.js';
 import { VibeTaskManagerConfig } from '../utils/config-loader.js';
 import { TaskManagerMemoryManager, MemoryCleanupResult } from '../utils/memory-manager-integration.js';
-import { validateSecurePath } from '../security/path-validator.js';
+import { UnifiedSecurityEngine, createDefaultSecurityConfig } from './unified-security-engine.js';
 import { AppError } from '../../../utils/errors.js';
 import logger from '../../../logger.js';
 
@@ -79,6 +79,7 @@ export class TaskFileManager {
   private loadedTasks: Map<string, AtomicTask> = new Map();
   private lazyLoadCache: Map<number, AtomicTask[]> = new Map();
   private memoryManager: TaskManagerMemoryManager | null = null;
+  private securityEngine: UnifiedSecurityEngine;
   private indexFilePath: string;
   private dataDirectory: string;
 
@@ -94,7 +95,34 @@ export class TaskFileManager {
     this.memoryManager = TaskManagerMemoryManager.getInstance();
     this.memoryManager?.registerCleanupCallback('task-file-manager', () => this.performCleanup());
 
+    // Initialize security engine
+    const securityConfig = createDefaultSecurityConfig();
+    this.securityEngine = UnifiedSecurityEngine.getInstance(securityConfig);
+
     logger.info({ config, dataDirectory }, 'Task File Manager initialized');
+  }
+
+  /**
+   * Compatibility wrapper for path validation
+   */
+  private async validateSecurePath(filePath: string, operation: 'read' | 'write') {
+    const result = await this.securityEngine.validatePath(filePath, operation);
+    
+    if (result.success) {
+      return {
+        valid: result.data.isValid,
+        error: result.data.error,
+        violationType: result.data.isValid ? undefined : 'path_security',
+        normalizedPath: result.data.normalizedPath
+      };
+    } else {
+      return {
+        valid: false,
+        error: result.error.message,
+        violationType: 'path_security',
+        normalizedPath: filePath
+      };
+    }
   }
 
   /**
@@ -170,10 +198,28 @@ export class TaskFileManager {
   private async saveFileIndex(): Promise<void> {
     try {
       const indexData = Object.fromEntries(this.fileIndex);
+      const startTime = Date.now();
+      
+      logger.debug({
+        indexPath: this.indexFilePath,
+        entries: this.fileIndex.size,
+        operation: 'index_write_start'
+      }, 'Starting file index write');
+      
       await fs.writeJson(this.indexFilePath, indexData, { spaces: 2 });
-      logger.debug({ entriesSaved: this.fileIndex.size }, 'File index saved');
+      
+      logger.info({
+        indexPath: this.indexFilePath,
+        entriesSaved: this.fileIndex.size,
+        operation: 'index_write_complete',
+        duration: Date.now() - startTime
+      }, 'File index saved successfully');
     } catch (error) {
-      logger.error({ err: error }, 'Failed to save file index');
+      logger.error({ 
+        err: error,
+        indexPath: this.indexFilePath,
+        operation: 'index_write_failed'
+      }, 'Failed to save file index');
     }
   }
 
@@ -185,7 +231,7 @@ export class TaskFileManager {
       const filePath = this.getTaskFilePath(task.id);
 
       // Validate file path security
-      const pathValidation = await validateSecurePath(filePath, 'write');
+      const pathValidation = await this.validateSecurePath(filePath, 'write');
       if (!pathValidation.valid) {
         logger.error({
           taskId: task.id,
@@ -210,16 +256,46 @@ export class TaskFileManager {
       // Ensure tasks directory exists
       await fs.ensureDir(path.dirname(filePath));
 
+      // Log write operation start
+      const writeStartTime = Date.now();
+      logger.info({
+        taskId: task.id,
+        filePath,
+        operation: 'file_write_start',
+        size: Buffer.byteLength(content),
+        compressed: this.config.enableCompression
+      }, 'Starting file write operation');
+
       // Compress if enabled
       if (this.config.enableCompression) {
         const compressed = await gzipAsync(Buffer.from(content));
         const compressedPath = filePath + '.gz';
         await fs.writeFile(compressedPath, compressed);
 
+        // Log successful compressed write
+        logger.info({
+          taskId: task.id,
+          filePath: compressedPath,
+          originalSize: Buffer.byteLength(content),
+          compressedSize: compressed.length,
+          compressionRatio: (1 - compressed.length / Buffer.byteLength(content)) * 100,
+          operation: 'file_write_complete',
+          duration: Date.now() - writeStartTime
+        }, 'Task file written successfully (compressed)');
+
         // Update index
         this.updateFileIndex(task.id, compressedPath, compressed.length, true);
       } else {
         await fs.writeFile(filePath, content);
+
+        // Log successful write
+        logger.info({
+          taskId: task.id,
+          filePath,
+          size: Buffer.byteLength(content),
+          operation: 'file_write_complete',
+          duration: Date.now() - writeStartTime
+        }, 'Task file written successfully');
 
         // Update index
         this.updateFileIndex(task.id, filePath, Buffer.byteLength(content), false);
@@ -292,7 +368,7 @@ export class TaskFileManager {
       }
 
       // Validate file path security
-      const pathValidation = await validateSecurePath(indexEntry.filePath, 'read');
+      const pathValidation = await this.validateSecurePath(indexEntry.filePath, 'read');
       if (!pathValidation.valid) {
         logger.error({
           taskId,

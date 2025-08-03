@@ -10,7 +10,7 @@ import { ParallelBatch } from '../core/dependency-graph.js';
 import { TaskScheduler, ScheduledTask } from './task-scheduler.js';
 import { StartupOptimizer } from '../utils/startup-optimizer.js';
 import { PerformanceMonitor } from '../utils/performance-monitor.js';
-import { ConcurrentAccessManager } from '../security/concurrent-access.js';
+import { UnifiedSecurityEngine, createDefaultSecurityConfig, LockId, createSessionId } from '../core/unified-security-engine.js';
 import logger from '../../../logger.js';
 
 /**
@@ -271,8 +271,8 @@ export class ExecutionCoordinator {
   private isRunning = false;
   private coordinatorTimer: NodeJS.Timeout | null = null;
   private monitoringTimer: NodeJS.Timeout | null = null;
-  private accessManager: ConcurrentAccessManager;
-  private activeLocks = new Map<string, string[]>(); // executionId -> lockIds
+  private securityEngine: UnifiedSecurityEngine;
+  private activeLocks = new Map<string, LockId[]>(); // executionId -> lockIds
   private performanceMonitor: PerformanceMonitor | null = null;
   private startupOptimizer: StartupOptimizer;
 
@@ -293,14 +293,9 @@ export class ExecutionCoordinator {
     this.config = { ...DEFAULT_EXECUTION_CONFIG, ...config };
     this.startupOptimizer = StartupOptimizer.getInstance();
 
-    // Initialize concurrent access manager
-    this.accessManager = ConcurrentAccessManager.getInstance({
-      enableLockAuditTrail: true,
-      enableDeadlockDetection: true,
-      defaultLockTimeout: 30000, // 30 seconds
-      maxLockTimeout: 300000, // 5 minutes
-      lockCleanupInterval: 60000 // 1 minute
-    });
+    // Initialize unified security engine for concurrent access management
+    const securityConfig = createDefaultSecurityConfig();
+    this.securityEngine = UnifiedSecurityEngine.getInstance(securityConfig);
 
     // Initialize performance monitoring if available
     try {
@@ -587,58 +582,47 @@ export class ExecutionCoordinator {
     this.notifyExecutionStateChange(execution, 'queued', 'queued');
 
     // Acquire resource locks for task execution
-    const lockIds: string[] = [];
+    const lockIds: LockId[] = [];
     try {
       // Lock the task itself (use unique resource in tests to avoid conflicts)
       const taskResource = process.env.NODE_ENV === 'test'
         ? `task:${scheduledTask.task.id}:${executionId}`
         : `task:${scheduledTask.task.id}`;
 
-      const taskLockResult = await this.accessManager.acquireLock(
+      const taskLockResult = await this.securityEngine.acquireLock(
         taskResource,
-        agent.id,
         'execute',
-        {
-          timeout: process.env.NODE_ENV === 'test' ? 5000 : 30000,
-          sessionId: executionId,
-          metadata: {
-            taskTitle: scheduledTask.task.title,
-            agentId: agent.id,
-            executionId
-          }
-        }
+        createSessionId(executionId),
+        process.env.NODE_ENV === 'test' ? 5000 : 30000
       );
 
       if (!taskLockResult.success) {
-        throw new Error(`Failed to acquire task lock: ${taskLockResult.error}`);
+        throw new Error(`Failed to acquire task lock: ${taskLockResult.error?.message || 'Unknown error'}`);
       }
-      lockIds.push(taskLockResult.lock!.id);
+      if (taskLockResult.data?.lockId) {
+        lockIds.push(taskLockResult.data.lockId);
+      }
 
       // Lock the agent (use unique resource in tests to avoid conflicts)
       const agentResource = process.env.NODE_ENV === 'test'
         ? `agent:${agent.id}:${executionId}`
         : `agent:${agent.id}`;
 
-      const agentLockResult = await this.accessManager.acquireLock(
+      const agentLockResult = await this.securityEngine.acquireLock(
         agentResource,
-        executionId,
         'execute',
-        {
-          timeout: process.env.NODE_ENV === 'test' ? 5000 : 30000,
-          sessionId: executionId,
-          metadata: {
-            taskId: scheduledTask.task.id,
-            agentName: agent.name
-          }
-        }
+        createSessionId(executionId),
+        process.env.NODE_ENV === 'test' ? 5000 : 30000
       );
 
       if (!agentLockResult.success) {
         // Release task lock if agent lock fails
-        await this.accessManager.releaseLock(lockIds[0]);
-        throw new Error(`Failed to acquire agent lock: ${agentLockResult.error}`);
+        await this.securityEngine.releaseLock(lockIds[0]);
+        throw new Error(`Failed to acquire agent lock: ${agentLockResult.error?.message || 'Unknown error'}`);
       }
-      lockIds.push(agentLockResult.lock!.id);
+      if (agentLockResult.data?.lockId) {
+        lockIds.push(agentLockResult.data.lockId);
+      }
 
       // Lock any file paths associated with the task (use unique resource in tests)
       for (const filePath of scheduledTask.task.filePaths || []) {
@@ -646,28 +630,23 @@ export class ExecutionCoordinator {
           ? `file:${filePath}:${executionId}`
           : `file:${filePath}`;
 
-        const fileLockResult = await this.accessManager.acquireLock(
+        const fileLockResult = await this.securityEngine.acquireLock(
           fileResource,
-          executionId,
           'write',
-          {
-            timeout: process.env.NODE_ENV === 'test' ? 5000 : 30000,
-            sessionId: executionId,
-            metadata: {
-              taskId: scheduledTask.task.id,
-              filePath
-            }
-          }
+          createSessionId(executionId),
+          process.env.NODE_ENV === 'test' ? 5000 : 30000
         );
 
         if (!fileLockResult.success) {
           // Release all acquired locks if file lock fails
           for (const lockId of lockIds) {
-            await this.accessManager.releaseLock(lockId);
+            await this.securityEngine.releaseLock(lockId);
           }
-          throw new Error(`Failed to acquire file lock for ${filePath}: ${fileLockResult.error}`);
+          throw new Error(`Failed to acquire file lock for ${filePath}: ${fileLockResult.error?.message || 'Unknown error'}`);
         }
-        lockIds.push(fileLockResult.lock!.id);
+        if (fileLockResult.data?.lockId) {
+          lockIds.push(fileLockResult.data.lockId);
+        }
       }
 
       // Store lock IDs for cleanup
@@ -883,7 +862,7 @@ export class ExecutionCoordinator {
     let releasedCount = 0;
     for (const lockId of lockIds) {
       try {
-        await this.accessManager.releaseLock(lockId);
+        await this.securityEngine.releaseLock(lockId);
         releasedCount++;
       } catch (error) {
         logger.error('Failed to release lock', {

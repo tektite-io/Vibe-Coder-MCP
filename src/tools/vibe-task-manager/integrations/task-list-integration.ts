@@ -11,7 +11,7 @@ import path from 'path';
 import logger from '../../../logger.js';
 import type { TaskListInfo, ParsedTaskList, TaskListItem, TaskListMetadata } from '../types/artifact-types.js';
 import type { AtomicTask } from '../types/task.js';
-import { validateSecurePath } from '../utils/path-security-validator.js';
+import { UnifiedSecurityEngine, createDefaultSecurityConfig } from '../core/unified-security-engine.js';
 
 /**
  * Sub-task structure used during parsing
@@ -90,6 +90,7 @@ export class TaskListIntegrationService {
   private config: TaskListIntegrationConfig;
   private taskListCache = new Map<string, TaskListInfo>();
   private performanceMetrics = new Map<string, TaskListMetadata['performanceMetrics']>();
+  private securityEngine: UnifiedSecurityEngine | null = null;
 
   private constructor() {
     this.config = {
@@ -100,6 +101,18 @@ export class TaskListIntegrationService {
     };
 
     logger.debug('Task List integration service initialized');
+  }
+
+  /**
+   * Get or initialize the security engine
+   */
+  private async getSecurityEngine(): Promise<UnifiedSecurityEngine> {
+    if (!this.securityEngine) {
+      const config = createDefaultSecurityConfig();
+      this.securityEngine = UnifiedSecurityEngine.getInstance(config);
+      await this.securityEngine.initialize();
+    }
+    return this.securityEngine;
   }
 
   /**
@@ -208,11 +221,17 @@ export class TaskListIntegrationService {
    */
   private async validateTaskListPath(taskListFilePath: string): Promise<void> {
     try {
-      // Use secure path validation
-      const validationResult = await validateSecurePath(taskListFilePath);
+      // Use unified security engine for path validation
+      const securityEngine = await this.getSecurityEngine();
+      const validationResponse = await securityEngine.validatePath(taskListFilePath, 'read');
 
+      if (!validationResponse.success) {
+        throw new Error(`Security validation failed: ${validationResponse.error?.message || 'Unknown error'}`);
+      }
+
+      const validationResult = validationResponse.data;
       if (!validationResult.isValid) {
-        throw new Error(`Security validation failed: ${validationResult.error}`);
+        throw new Error(`Security validation failed: ${validationResult.error || 'Path validation failed'}`);
       }
 
       // Log any security warnings
@@ -377,15 +396,22 @@ export class TaskListIntegrationService {
 
     try {
       // Validate file path before accessing file system
-      const validationResult = await validateSecurePath(filePath);
+      const securityEngine = await this.getSecurityEngine();
+      const validationResponse = await securityEngine.validatePath(filePath, 'read');
+      
+      if (!validationResponse.success) {
+        throw new Error(`Security validation failed: ${validationResponse.error?.message || 'Unknown error'}`);
+      }
+      
+      const validationResult = validationResponse.data;
       if (!validationResult.isValid) {
-        throw new Error(`Security validation failed: ${validationResult.error}`);
+        throw new Error(`Security validation failed: ${validationResult.error || 'Path validation failed'}`);
       }
 
       const lines = content.split('\n');
       const fileName = path.basename(filePath);
       const { projectName, createdAt, listType } = this.extractTaskListMetadataFromFilename(fileName);
-      const stats = await fs.stat(validationResult.sanitizedPath!);
+      const stats = await fs.stat(validationResult.normalizedPath || filePath);
 
       // Initialize parsed task list structure
       const parsedTaskList: ParsedTaskList = {

@@ -874,7 +874,7 @@ Guidelines:
       return null;
 
     } catch (error) {
-      logger.debug({ err: error, llmResult: llmResult.substring(0, 200) }, 'Failed to parse epic generation result');
+      logger.debug({ err: error, llmResult: typeof llmResult === 'string' ? llmResult.substring(0, 200) : 'non-string result' }, 'Failed to parse epic generation result');
       return null;
     }
   }
@@ -1200,7 +1200,7 @@ Guidelines:
       const storageManager = await getStorageManager();
       const epicResult = await storageManager.getEpic(epicId);
 
-      if (!epicResult.success || !epicResult.data) {
+      if (!epicResult || !epicResult.success || !epicResult.data) {
         throw new Error('Epic not found');
       }
 
@@ -1210,7 +1210,7 @@ Guidelines:
       const taskPromises = epic.taskIds.map((taskId: string) => storageManager.getTask(taskId));
       const taskResults = await Promise.all(taskPromises);
       const tasks = taskResults
-        .filter(result => result.success && result.data)
+        .filter(result => result && result.success && result.data)
         .map(result => result.data!);
 
       // Calculate progress metrics
@@ -1322,7 +1322,7 @@ Guidelines:
       const storageManager = await getStorageManager();
       const epicResult = await storageManager.getEpic(epicId);
 
-      if (!epicResult.success || !epicResult.data) {
+      if (!epicResult || !epicResult.success || !epicResult.data) {
         return 0;
       }
 
@@ -1330,7 +1330,7 @@ Guidelines:
       const taskPromises = epic.taskIds.map((taskId: string) => storageManager.getTask(taskId));
       const taskResults = await Promise.all(taskPromises);
       const tasks = taskResults
-        .filter(result => result.success && result.data)
+        .filter(result => result && result.success && result.data)
         .map(result => result.data!);
 
       // Detect and resolve file path conflicts
@@ -1357,12 +1357,15 @@ Guidelines:
     
     // Group tasks by file paths
     tasks.forEach(task => {
-      (task as AtomicTask).filePaths.forEach((filePath: string) => {
-        if (!filePathMap.has(filePath)) {
-          filePathMap.set(filePath, []);
-        }
-        filePathMap.get(filePath)!.push((task as AtomicTask).id);
-      });
+      const atomicTask = task as AtomicTask;
+      if (atomicTask.filePaths && Array.isArray(atomicTask.filePaths)) {
+        atomicTask.filePaths.forEach((filePath: string) => {
+          if (!filePathMap.has(filePath)) {
+            filePathMap.set(filePath, []);
+          }
+          filePathMap.get(filePath)!.push(atomicTask.id);
+        });
+      }
     });
 
     // Count conflicts (file paths used by multiple tasks)

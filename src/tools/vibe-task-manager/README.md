@@ -151,6 +151,21 @@ flowchart TD
     Store --> Output[Atomic Tasks]
 ```
 
+#### Valid Functional Areas
+
+When creating epics during decomposition, tasks are organized into the following functional areas:
+
+- **authentication**: User login, security, and access control features
+- **user-management**: User profiles, preferences, and account management
+- **content-management**: Content creation, editing, and organization
+- **data-management**: Data storage, retrieval, and processing
+- **integration**: External API connections and third-party services
+- **admin**: Administrative functions and system configuration
+- **ui-components**: User interface components and interactions
+- **performance**: Optimization, caching, and efficiency improvements
+
+These functional areas ensure consistent organization across projects and enable better task categorization.
+
 ### 2. Agent Orchestration System
 
 Coordinates multiple AI agents for parallel task execution:
@@ -168,6 +183,24 @@ Real-time progress monitoring with multiple calculation methods:
 - **Weighted Progress**: Considers task complexity and priority
 - **Velocity-Based**: Uses historical data for predictions
 - **Milestone-Based**: Tracks key project milestones
+
+#### Decomposition Progress Events
+
+The decomposition process emits granular progress events for real-time visibility:
+
+| Event | Progress | Description |
+|-------|----------|-------------|
+| `decomposition_started` | 10% | Initial decomposition process begins |
+| `context_enrichment_completed` | 20% | Project context and codebase analysis complete |
+| `decomposition_completed` | 80% | LLM decomposition and task generation complete |
+| `epic_generation_started` | 82% | Epic identification and grouping begins |
+| `task_persistence_started` | 85% | Task persistence to storage begins |
+| `task_persisted` | 85-90% | Individual task persistence (incremental) |
+| `dependency_analysis_started` | 90% | Task dependency mapping begins |
+| `dependency_analysis_completed` | 95% | Full dependency graph generated |
+| `finalization_completed` | 100% | All tasks persisted and ready for execution |
+
+These events enable MCP clients to display detailed progress updates during the decomposition process, providing transparency into each subprocess.
 
 ## Configuration
 

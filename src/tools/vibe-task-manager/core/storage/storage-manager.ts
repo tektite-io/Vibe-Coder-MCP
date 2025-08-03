@@ -1,6 +1,7 @@
 import { ProjectStorage, ProjectStorageOperations } from './project-storage.js';
 import { TaskStorage, TaskStorageOperations } from './task-storage.js';
 import { DependencyStorage, DependencyStorageOperations } from './dependency-storage.js';
+import { UnifiedStorageEngine, createDefaultStorageConfig } from '../unified-storage-engine.js';
 import { FileOperationResult } from '../../utils/file-utils.js';
 import { getVibeTaskManagerConfig, getVibeTaskManagerOutputDir } from '../../utils/config-loader.js';
 import logger from '../../../../logger.js';
@@ -12,14 +13,47 @@ import { Dependency, DependencyGraph } from '../../types/dependency.js';
  */
 export class StorageManager implements ProjectStorageOperations, TaskStorageOperations, DependencyStorageOperations {
   private static instance: StorageManager;
+  private unifiedEngine: UnifiedStorageEngine;
   private projectStorage: ProjectStorage;
   private taskStorage: TaskStorage;
   private dependencyStorage: DependencyStorage;
   private dataDirectory: string;
   private initialized: boolean = false;
+  private useUnifiedEngine: boolean = true; // Flag to control which engine to use
 
   private constructor(dataDirectory?: string) {
     this.dataDirectory = dataDirectory || getVibeTaskManagerOutputDir();
+    
+    // Initialize unified storage engine with configuration
+    const config = {
+      ...createDefaultStorageConfig(),
+      dataDirectory: this.dataDirectory,
+      cache: {
+        enabled: true,
+        maxSize: 1000,
+        ttlSeconds: 3600,
+        compressionEnabled: false,
+        persistToDisk: true
+      },
+      backup: {
+        enabled: true,
+        intervalMinutes: 60,
+        maxBackups: 10,
+        compressionEnabled: true,
+        encryptionEnabled: false,
+        remoteBackupEnabled: false
+      },
+      monitoring: {
+        enableMetrics: true,
+        metricsInterval: 30,
+        enableAuditLog: true,
+        enablePerformanceTracking: true
+      }
+    };
+    
+    this.unifiedEngine = UnifiedStorageEngine.getInstance(config);
+    
+    // Keep legacy storage as fallback
     this.projectStorage = new ProjectStorage(this.dataDirectory);
     this.taskStorage = new TaskStorage(this.dataDirectory);
     this.dependencyStorage = new DependencyStorage(this.dataDirectory);
@@ -53,43 +87,64 @@ export class StorageManager implements ProjectStorageOperations, TaskStorageOper
     try {
       logger.info({ dataDirectory: this.dataDirectory }, 'Initializing storage manager');
 
-      // Load configuration to get data directory
-      const config = await getVibeTaskManagerConfig();
-      if (config?.taskManager?.dataDirectory) {
-        this.dataDirectory = config.taskManager.dataDirectory;
+      if (this.useUnifiedEngine) {
+        // Initialize unified storage engine
+        const initResult = await this.unifiedEngine.initialize();
+        if (!initResult.success) {
+          logger.error({ error: initResult.error }, 'Failed to initialize unified storage engine');
+          return {
+            success: false,
+            error: `Failed to initialize unified storage engine: ${initResult.error.message}`,
+            metadata: {
+              filePath: this.dataDirectory,
+              operation: 'initialize',
+              timestamp: new Date()
+            }
+          };
+        }
+        
+        logger.info('StorageManager initialized with UnifiedStorageEngine');
+      } else {
+        // Fallback to legacy storage initialization
+        const config = await getVibeTaskManagerConfig();
+        if (config?.taskManager?.dataDirectory) {
+          this.dataDirectory = config.taskManager.dataDirectory;
 
-        // Recreate storage instances with correct directory
-        this.projectStorage = new ProjectStorage(this.dataDirectory);
-        this.taskStorage = new TaskStorage(this.dataDirectory);
-        this.dependencyStorage = new DependencyStorage(this.dataDirectory);
-      }
+          // Recreate storage instances with correct directory
+          this.projectStorage = new ProjectStorage(this.dataDirectory);
+          this.taskStorage = new TaskStorage(this.dataDirectory);
+          this.dependencyStorage = new DependencyStorage(this.dataDirectory);
+        }
 
-      // Initialize all storage systems
-      const projectInitResult = await this.projectStorage.initialize();
-      if (!projectInitResult.success) {
-        return {
-          success: false,
-          error: `Failed to initialize project storage: ${projectInitResult.error}`,
-          metadata: projectInitResult.metadata
-        };
-      }
+        // Initialize all storage systems
+        const projectInitResult = await this.projectStorage.initialize();
+        if (!projectInitResult.success) {
+          return {
+            success: false,
+            error: `Failed to initialize project storage: ${projectInitResult.error}`,
+            metadata: projectInitResult.metadata
+          };
+        }
 
-      const taskInitResult = await this.taskStorage.initialize();
-      if (!taskInitResult.success) {
-        return {
-          success: false,
-          error: `Failed to initialize task storage: ${taskInitResult.error}`,
-          metadata: taskInitResult.metadata
-        };
-      }
+        const taskInitResult = await this.taskStorage.initialize();
+        if (!taskInitResult.success) {
+          return {
+            success: false,
+            error: `Failed to initialize task storage: ${taskInitResult.error}`,
+            metadata: taskInitResult.metadata
+          };
+        }
 
-      const dependencyInitResult = await this.dependencyStorage.initialize();
-      if (!dependencyInitResult.success) {
-        return {
-          success: false,
-          error: `Failed to initialize dependency storage: ${dependencyInitResult.error}`,
-          metadata: dependencyInitResult.metadata
-        };
+        const dependencyInitResult = await this.dependencyStorage.initialize();
+        if (!dependencyInitResult.success) {
+          return {
+            success: false,
+            error: `Failed to initialize dependency storage: ${dependencyInitResult.error}`,
+            metadata: dependencyInitResult.metadata
+          };
+        }
+        
+        logger.info('StorageManager initialized with legacy storage');
       }
 
       this.initialized = true;
@@ -184,23 +239,125 @@ export class StorageManager implements ProjectStorageOperations, TaskStorageOper
   // Project Storage Operations
   async createProject(project: Project): Promise<FileOperationResult<Project>> {
     await this.ensureInitialized();
+    
+    if (this.useUnifiedEngine) {
+      const result = await this.unifiedEngine.createProject(project);
+      if (result.success) {
+        return {
+          success: true,
+          data: result.data,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'createProject',
+            timestamp: new Date()
+          }
+        };
+      } else {
+        return {
+          success: false,
+          error: result.error.message,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'createProject',
+            timestamp: new Date()
+          }
+        };
+      }
+    }
+    
     return this.projectStorage.createProject(project);
   }
 
   async getProject(projectId: string): Promise<FileOperationResult<Project>> {
     await this.ensureInitialized();
+    
+    if (this.useUnifiedEngine) {
+      const result = await this.unifiedEngine.getProject(projectId);
+      if (result.success) {
+        return {
+          success: true,
+          data: result.data,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'getProject',
+            timestamp: new Date()
+          }
+        };
+      } else {
+        return {
+          success: false,
+          error: result.error.message,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'getProject',
+            timestamp: new Date()
+          }
+        };
+      }
+    }
+    
     return this.projectStorage.getProject(projectId);
   }
 
   async updateProject(projectId: string, updates: Partial<Project>): Promise<FileOperationResult<Project>> {
     await this.ensureInitialized();
+    
+    if (this.useUnifiedEngine) {
+      const result = await this.unifiedEngine.updateProject(projectId, updates);
+      if (result.success) {
+        return {
+          success: true,
+          data: result.data,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'updateProject',
+            timestamp: new Date()
+          }
+        };
+      } else {
+        return {
+          success: false,
+          error: result.error.message,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'updateProject',
+            timestamp: new Date()
+          }
+        };
+      }
+    }
+    
     return this.projectStorage.updateProject(projectId, updates);
   }
 
   async deleteProject(projectId: string): Promise<FileOperationResult<void>> {
     await this.ensureInitialized();
+    
+    if (this.useUnifiedEngine) {
+      const result = await this.unifiedEngine.deleteProject(projectId);
+      if (result.success) {
+        return {
+          success: true,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'deleteProject',
+            timestamp: new Date()
+          }
+        };
+      } else {
+        return {
+          success: false,
+          error: result.error.message,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'deleteProject',
+            timestamp: new Date()
+          }
+        };
+      }
+    }
 
-    // Delete all related tasks and dependencies first
+    // Legacy implementation: Delete all related tasks and dependencies first
     const tasksResult = await this.taskStorage.listTasks(projectId);
     if (tasksResult.success) {
       for (const task of tasksResult.data!) {
@@ -224,11 +381,42 @@ export class StorageManager implements ProjectStorageOperations, TaskStorageOper
 
   async listProjects(): Promise<FileOperationResult<Project[]>> {
     await this.ensureInitialized();
+    
+    if (this.useUnifiedEngine) {
+      const result = await this.unifiedEngine.listProjects();
+      if (result.success) {
+        return {
+          success: true,
+          data: result.data,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'listProjects',
+            timestamp: new Date()
+          }
+        };
+      } else {
+        return {
+          success: false,
+          error: result.error.message,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'listProjects',
+            timestamp: new Date()
+          }
+        };
+      }
+    }
+    
     return this.projectStorage.listProjects();
   }
 
   async projectExists(projectId: string): Promise<boolean> {
     await this.ensureInitialized();
+    
+    if (this.useUnifiedEngine) {
+      return this.unifiedEngine.projectExists(projectId);
+    }
+    
     return this.projectStorage.projectExists(projectId);
   }
 
@@ -245,23 +433,125 @@ export class StorageManager implements ProjectStorageOperations, TaskStorageOper
   // Task Storage Operations
   async createTask(task: AtomicTask): Promise<FileOperationResult<AtomicTask>> {
     await this.ensureInitialized();
+    
+    if (this.useUnifiedEngine) {
+      const result = await this.unifiedEngine.createTask(task);
+      if (result.success) {
+        return {
+          success: true,
+          data: result.data,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'createTask',
+            timestamp: new Date()
+          }
+        };
+      } else {
+        return {
+          success: false,
+          error: result.error.message,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'createTask',
+            timestamp: new Date()
+          }
+        };
+      }
+    }
+    
     return this.taskStorage.createTask(task);
   }
 
   async getTask(taskId: string): Promise<FileOperationResult<AtomicTask>> {
     await this.ensureInitialized();
+    
+    if (this.useUnifiedEngine) {
+      const result = await this.unifiedEngine.getTask(taskId);
+      if (result.success) {
+        return {
+          success: true,
+          data: result.data,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'getTask',
+            timestamp: new Date()
+          }
+        };
+      } else {
+        return {
+          success: false,
+          error: result.error.message,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'getTask',
+            timestamp: new Date()
+          }
+        };
+      }
+    }
+    
     return this.taskStorage.getTask(taskId);
   }
 
   async updateTask(taskId: string, updates: Partial<AtomicTask>): Promise<FileOperationResult<AtomicTask>> {
     await this.ensureInitialized();
+    
+    if (this.useUnifiedEngine) {
+      const result = await this.unifiedEngine.updateTask(taskId, updates);
+      if (result.success) {
+        return {
+          success: true,
+          data: result.data,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'updateTask',
+            timestamp: new Date()
+          }
+        };
+      } else {
+        return {
+          success: false,
+          error: result.error.message,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'updateTask',
+            timestamp: new Date()
+          }
+        };
+      }
+    }
+    
     return this.taskStorage.updateTask(taskId, updates);
   }
 
   async deleteTask(taskId: string): Promise<FileOperationResult<void>> {
     await this.ensureInitialized();
+    
+    if (this.useUnifiedEngine) {
+      const result = await this.unifiedEngine.deleteTask(taskId);
+      if (result.success) {
+        return {
+          success: true,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'deleteTask',
+            timestamp: new Date()
+          }
+        };
+      } else {
+        return {
+          success: false,
+          error: result.error.message,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'deleteTask',
+            timestamp: new Date()
+          }
+        };
+      }
+    }
 
-    // Delete all dependencies related to this task
+    // Legacy implementation: Delete all dependencies related to this task
     const dependenciesResult = await this.dependencyStorage.getDependenciesForTask(taskId);
     if (dependenciesResult.success) {
       for (const dependency of dependenciesResult.data!) {
@@ -281,6 +571,32 @@ export class StorageManager implements ProjectStorageOperations, TaskStorageOper
 
   async listTasks(projectId?: string, epicId?: string): Promise<FileOperationResult<AtomicTask[]>> {
     await this.ensureInitialized();
+    
+    if (this.useUnifiedEngine) {
+      const result = await this.unifiedEngine.listTasks(projectId);
+      if (result.success) {
+        return {
+          success: true,
+          data: result.data,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'listTasks',
+            timestamp: new Date()
+          }
+        };
+      } else {
+        return {
+          success: false,
+          error: result.error.message,
+          metadata: {
+            filePath: 'unified-storage-engine',
+            operation: 'listTasks',
+            timestamp: new Date()
+          }
+        };
+      }
+    }
+    
     return this.taskStorage.listTasks(projectId, epicId);
   }
 

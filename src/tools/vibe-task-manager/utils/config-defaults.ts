@@ -221,7 +221,7 @@ export const ENVIRONMENT_VARIABLES: Record<string, EnvironmentVariableConfig> = 
 
   VIBE_TASK_DECOMPOSITION_TIMEOUT: {
     key: 'VIBE_TASK_DECOMPOSITION_TIMEOUT',
-    defaultValue: 900000, // Increased to 15 minutes for complex projects
+    defaultValue: 300000, // 5 minutes for decomposition
     type: 'number',
     required: false,
     description: 'Task decomposition timeout in milliseconds',
@@ -257,7 +257,7 @@ export const ENVIRONMENT_VARIABLES: Record<string, EnvironmentVariableConfig> = 
 
   VIBE_LLM_REQUEST_TIMEOUT: {
     key: 'VIBE_LLM_REQUEST_TIMEOUT',
-    defaultValue: 120000, // Increased to 2 minutes for complex decomposition
+    defaultValue: 60000, // 1 minute for LLM requests
     type: 'number',
     required: false,
     description: 'LLM request timeout in milliseconds',
@@ -378,7 +378,7 @@ export const ENVIRONMENT_VARIABLES: Record<string, EnvironmentVariableConfig> = 
 
   VIBE_RDD_ENABLE_PARALLEL_DECOMPOSITION: {
     key: 'VIBE_RDD_ENABLE_PARALLEL_DECOMPOSITION',
-    defaultValue: false,
+    defaultValue: true,
     type: 'boolean',
     required: false,
     description: 'Enable parallel decomposition processing',
