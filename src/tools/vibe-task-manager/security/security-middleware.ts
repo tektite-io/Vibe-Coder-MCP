@@ -9,9 +9,15 @@
  * - Security violation tracking
  */
 
-import { PathSecurityValidator, PathValidationResult } from './path-validator.js';
-import { DataSanitizer, SanitizationResult } from './data-sanitizer.js';
-import { ConcurrentAccessManager, LockAcquisitionResult } from './concurrent-access.js';
+import { 
+  UnifiedSecurityEngine, 
+  createDefaultSecurityConfig, 
+  PathValidationResult,
+  SanitizationResult,
+  LockAcquisitionResult,
+  LockId,
+  createSessionId
+} from '../core/unified-security-engine.js';
 import { CommandExecutionContext } from '../nl/command-handlers.js';
 import logger from '../../../logger.js';
 
@@ -77,9 +83,7 @@ export interface SecurityOperationContext {
  */
 export class SecurityMiddleware {
   private static instance: SecurityMiddleware | null = null;
-  private pathValidator: PathSecurityValidator;
-  private dataSanitizer: DataSanitizer;
-  private accessManager: ConcurrentAccessManager;
+  private securityEngine: UnifiedSecurityEngine;
   private config: SecurityMiddlewareConfig;
 
   private constructor(config?: Partial<SecurityMiddlewareConfig>) {
@@ -94,11 +98,11 @@ export class SecurityMiddleware {
       ...config
     };
 
-    this.pathValidator = PathSecurityValidator.getInstance();
-    this.dataSanitizer = DataSanitizer.getInstance();
-    this.accessManager = ConcurrentAccessManager.getInstance();
+    // Initialize unified security engine
+    const securityConfig = createDefaultSecurityConfig();
+    this.securityEngine = UnifiedSecurityEngine.getInstance(securityConfig);
 
-    logger.info({ config: this.config }, 'Security Middleware initialized');
+    logger.info({ config: this.config }, 'Security Middleware initialized with UnifiedSecurityEngine');
   }
 
   /**
@@ -109,6 +113,20 @@ export class SecurityMiddleware {
       SecurityMiddleware.instance = new SecurityMiddleware(config);
     }
     return SecurityMiddleware.instance;
+  }
+
+  /**
+   * Map unified security engine severity to middleware severity
+   */
+  private mapSeverity(severity: string): 'low' | 'medium' | 'high' | 'critical' {
+    switch (severity) {
+      case 'info': return 'low';
+      case 'low': return 'low';
+      case 'medium': return 'medium';
+      case 'high': return 'high';
+      case 'critical': return 'critical';
+      default: return 'medium';
+    }
   }
 
   /**
@@ -130,15 +148,15 @@ export class SecurityMiddleware {
       // 1. Input Sanitization
       if (this.config.enableInputSanitization && data) {
         const sanitizationStart = Date.now();
-        sanitizationResult = await this.dataSanitizer.sanitizeInput(data);
+        const sanitizationResponse = await this.securityEngine.sanitizeData(data);
         const sanitizationTime = Date.now() - sanitizationStart;
 
-        if (!sanitizationResult.success) {
+        if (!sanitizationResponse.success) {
           violations.push({
             type: 'sanitization',
             severity: 'high',
             description: 'Input sanitization failed',
-            context: { violations: sanitizationResult.violations }
+            context: { error: sanitizationResponse.error?.message }
           });
 
           if (this.config.blockOnCriticalViolations) {
@@ -147,22 +165,23 @@ export class SecurityMiddleware {
               sanitizationTime
             });
           }
-        }
+        } else {
+          sanitizationResult = sanitizationResponse.data;
+          sanitizedData = sanitizationResult?.sanitizedData || data;
 
-        sanitizedData = sanitizationResult.sanitizedData || data;
-
-        // Add sanitization violations
-        if (sanitizationResult) {
-          sanitizationResult.violations.forEach(violation => {
-            violations.push({
-              type: 'sanitization',
-              severity: violation.severity,
-              description: violation.description,
-              field: violation.field,
-              originalValue: violation.originalValue,
-              sanitizedValue: violation.sanitizedValue
+          // Add sanitization violations
+          if (sanitizationResult?.violations) {
+            sanitizationResult.violations.forEach(violation => {
+              violations.push({
+                type: 'sanitization',
+                severity: this.mapSeverity(violation.severity),
+                description: violation.message,
+                field: violation.field,
+                originalValue: violation.originalValue,
+                sanitizedValue: violation.sanitizedValue
+              });
             });
-          });
+          }
         }
       }
 
@@ -171,27 +190,43 @@ export class SecurityMiddleware {
         const pathValidationStart = Date.now();
 
         for (const filePath of operationContext.filePaths) {
-          pathValidation = await this.pathValidator.validatePath(
-            filePath,
-            'write', // Default to most restrictive
-            { sessionId: context.sessionId }
-          );
+          const pathValidationResponse = await this.securityEngine.validatePath(filePath, 'write');
 
-          if (!pathValidation.valid) {
+          if (!pathValidationResponse.success) {
             violations.push({
               type: 'path',
-              severity: pathValidation.securityViolation ? 'critical' : 'medium',
-              description: pathValidation.error || 'Path validation failed',
+              severity: 'critical',
+              description: pathValidationResponse.error?.message || 'Path validation failed',
               field: 'filePath',
               originalValue: filePath,
-              context: { violationType: pathValidation.violationType }
+              context: { error: pathValidationResponse.error?.message }
             });
 
-            if (this.config.blockOnCriticalViolations && pathValidation.securityViolation) {
+            if (this.config.blockOnCriticalViolations) {
               return this.createValidationResult(false, violations, {
                 totalTime: Date.now() - startTime,
                 pathValidationTime: Date.now() - pathValidationStart
               });
+            }
+          } else {
+            pathValidation = pathValidationResponse.data;
+            
+            if (!pathValidation?.isValid) {
+              violations.push({
+                type: 'path',
+                severity: pathValidation?.violationType ? 'critical' : 'medium',
+                description: pathValidation?.error || 'Path validation failed',
+                field: 'filePath',
+                originalValue: filePath,
+                context: { violationType: pathValidation?.violationType }
+              });
+
+              if (this.config.blockOnCriticalViolations && pathValidation?.violationType) {
+                return this.createValidationResult(false, violations, {
+                  totalTime: Date.now() - startTime,
+                  pathValidationTime: Date.now() - pathValidationStart
+                });
+              }
             }
           }
         }
@@ -201,27 +236,23 @@ export class SecurityMiddleware {
       if (this.config.enableConcurrentAccess && operationContext.requiresLock) {
         const lockStart = Date.now();
 
-        lockResult = await this.accessManager.acquireLock(
+        const lockResponse = await this.securityEngine.acquireLock(
           operationContext.resource || operationContext.operation,
-          context.userId || context.sessionId,
           'write',
-          {
-            timeout: operationContext.lockTimeout,
-            sessionId: context.sessionId,
-            waitForRelease: false
-          }
+          createSessionId(context.sessionId),
+          operationContext.lockTimeout
         );
 
         const lockTime = Date.now() - lockStart;
 
-        if (!lockResult.success) {
+        if (!lockResponse.success) {
           violations.push({
             type: 'access',
             severity: 'medium',
-            description: lockResult.error || 'Failed to acquire resource lock',
+            description: lockResponse.error?.message || 'Failed to acquire resource lock',
             context: {
               resource: operationContext.resource,
-              conflictingLock: lockResult.conflictingLock?.id
+              error: lockResponse.error?.message
             }
           });
 
@@ -231,6 +262,8 @@ export class SecurityMiddleware {
               lockAcquisitionTime: lockTime
             });
           }
+        } else {
+          lockResult = lockResponse.data;
         }
       }
 
@@ -282,14 +315,16 @@ export class SecurityMiddleware {
   /**
    * Release acquired locks
    */
-  async releaseLocks(lockIds: string[]): Promise<void> {
+  async releaseLocks(lockIds: (string | LockId)[]): Promise<void> {
     if (!this.config.enableConcurrentAccess) {
       return;
     }
 
     for (const lockId of lockIds) {
       try {
-        await this.accessManager.releaseLock(lockId);
+        // Cast string to LockId if needed
+        const typedLockId = typeof lockId === 'string' ? lockId as LockId : lockId;
+        await this.securityEngine.releaseLock(typedLockId);
       } catch (error) {
         logger.error({ err: error, lockId }, 'Failed to release lock');
       }

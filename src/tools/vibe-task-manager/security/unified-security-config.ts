@@ -184,6 +184,13 @@ export class UnifiedSecurityConfigManager {
   }
 
   /**
+   * Check if the security configuration has been initialized
+   */
+  isInitialized(): boolean {
+    return this.config !== null;
+  }
+
+  /**
    * Get the unified security configuration
    * Throws error if not initialized
    */
@@ -745,6 +752,71 @@ export class UnifiedSecurityConfigManager {
     this.mcpConfig = null;
     logger.debug('Unified security configuration reset');
   }
+
+  // ========================================================================
+  // TOOL-SPECIFIC CONVENIENCE METHODS
+  // ========================================================================
+
+  /**
+   * Get the base output directory for tools that only write files.
+   * This is a convenience method for tools that don't need read access.
+   * @returns The configured output directory path
+   */
+  getToolOutputDirectory(): string {
+    const config = this.getConfig();
+    return config.allowedWriteDirectory;
+  }
+
+  /**
+   * Validate and create a secure output path for tool-generated files.
+   * This is a convenience method for tools that only write to the output directory.
+   * @param relativePath The relative path within the output directory
+   * @returns The secure absolute path
+   * @throws Error if the path is invalid or outside boundaries
+   */
+  createSecureToolOutputPath(relativePath: string): string {
+    const config = this.getConfig();
+    const outputPath = path.join(config.allowedWriteDirectory, relativePath);
+    return this.createSecurePath(outputPath, 'write');
+  }
+
+  /**
+   * Check if a tool output directory exists and is writable.
+   * @param toolName The name of the tool (used for subdirectory)
+   * @returns Promise resolving to the tool directory path
+   */
+  async ensureToolOutputDirectory(toolName: string): Promise<string> {
+    const config = this.getConfig();
+    const toolDir = path.join(config.allowedWriteDirectory, toolName);
+    
+    // Validate the path is within boundaries
+    const validation = this.validatePathSecurity(toolDir, { operation: 'write' });
+    if (!validation.isValid) {
+      throw new Error(`Invalid tool directory: ${validation.error}`);
+    }
+
+    // Ensure directory exists
+    try {
+      const fs = await import('fs-extra');
+      await fs.ensureDir(toolDir);
+      logger.debug({ toolName, toolDir }, 'Ensured tool output directory exists');
+      return toolDir;
+    } catch (error) {
+      logger.error({ err: error, toolName, toolDir }, 'Failed to ensure tool output directory');
+      throw new Error(`Failed to create tool output directory: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * Get environment variable value with fallback.
+   * Convenience method for tools that need to check environment variables.
+   * @param varName The environment variable name
+   * @param fallback The fallback value if not set
+   * @returns The environment variable value or fallback
+   */
+  getEnvironmentVariable(varName: string, fallback?: string): string | undefined {
+    return process.env[varName] || fallback;
+  }
 }
 
 /**
@@ -871,4 +943,32 @@ export function isPathWithinReadDirectory(filePath: string): boolean {
  */
 export function isPathWithinWriteDirectory(filePath: string): boolean {
   return getUnifiedSecurityConfig().isPathWithinWriteDirectory(filePath);
+}
+
+// ========================================================================
+// TOOL-SPECIFIC CONVENIENCE EXPORTS
+// ========================================================================
+
+/**
+ * Get the base output directory for tools that only write files.
+ * Convenience export for tools migrating to centralized security.
+ */
+export function getToolOutputDirectory(): string {
+  return getUnifiedSecurityConfig().getToolOutputDirectory();
+}
+
+/**
+ * Create a secure output path for tool-generated files.
+ * Convenience export for tools migrating to centralized security.
+ */
+export function createSecureToolOutputPath(relativePath: string): string {
+  return getUnifiedSecurityConfig().createSecureToolOutputPath(relativePath);
+}
+
+/**
+ * Ensure a tool's output directory exists.
+ * Convenience export for tools migrating to centralized security.
+ */
+export async function ensureToolOutputDirectory(toolName: string): Promise<string> {
+  return getUnifiedSecurityConfig().ensureToolOutputDirectory(toolName);
 }

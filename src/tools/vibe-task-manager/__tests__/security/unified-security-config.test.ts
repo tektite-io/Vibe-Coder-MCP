@@ -51,10 +51,9 @@ describe('Unified Security Configuration Tests', () => {
     // Setup mock MCP config
     mockMCPConfig = {
       apiKey: 'test-key',
-      baseURL: 'test-url',
-      model: 'test-model',
-      maxTokens: 1000,
-      temperature: 0.7
+      baseUrl: 'test-url',
+      geminiModel: 'test-gemini-model',
+      perplexityModel: 'test-perplexity-model'
     } as OpenRouterConfig;
 
     // Get fresh instance and initialize
@@ -592,6 +591,135 @@ describe('Unified Security Configuration Tests', () => {
       expect(config.pathSecurity.allowedDirectories).toEqual([testReadDir, testWriteDir]);
       expect(config.strictMode).toBe(true);
       expect(config.performanceThresholdMs).toBe(50);
+    });
+  });
+
+  describe('Tool-Specific Convenience Methods', () => {
+    beforeEach(() => {
+      // Reset singleton instance
+      (UnifiedSecurityConfigManager as unknown as { instance: UnifiedSecurityConfigManager | null }).instance = null;
+      
+      // Setup mock MCP config
+      mockMCPConfig = {
+        apiKey: 'test-key',
+        baseUrl: 'test-url',
+        geminiModel: 'test-gemini-model',
+        perplexityModel: 'test-perplexity-model'
+      } as OpenRouterConfig;
+      
+      securityManager = UnifiedSecurityConfigManager.getInstance();
+      securityManager.initializeFromMCPConfig(mockMCPConfig);
+    });
+
+    describe('getToolOutputDirectory', () => {
+      it('should return the configured write directory', () => {
+        const outputDir = securityManager.getToolOutputDirectory();
+        expect(outputDir).toBe(testWriteDir);
+      });
+    });
+
+    describe('createSecureToolOutputPath', () => {
+      it('should create secure paths within write directory', () => {
+        const relativePath = 'my-tool/output.json';
+        const securePath = securityManager.createSecureToolOutputPath(relativePath);
+        
+        expect(securePath).toBe(path.join(testWriteDir, relativePath));
+      });
+
+      it('should reject paths outside write directory', () => {
+        const maliciousPath = '../../../etc/passwd';
+        
+        expect(() => {
+          securityManager.createSecureToolOutputPath(maliciousPath);
+        }).toThrow('Security violation');
+      });
+
+      it('should handle absolute paths correctly', () => {
+        const absolutePath = '/some/other/path/file.txt';
+        
+        expect(() => {
+          securityManager.createSecureToolOutputPath(absolutePath);
+        }).toThrow('Security violation');
+      });
+    });
+
+    describe('ensureToolOutputDirectory', () => {
+      // Mock fs-extra
+      let mockEnsureDir: ReturnType<typeof vi.fn>;
+      
+      beforeEach(() => {
+        mockEnsureDir = vi.fn();
+        vi.doMock('fs-extra', () => ({
+          default: { ensureDir: mockEnsureDir },
+          ensureDir: mockEnsureDir
+        }));
+      });
+
+      it('should create tool directory within write boundary', async () => {
+        mockEnsureDir.mockResolvedValue(undefined);
+        
+        const toolName = 'my-test-tool';
+        const toolDir = await securityManager.ensureToolOutputDirectory(toolName);
+        
+        expect(toolDir).toBe(path.join(testWriteDir, toolName));
+        expect(mockEnsureDir).toHaveBeenCalledWith(path.join(testWriteDir, toolName));
+      });
+
+      it('should reject tool names with path traversal', async () => {
+        const maliciousToolName = '../../../etc';
+        
+        await expect(
+          securityManager.ensureToolOutputDirectory(maliciousToolName)
+        ).rejects.toThrow('Invalid tool directory');
+      });
+
+      it('should handle fs errors gracefully', async () => {
+        // Reset the mock to throw an error
+        vi.resetModules();
+        vi.doMock('fs-extra', () => ({
+          default: { 
+            ensureDir: vi.fn().mockRejectedValue(new Error('Permission denied'))
+          },
+          ensureDir: vi.fn().mockRejectedValue(new Error('Permission denied'))
+        }));
+        
+        await expect(
+          securityManager.ensureToolOutputDirectory('test-tool')
+        ).rejects.toThrow('Failed to create tool output directory');
+      });
+    });
+
+    describe('getEnvironmentVariable', () => {
+      const originalEnv = process.env;
+
+      beforeEach(() => {
+        process.env = { ...originalEnv };
+      });
+
+      afterEach(() => {
+        process.env = originalEnv;
+      });
+
+      it('should return environment variable value when set', () => {
+        process.env.TEST_VAR = 'test-value';
+        
+        const value = securityManager.getEnvironmentVariable('TEST_VAR');
+        expect(value).toBe('test-value');
+      });
+
+      it('should return fallback when environment variable not set', () => {
+        delete process.env.TEST_VAR;
+        
+        const value = securityManager.getEnvironmentVariable('TEST_VAR', 'fallback-value');
+        expect(value).toBe('fallback-value');
+      });
+
+      it('should return undefined when no fallback provided', () => {
+        delete process.env.TEST_VAR;
+        
+        const value = securityManager.getEnvironmentVariable('TEST_VAR');
+        expect(value).toBeUndefined();
+      });
     });
   });
 });
