@@ -4,7 +4,7 @@ import path from 'path';
 import { z } from 'zod';
 import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
-import { performFormatAwareLlmCall } from '../../utils/llmHelper.js';
+import { performFormatAwareLlmCallWithCentralizedConfig } from '../../utils/llmHelper.js';
 import { performResearchQuery } from '../../utils/researchHelper.js';
 import logger from '../../logger.js';
 import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js';
@@ -12,15 +12,21 @@ import { AppError, ToolExecutionError } from '../../utils/errors.js';
 import { jobManager, JobStatus } from '../../services/job-manager/index.js';
 import { sseNotifier } from '../../services/sse-notifier/index.js';
 import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js';
+import { getToolOutputDirectory, ensureToolOutputDirectory } from '../vibe-task-manager/security/unified-security-config.js';
 
 // --- Constants ---
 const TASK_LIST_DIR_NAME = 'generated_task_lists';
 
-// Helper function to get the base output directory
+// Helper function to get the base output directory using centralized security
 function getBaseOutputDir(): string {
-  return process.env.VIBE_CODER_OUTPUT_DIR
-    ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
-    : path.join(process.cwd(), 'VibeCoderOutput');
+  try {
+    return getToolOutputDirectory();
+  } catch {
+    // Fallback for backward compatibility during migration
+    return process.env.VIBE_CODER_OUTPUT_DIR
+      ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
+      : path.join(process.cwd(), 'VibeCoderOutput');
+  }
 }
 
 // Define tool-specific directory using the helper
@@ -28,13 +34,21 @@ const TASK_LIST_DIR = path.join(getBaseOutputDir(), TASK_LIST_DIR_NAME);
 
 // Ensure directories exist
 export async function initDirectories() {
-  const baseOutputDir = getBaseOutputDir();
   try {
-    await fs.ensureDir(baseOutputDir);
-    const toolDir = path.join(baseOutputDir, TASK_LIST_DIR_NAME);
-    await fs.ensureDir(toolDir);
+    const toolDir = await ensureToolOutputDirectory(TASK_LIST_DIR_NAME);
+    logger.debug(`Ensured task list directory exists: ${toolDir}`);
   } catch (error) {
-    logger.error({ err: error, path: baseOutputDir }, `Failed to ensure base output directory exists for task-list-generator.`);
+    logger.error({ err: error }, `Failed to ensure base output directory exists for task-list-generator.`);
+    // Fallback to original implementation for backward compatibility
+    const baseOutputDir = getBaseOutputDir();
+    try {
+      await fs.ensureDir(baseOutputDir);
+      const toolDir = path.join(baseOutputDir, TASK_LIST_DIR_NAME);
+      await fs.ensureDir(toolDir);
+      logger.debug(`Ensured task list directory exists (fallback): ${toolDir}`);
+    } catch (fallbackError) {
+      logger.error({ err: fallbackError, path: baseOutputDir }, `Fallback directory creation also failed.`);
+    }
   }
 }
 
@@ -300,10 +314,9 @@ async function decomposeSingleTaskWithRetry(
       logger.debug({ taskId: task.id, attempt: attempts }, `Attempting decomposition (attempt ${attempts}/${maxRetries + 1})`);
       sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, `Decomposing task ${task.id} (attempt ${attempts})...`);
 
-      const subTasksMarkdown = await performFormatAwareLlmCall(
+      const subTasksMarkdown = await performFormatAwareLlmCallWithCentralizedConfig(
         decompositionPrompt,
         TASK_DECOMPOSITION_SYSTEM_PROMPT,
-        config,
         'task_list_decomposition',
         'markdown', // Explicitly specify markdown format
         undefined, // No schema for markdown
@@ -400,10 +413,9 @@ export const generateTaskList: ToolExecutor = async (
       }
 
       const initialGenerationPrompt = `Create a detailed task list for the following product:\n\n${productDescription}\n\nBased on these user stories:\n\n${userStories}\n\n${researchContext}`;
-      const highLevelTaskListMarkdown = await performFormatAwareLlmCall(
+      const highLevelTaskListMarkdown = await performFormatAwareLlmCallWithCentralizedConfig(
         initialGenerationPrompt,
         INITIAL_TASK_LIST_SYSTEM_PROMPT,
-        config,
         'task_list_initial_generation',
         'markdown', // Explicitly specify markdown format
         undefined, // No schema for markdown
@@ -521,6 +533,3 @@ const taskListToolDefinition: ToolDefinition = {
 };
 
 registerTool(taskListToolDefinition);
-
-// Initialize directories on load
-initDirectories().catch((err: unknown) => logger.error({ err }, "Failed to initialize task-list-generator directories on startup."));

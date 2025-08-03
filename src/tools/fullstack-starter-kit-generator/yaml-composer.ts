@@ -6,7 +6,7 @@ import logger from '../../logger.js';
 import { StarterKitDefinition, FileStructureItem, fileStructureItemSchema } from './schema.js';
 import { AppError, ParsingError, ConfigurationError, ToolExecutionError } from '../../utils/errors.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
-import { performFormatAwareLlmCall } from '../../utils/llmHelper.js';
+import { performFormatAwareLlmCallWithCentralizedConfig } from '../../utils/llmHelper.js';
 import { performTemplateGenerationCall } from '../../utils/schemaAwareLlmHelper.js';
 import { dynamicTemplateSchema, validateDynamicTemplateWithErrors } from './schemas/moduleSelection.js';
 import { z } from 'zod';
@@ -289,10 +289,9 @@ Ensure the output is a single, raw JSON object without any other text or formatt
 
     try {
       logger.info(`Requesting LLM to generate template for: ${modulePathSegment}`);
-      const rawResponse = await performFormatAwareLlmCall(
+      const rawResponse = await performFormatAwareLlmCallWithCentralizedConfig(
         userPrompt,
         systemPrompt,
-        this.config,
         'fullstack_starter_kit_dynamic_yaml_module_generation',
         'json', // Explicitly specify JSON format
         undefined, // Schema will be inferred from task name

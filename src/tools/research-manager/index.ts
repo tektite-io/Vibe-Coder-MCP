@@ -5,21 +5,25 @@ import { z } from 'zod';
 import { CallToolResult, McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
 import { performResearchQuery } from '../../utils/researchHelper.js';
-import { performFormatAwareLlmCall } from '../../utils/llmHelper.js'; // Import the format-aware helper
+import { performFormatAwareLlmCallWithCentralizedConfig } from '../../utils/llmHelper.js'; // Import the format-aware helper
 import logger from '../../logger.js';
-import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js'; // Import ToolExecutionContext
+import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext, isToolRegistered } from '../../services/routing/toolRegistry.js'; // Import ToolExecutionContext and isToolRegistered
 import { AppError, ToolExecutionError } from '../../utils/errors.js'; // Import necessary errors
 import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
 import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
 import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js';
+import { getToolOutputDirectory, ensureToolOutputDirectory, getUnifiedSecurityConfig } from '../vibe-task-manager/security/unified-security-config.js';
 
-// Helper function to get the base output directory
+// Helper function to get the base output directory using centralized security
 function getBaseOutputDir(): string {
-  // Prioritize environment variable, resolve to ensure it's treated as an absolute path if provided
-  // Fallback to default relative to CWD
-  return process.env.VIBE_CODER_OUTPUT_DIR
-    ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
-    : path.join(process.cwd(), 'VibeCoderOutput');
+  try {
+    return getToolOutputDirectory();
+  } catch {
+    // Fallback for backward compatibility during migration
+    return process.env.VIBE_CODER_OUTPUT_DIR
+      ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
+      : path.join(process.cwd(), 'VibeCoderOutput');
+  }
 }
 
 // Define tool-specific directory using the helper
@@ -27,15 +31,28 @@ const RESEARCH_DIR = path.join(getBaseOutputDir(), 'research-manager');
 
 // Initialize directories if they don't exist
 export async function initDirectories() {
-  const baseOutputDir = getBaseOutputDir();
   try {
-    await fs.ensureDir(baseOutputDir); // Ensure base directory exists
-    const toolDir = path.join(baseOutputDir, 'research-manager');
-    await fs.ensureDir(toolDir); // Ensure tool-specific directory exists
+    // Check if UnifiedSecurityConfigManager is initialized
+    const securityConfig = getUnifiedSecurityConfig();
+    if (!securityConfig.isInitialized()) {
+      logger.warn('UnifiedSecurityConfigManager not initialized, using fallback directory creation');
+      throw new Error('Security config not initialized');
+    }
+    
+    const toolDir = await ensureToolOutputDirectory('research-manager');
     logger.debug(`Ensured research directory exists: ${toolDir}`);
   } catch (error) {
-    logger.error({ err: error, path: baseOutputDir }, `Failed to ensure base output directory exists for research-manager.`);
-    // Decide if we should re-throw or just log. Logging might be safer.
+    logger.error({ err: error }, `Failed to ensure base output directory exists for research-manager.`);
+    // Fallback to original implementation for backward compatibility
+    const baseOutputDir = getBaseOutputDir();
+    try {
+      await fs.ensureDir(baseOutputDir);
+      const toolDir = path.join(baseOutputDir, 'research-manager');
+      await fs.ensureDir(toolDir);
+      logger.debug(`Ensured research directory exists (fallback): ${toolDir}`);
+    } catch (fallbackError) {
+      logger.error({ err: fallbackError, path: baseOutputDir }, `Fallback directory creation also failed.`);
+    }
   }
 }
 
@@ -175,10 +192,9 @@ export const performResearch: ToolExecutor = async (
 
       const enhancementPrompt = `Synthesize and structure the following initial research findings based on the original query.\n\nOriginal Query: ${query}\n\nInitial Research Findings:\n${researchResult}`;
 
-    const enhancedResearch = await performFormatAwareLlmCall(
+    const enhancedResearch = await performFormatAwareLlmCallWithCentralizedConfig(
       enhancementPrompt,
       RESEARCH_SYSTEM_PROMPT, // System prompt guides the structuring
-      config,
       'research_enhancement', // Define a logical task name for potential mapping
       'markdown', // Explicitly specify markdown format
       undefined, // No schema for markdown
@@ -268,5 +284,10 @@ const researchToolDefinition: ToolDefinition = {
   executor: performResearch // Reference the adapted function
 };
 
-// Register the tool with the central registry
-registerTool(researchToolDefinition);
+// Register the tool with the central registry (with guard to prevent duplicate registration)
+if (!isToolRegistered(researchToolDefinition.name)) {
+  registerTool(researchToolDefinition);
+  logger.debug(`Tool "${researchToolDefinition.name}" registered successfully`);
+} else {
+  logger.debug(`Tool "${researchToolDefinition.name}" already registered, skipping`);
+}
