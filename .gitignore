@@ -95,7 +95,6 @@ temp/
 .rts2_cache_es/
 .rts2_cache_umd/
 ignored-files.txt
-Agents.md
 
 # Generated logs and results
 detailed_logs.txt
