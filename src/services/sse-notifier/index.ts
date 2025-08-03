@@ -159,12 +159,27 @@ class SseNotifier {
       job.updatedAt
     );
 
-    // For stdio transport, just update the job status
+    // For stdio transport, update job status and emit to stderr for visibility
     if (sessionId === 'stdio-session' || sessionId === 'placeholder-session-id' || sessionId === 'unknown-session') {
       const updateStartTime = Date.now();
       try {
-        // Just update the job status in the job manager
+        // Update the job status in the job manager
         jobManager.updateJobStatus(jobId, status, message);
+        
+        // Emit detailed progress to stderr for MCP client visibility
+        if (message && progress !== undefined) {
+          const progressOutput = {
+            type: 'progress',
+            jobId,
+            tool: job.toolName,
+            status,
+            message,
+            progress,
+            timestamp: new Date().toISOString()
+          };
+          process.stderr.write(`[PROGRESS] ${JSON.stringify(progressOutput)}\n`);
+        }
+        
         const updateTime = Date.now() - updateStartTime;
         
         logger.info({ 
@@ -178,7 +193,7 @@ class SseNotifier {
             timestamp: new Date().toISOString(),
             statusType: status
           }
-        }, "Job status update: successful stdio session update");
+        }, "Job status update: successful stdio session update with stderr emission");
         return;
       } catch (error) {
         const updateTime = Date.now() - updateStartTime;

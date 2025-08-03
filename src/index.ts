@@ -139,7 +139,7 @@ async function main(mcpServer: import("@modelcontextprotocol/sdk/server/mcp.js")
         }
       });
 
-      app.listen(port, () => {
+      app.listen(port, async () => {
         logger.info({
           port,
           allocatedByTransportManager: !!allocatedSsePort,
@@ -147,6 +147,9 @@ async function main(mcpServer: import("@modelcontextprotocol/sdk/server/mcp.js")
         }, `Vibe Coder MCP SSE server running on http://localhost:${port}`);
          logger.info('Connect using SSE at /sse and post messages to /messages');
          logger.info('Subscribe to job progress events at /events/:sessionId'); // Log new endpoint
+         
+         // Register the instance with port tracking
+         await PortAllocator.registerInstance(port, 'sse-server');
        });
 
        // --- Add new SSE endpoint for job progress ---
@@ -261,6 +264,28 @@ async function initDirectories() {
 
 // New function to handle all async initialization steps
 async function initializeApp() {
+  // Log current directories for debugging
+  const cwd = process.cwd();
+  const scriptDir = __dirname;
+  const projectRoot = path.resolve(scriptDir, '..');
+  
+  logger.info({ 
+    cwd, 
+    scriptDir,
+    projectRoot
+  }, 'Directory information');
+  
+  // Just warn if working directory is root, don't fail
+  // MCP clients often start servers from root directory
+  if (cwd === '/' || cwd === '\\' || cwd === 'C:\\' || cwd === 'C:/' || cwd.match(/^[A-Z]:[\\/]$/)) {
+    logger.warn({ 
+      cwd, 
+      scriptDir,
+      projectRoot,
+      message: 'Working directory is root. Using project root for relative paths.'
+    }, 'Working directory warning');
+  }
+
   // Initialize centralized OpenRouter configuration manager
   logger.info('Initializing centralized OpenRouter configuration manager...');
   const configManager = OpenRouterConfigManager.getInstance();
@@ -299,25 +324,24 @@ async function initializeApp() {
 
   // Now that the registry is initialized with the proper config, we can safely load tools
   // which will register themselves with the properly configured registry
-  await initDirectories(); // Initialize tool directories
+  // NOTE: initDirectories() moved to after server creation to ensure UnifiedSecurityConfigManager is initialized
   await initializeToolEmbeddings(); // Initialize embeddings
 
   // Check for other running vibe-coder-mcp instances
   try {
     logger.info('Checking for other running vibe-coder-mcp instances...');
-    const commonPorts = [8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089, 8090];
-    const portsInUse: number[] = [];
-
-    for (const port of commonPorts) {
-      const isAvailable = await PortAllocator.findAvailablePort(port);
-      if (!isAvailable) {
-        portsInUse.push(port);
-      }
-    }
+    const commonPorts = [8080, 8081, 8082, 8083, 8084, 8085, 8086, 8087, 8088, 8089, 8090, 3011, 3012];
+    
+    // Use the new conflict detection method
+    const conflicts = await PortAllocator.detectPortConflicts(commonPorts);
+    const portsInUse = Array.from(conflicts.entries())
+      .filter(([_, inUse]) => inUse)
+      .map(([port, _]) => port);
 
     if (portsInUse.length > 0) {
       logger.warn({
         portsInUse,
+        conflictCount: portsInUse.length,
         message: 'Detected ports in use that may indicate other vibe-coder-mcp instances running'
       }, 'Multiple instance detection warning');
     } else {
@@ -386,6 +410,41 @@ initializeApp().then(async (loadedConfig) => {
   // Dynamically import createServer AFTER ToolRegistry initialization and tool imports
   const { createServer } = await import('./server.js');
   const server = createServer(loadedConfig); // Pass loaded config to server creation
+  
+  // Initialize tool directories AFTER server creation to ensure UnifiedSecurityConfigManager is initialized
+  logger.info('Initializing tool directories after server creation...');
+  await initDirectories();
+  
+  // Initialize PortAllocator with configured instance directory
+  const instanceDir = process.env.VIBE_CODER_INSTANCE_DIR;
+  const outputDir = process.env.VIBE_CODER_OUTPUT_DIR || path.join(process.cwd(), 'VibeCoderOutput');
+  
+  // Determine the instance tracking directory
+  let instanceTrackingDir: string | undefined;
+  if (instanceDir) {
+    // Use explicit instance directory if provided
+    instanceTrackingDir = instanceDir;
+    logger.info({ instanceDir }, 'Using explicitly configured instance directory');
+  } else if (process.env.VIBE_CODER_OUTPUT_DIR) {
+    // If output directory is configured, use a subdirectory within it
+    instanceTrackingDir = path.join(outputDir, '.temp', 'instances');
+    logger.info({ instanceTrackingDir }, 'Using instance directory within configured output directory');
+  }
+  
+  // Initialize PortAllocator
+  if (instanceTrackingDir) {
+    PortAllocator.initialize({ instanceTrackingDir });
+  } else {
+    logger.debug('PortAllocator using default OS temp instance tracking directory');
+    PortAllocator.initialize({});
+  }
+  
+  // Register shutdown callback to clean up port tracking
+  registerShutdownCallback(async () => {
+    logger.info('Cleaning up port allocations...');
+    await PortAllocator.cleanupInstanceTracking();
+  });
+  
   main(server).catch(error => { // Pass server instance to main
     logger.fatal({ err: error }, 'Failed to start server');
     process.exit(1);

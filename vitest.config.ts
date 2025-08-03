@@ -37,6 +37,7 @@ export default defineConfig(({ mode }) => {
         'src/**/__integration__/**/*.test.ts',
         'src/**/integration/**/*.test.ts',
         'src/**/integrations/**/*.test.ts',
+        'src/**/*integration*.test.ts', // Files with "integration" in filename
 
         // End-to-end tests
         'test/e2e/**/*.test.ts'
@@ -44,6 +45,13 @@ export default defineConfig(({ mode }) => {
       exclude: [
         'node_modules', 
         'build',
+        // Exclude live test directories to prevent real LLM calls in CI
+        '**/live/**',
+        '**/__tests__/live/**',
+        '**/tests/live/**',
+        '**/live-validation/**',
+        '**/__tests__/live-validation/**',
+        '**/tests/live-validation/**',
         // CI-specific exclusions for infrastructure-dependent tests
         ...(isCI ? [
           'src/tools/fullstack-starter-kit-generator/__tests__/research-enhanced.test.ts',
@@ -73,6 +81,13 @@ export default defineConfig(({ mode }) => {
           '**/integrations/**',
           'test/e2e/**',
           'src/testUtils/**',
+          // Exclude live test directories from coverage
+          '**/live/**',
+          '**/__tests__/live/**',
+          '**/tests/live/**',
+          '**/live-validation/**',
+          '**/__tests__/live-validation/**',
+          '**/tests/live-validation/**',
           '**/*.d.ts'
         ],
       },
