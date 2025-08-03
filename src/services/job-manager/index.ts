@@ -4,6 +4,10 @@ import { createHash } from 'crypto';
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import logger from '../../logger.js';
 import { JobDetails } from './jobStatusMessage.js';
+import { TimeoutManager, TimeoutOperation } from '../../tools/vibe-task-manager/utils/timeout-manager.js';
+import { JobExecutionAdapter } from './execution-adapter.js';
+import { ExecutionCoordinator } from '../../tools/vibe-task-manager/services/execution-coordinator.js';
+import { JobTimeoutConfigManager } from '../../utils/job-timeout-config-manager.js';
 
 /**
  * Represents the possible statuses of a background job.
@@ -34,6 +38,11 @@ export interface Job {
   accessCount?: number; // How many times the job has been accessed
   // Job deduplication
   fingerprint?: string; // Hash of toolName + params for deduplication
+  // Timeout properties
+  timeoutOperation?: TimeoutOperation; // Type of timeout operation
+  timeoutMs?: number; // Custom timeout in milliseconds
+  startedAt?: number; // When job started running (for timeout calculation)
+  abortController?: AbortController; // For cancellation support
 }
 
 /**
@@ -41,8 +50,69 @@ export interface Job {
  * Uses a Singleton pattern.
  */
 class JobManager {
+  private static instance: JobManager | null = null;
   private jobs = new Map<string, Job>();
   private jobsByFingerprint = new Map<string, string>(); // fingerprint -> jobId mapping
+  private timeoutManager: TimeoutManager;
+  private executionAdapter: JobExecutionAdapter | null = null;
+  private timeoutConfigManager: JobTimeoutConfigManager;
+
+  private constructor() {
+    this.timeoutManager = TimeoutManager.getInstance();
+    this.timeoutConfigManager = JobTimeoutConfigManager.getInstance();
+    // Initialize the timeout config manager
+    this.initializeTimeoutConfig();
+    // Cleanup orphaned jobs from previous server session
+    this.cleanupOrphanedJobs();
+  }
+
+  /**
+   * Initialize timeout configuration
+   */
+  private async initializeTimeoutConfig(): Promise<void> {
+    try {
+      await this.timeoutConfigManager.initialize();
+      logger.info('Job timeout configuration initialized');
+    } catch (error) {
+      logger.error({ error }, 'Failed to initialize job timeout configuration');
+    }
+  }
+
+  static getInstance(): JobManager {
+    if (!JobManager.instance) {
+      JobManager.instance = new JobManager();
+    }
+    return JobManager.instance;
+  }
+
+  /**
+   * Initialize the execution adapter with ExecutionCoordinator
+   * This should be called after ExecutionCoordinator is available
+   */
+  initializeExecutionAdapter(executionCoordinator: ExecutionCoordinator): void {
+    this.executionAdapter = new JobExecutionAdapter(executionCoordinator);
+    
+    // Register lifecycle hooks to update job status
+    this.executionAdapter.registerJobLifecycleHooks((jobId, status, message) => {
+      this.updateJobStatus(jobId, status, message);
+    });
+    
+    logger.info('JobManager initialized with ExecutionCoordinator adapter');
+  }
+
+  /**
+   * Check if the execution adapter is initialized
+   */
+  isExecutionAdapterInitialized(): boolean {
+    return this.executionAdapter !== null;
+  }
+
+  /**
+   * Get the execution adapter (if initialized)
+   */
+  getExecutionAdapter(): JobExecutionAdapter | null {
+    return this.executionAdapter;
+  }
 
   /**
    * Generates a fingerprint for job deduplication based on tool name and parameters.
@@ -199,6 +269,11 @@ class JobManager {
     // Create new job
     const jobId = randomUUID();
     const now = Date.now();
+    
+    // Get timeout configuration for this tool
+    const timeoutOperation = this.timeoutConfigManager.getTimeoutOperation(toolName);
+    const customTimeoutMs = this.timeoutConfigManager.getCustomTimeoutMs(toolName);
+    
     const newJob: Job = {
       id: jobId,
       toolName,
@@ -207,6 +282,8 @@ class JobManager {
       createdAt: now,
       updatedAt: now,
       fingerprint,
+      timeoutOperation,
+      timeoutMs: customTimeoutMs
     };
     
     // Store job and fingerprint mapping
@@ -217,8 +294,10 @@ class JobManager {
       jobId, 
       toolName, 
       fingerprint,
-      paramCount: Object.keys(params).length 
-    }, `Created new background job.`);
+      paramCount: Object.keys(params).length,
+      timeoutOperation,
+      customTimeoutMs
+    }, `Created new background job with timeout configuration.`);
     
     // TODO: Notify via SSE later
     // sseNotifier.sendProgress(sessionId, jobId, JobStatus.PENDING, 'Job created');
@@ -236,6 +315,10 @@ class JobManager {
     const now = Date.now();
     const fingerprint = this.generateJobFingerprint(toolName, params);
     
+    // Get timeout configuration for this tool
+    const timeoutOperation = this.timeoutConfigManager.getTimeoutOperation(toolName);
+    const customTimeoutMs = this.timeoutConfigManager.getCustomTimeoutMs(toolName);
+    
     const newJob: Job = {
       id: jobId,
       toolName,
@@ -244,6 +327,8 @@ class JobManager {
       createdAt: now,
       updatedAt: now,
       fingerprint,
+      timeoutOperation,
+      timeoutMs: customTimeoutMs
     };
     
     // Store job and fingerprint mapping
@@ -254,8 +339,10 @@ class JobManager {
       jobId, 
       toolName, 
       fingerprint,
-      paramCount: Object.keys(params).length 
-    }, `Created new background job with specific ID.`);
+      paramCount: Object.keys(params).length,
+      timeoutOperation,
+      customTimeoutMs
+    }, `Created new background job with specific ID and timeout configuration.`);
     return jobId;
   }
 
@@ -302,6 +389,13 @@ class JobManager {
     if (job.status === JobStatus.COMPLETED || job.status === JobStatus.FAILED) {
         logger.warn({ jobId, currentStatus: job.status, newStatus: status }, `Attempted to update status of a finalized job.`);
         // Optionally return false or allow update
+    }
+
+    // Track when job starts running for timeout calculation
+    if (status === JobStatus.RUNNING && job.status !== JobStatus.RUNNING) {
+      job.startedAt = Date.now();
+      job.abortController = new AbortController();
+      logger.debug({ jobId, startedAt: job.startedAt }, 'Job started running, initialized timeout tracking');
     }
 
     job.status = status;
@@ -368,11 +462,166 @@ class JobManager {
   }
 
   /**
+   * Check if a job has timed out based on its timeout configuration.
+   * @param jobId The ID of the job to check.
+   * @returns True if the job has timed out, false otherwise.
+   */
+  isJobTimedOut(jobId: string): boolean {
+    const job = this.jobs.get(jobId);
+    if (!job || !job.startedAt || job.status !== JobStatus.RUNNING) {
+      return false;
+    }
+
+    // If no timeout operation specified, no timeout applies
+    if (!job.timeoutOperation) {
+      return false;
+    }
+
+    const timeout = job.timeoutMs || this.timeoutManager.getTimeout(job.timeoutOperation);
+    const elapsed = Date.now() - job.startedAt;
+    
+    const timedOut = elapsed > timeout;
+    if (timedOut) {
+      logger.warn({ 
+        jobId, 
+        timeoutOperation: job.timeoutOperation,
+        timeout,
+        elapsed,
+        toolName: job.toolName 
+      }, 'Job has timed out');
+    }
+    
+    return timedOut;
+  }
+
+  /**
+   * Get the abort signal for a job to support cancellation.
+   * @param jobId The ID of the job.
+   * @returns The AbortSignal if available, undefined otherwise.
+   */
+  getJobAbortSignal(jobId: string): AbortSignal | undefined {
+    const job = this.jobs.get(jobId);
+    return job?.abortController?.signal;
+  }
+
+  /**
+   * Cancel a running job.
+   * @param jobId The ID of the job to cancel.
+   * @param reason The reason for cancellation.
+   * @returns True if the job was cancelled, false otherwise.
+   */
+  async cancelJob(jobId: string, reason: string = 'Job cancelled'): Promise<boolean> {
+    const job = this.jobs.get(jobId);
+    if (!job || job.status !== JobStatus.RUNNING) {
+      logger.warn({ jobId, status: job?.status }, 'Cannot cancel job - not running');
+      return false;
+    }
+
+    // Try to cancel through ExecutionCoordinator first if available
+    if (this.executionAdapter) {
+      try {
+        const cancelled = await this.executionAdapter.cancelJobExecution(jobId);
+        if (cancelled) {
+          logger.info({ jobId, reason }, 'Job cancelled via ExecutionCoordinator');
+          return true;
+        }
+      } catch (error) {
+        logger.warn({ jobId, error }, 'Failed to cancel job via ExecutionCoordinator, falling back to direct cancellation');
+      }
+    }
+
+    // Fallback: Abort the job directly if it has an abort controller
+    if (job.abortController) {
+      job.abortController.abort(reason);
+    }
+
+    // Update job status to failed with cancellation reason
+    this.setJobResult(jobId, {
+      isError: true,
+      content: [{
+        type: 'text',
+        text: `Job cancelled: ${reason}`
+      }]
+    });
+
+    logger.info({ jobId, reason }, 'Job cancelled directly');
+    return true;
+  }
+
+  /**
+   * Set timeout configuration for a job.
+   * @param jobId The ID of the job.
+   * @param timeoutOperation The type of timeout operation.
+   * @param customTimeoutMs Optional custom timeout in milliseconds.
+   * @returns True if the timeout was set, false otherwise.
+   */
+  setJobTimeout(jobId: string, timeoutOperation: TimeoutOperation, customTimeoutMs?: number): boolean {
+    const job = this.jobs.get(jobId);
+    if (!job) {
+      logger.warn({ jobId }, 'Cannot set timeout for non-existent job');
+      return false;
+    }
+
+    job.timeoutOperation = timeoutOperation;
+    if (customTimeoutMs !== undefined) {
+      job.timeoutMs = customTimeoutMs;
+    }
+
+    logger.debug({ 
+      jobId, 
+      timeoutOperation, 
+      customTimeoutMs,
+      defaultTimeout: this.timeoutManager.getTimeout(timeoutOperation)
+    }, 'Job timeout configuration set');
+    
+    return true;
+  }
+
+  /**
    * Cleanup old completed/failed jobs to prevent memory buildup.
    * This method removes jobs that have been in COMPLETED or FAILED status for more than the specified age.
    * @param maxAgeMs Maximum age in milliseconds for completed/failed jobs to be retained.
    * @returns The number of jobs that were cleaned up.
    */
+  /**
+   * Cleanup orphaned jobs that were left running due to server crash/restart
+   */
+  private cleanupOrphanedJobs(): void {
+    let orphanedCount = 0;
+    const jobsToUpdate: string[] = [];
+
+    // Find jobs that are still marked as running or pending
+    for (const [jobId, job] of this.jobs) {
+      if (job.status === JobStatus.RUNNING || job.status === JobStatus.PENDING) {
+        jobsToUpdate.push(jobId);
+        orphanedCount++;
+        
+        // Mark as failed with orphaned message
+        job.status = JobStatus.FAILED;
+        job.result = {
+          isError: true,
+          content: [{
+            type: 'text',
+            text: 'Job was orphaned due to server restart'
+          }]
+        };
+        job.updatedAt = Date.now();
+        
+        // Cleanup fingerprint mapping if it exists
+        if (job.fingerprint) {
+          this.jobsByFingerprint.delete(job.fingerprint);
+        }
+      }
+    }
+
+    if (orphanedCount > 0) {
+      logger.warn({ 
+        orphanedCount, 
+        totalJobs: this.jobs.size 
+      }, `Cleaned up ${orphanedCount} orphaned jobs from previous server session.`);
+    }
+  }
+
   cleanupOldJobs(maxAgeMs: number = 24 * 60 * 60 * 1000): number { // Default: 24 hours
     const now = Date.now();
     let cleanedCount = 0;
@@ -410,6 +659,16 @@ class JobManager {
     }
 
     return cleanedCount;
+  }
+
+  /**
+   * Clear all jobs - mainly for testing purposes.
+   * @internal
+   */
+  clearAllJobs(): void {
+    this.jobs.clear();
+    this.jobsByFingerprint.clear();
+    logger.debug('Cleared all jobs from memory');
   }
 
   /**
@@ -467,4 +726,8 @@ class JobManager {
 }
 
 // Export a singleton instance
-export const jobManager = new JobManager();
+export const jobManager = JobManager.getInstance();
+
+// Export types and adapter for external use
+export { JobExecutionAdapter } from './execution-adapter.js';
+export type { TimeoutOperation } from '../../tools/vibe-task-manager/utils/timeout-manager.js';

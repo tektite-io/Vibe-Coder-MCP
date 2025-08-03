@@ -1,10 +1,10 @@
-// src/services/job-manager/job-manager.test.ts
+// src/services/job-manager/__tests__/job-manager.test.ts
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { jobManager, JobStatus } from './index.js'; // Import the singleton instance
+import { jobManager, JobStatus } from '../index.js'; // Import the singleton instance
 import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 
 // Mock the sseNotifier if JobManager interacts with it directly (e.g., on setJobResult)
-vi.mock('../sse-notifier/index.js', () => ({
+vi.mock('../../sse-notifier/index.js', () => ({
   sseNotifier: {
     sendProgress: vi.fn(),
     // Add other methods if needed by JobManager
@@ -12,7 +12,7 @@ vi.mock('../sse-notifier/index.js', () => ({
 }));
 
 // Mock the logger if needed
-vi.mock('../../logger.js', () => ({
+vi.mock('../../../logger.js', () => ({
   default: {
     info: vi.fn(),
     warn: vi.fn(),
@@ -21,16 +21,47 @@ vi.mock('../../logger.js', () => ({
   }
 }));
 
+// Mock the TimeoutManager
+vi.mock('../../../tools/vibe-task-manager/utils/timeout-manager.js', () => ({
+  TimeoutManager: {
+    getInstance: vi.fn(() => ({
+      getTimeout: vi.fn((operation) => {
+        const timeouts = {
+          taskExecution: 300000,
+          llmRequest: 60000,
+          taskDecomposition: 600000,
+        };
+        return timeouts[operation] || 60000;
+      }),
+    })),
+  },
+  TimeoutOperation: {},
+}));
+
 
 describe('JobManager Singleton', () => {
   // We are testing the singleton instance directly
   // let jobManager: JobManager; // No need to declare or instantiate
 
   beforeEach(() => {
+    // Setup fake timers for tests that need them
+    vi.useFakeTimers();
+    
+    // Clean up any existing jobs from JobManager singleton
+    // @ts-expect-error - accessing internal method for testing
+    jobManager.clearAllJobs(); // Clear all jobs
+    
     // Reset mocks before each test
     vi.clearAllMocks();
-    // TODO: Consider adding a reset method to JobManager for testing if needed
-    // e.g., jobManager.resetForTesting();
+  });
+  
+  afterEach(() => {
+    // Clean up jobs after each test
+    // @ts-expect-error - accessing internal method for testing
+    jobManager.clearAllJobs(); // Clear all jobs
+    
+    vi.useRealTimers();
+    vi.clearAllMocks();
   });
 
   it('should create a new job with PENDING status and return a job ID', () => {
