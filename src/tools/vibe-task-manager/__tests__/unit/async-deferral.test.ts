@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { setupUniversalTestCleanup, cleanupUniversalTest } from '../utils/universal-test-cleanup.js';
 
 // Mock logger to prevent actual logging during tests
 const mockLogger = {
@@ -61,6 +62,7 @@ describe('UniversalAgentCommunicationChannel Async Deferral', () => {
   let UniversalAgentCommunicationChannel: unknown;
 
   beforeEach(async () => {
+    await setupUniversalTestCleanup();
     vi.clearAllMocks();
     vi.clearAllTimers();
     vi.useFakeTimers();
@@ -134,8 +136,9 @@ describe('UniversalAgentCommunicationChannel Async Deferral', () => {
     };
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers();
+    await cleanupUniversalTest();
   });
 
   it('should defer async initialization during constructor', () => {

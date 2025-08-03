@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { RDDEngine, RDDConfig } from '../../core/rdd-engine.js';
-import { AtomicTask, TaskType, TaskPriority, TaskStatus } from '../../types/task.js';
+import { AtomicTask, TaskType, TaskPriority, TaskStatus, FunctionalArea } from '../../types/task.js';
 import { ProjectContext } from '../../types/project-context.js';
 import { OpenRouterConfig } from '../../../../types/workflow.js';
 
@@ -8,8 +8,9 @@ import { OpenRouterConfig } from '../../../../types/workflow.js';
 const createMockConfig = (): OpenRouterConfig => ({
   apiKey: 'test-key',
   baseUrl: 'https://test.openrouter.ai/api/v1',
-  defaultModel: 'test-model',
-  models: {
+  geminiModel: 'google/gemini-2.5-flash-preview-05-20',
+  perplexityModel: 'perplexity/sonar',
+  llm_mapping: {
     default_generation: 'anthropic/claude-3-sonnet',
     task_decomposition: 'google/gemini-2.5-flash-preview-05-20'
   }
@@ -69,7 +70,8 @@ describe('RDDEngine', () => {
       maxDepth: 3,
       maxSubTasks: 5,
       minConfidence: 0.7,
-      enableParallelDecomposition: false
+      enableParallelDecomposition: false,
+      epicTimeLimit: 40
     };
 
     engine = new RDDEngine(mockConfig, rddConfig);
@@ -112,6 +114,7 @@ describe('RDDEngine', () => {
       type: 'development' as TaskType,
       priority: 'high' as TaskPriority,
       status: 'pending' as TaskStatus,
+      functionalArea: 'user-management' as FunctionalArea,
       projectId: 'PID-TEST-001',
       epicId: 'E001',
       estimatedHours: 12,
@@ -124,21 +127,75 @@ describe('RDDEngine', () => {
       ],
       tags: ['authentication', 'users'],
       dependencies: [],
-      assignedAgent: null,
+      dependents: [],
+      testingRequirements: {
+        unitTests: ['user.test.ts'],
+        integrationTests: ['auth.integration.test.ts'],
+        performanceTests: [],
+        coverageTarget: 80
+      },
+      performanceCriteria: {
+        responseTime: '<200ms',
+        memoryUsage: '<50MB'
+      },
+      qualityCriteria: {
+        codeQuality: ['eslint', 'prettier'],
+        documentation: ['JSDoc'],
+        typeScript: true,
+        eslint: true
+      },
+      integrationCriteria: {
+        compatibility: ['Node.js 18+'],
+        patterns: ['REST API']
+      },
+      validationMethods: {
+        automated: ['unit tests', 'integration tests'],
+        manual: ['user acceptance testing']
+      },
+      assignedAgent: undefined,
       createdAt: new Date(),
       updatedAt: new Date(),
-      createdBy: 'test-user'
+      createdBy: 'test-user',
+      metadata: {
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        createdBy: 'test-user',
+        tags: ['authentication', 'users']
+      }
     };
 
     mockContext = {
       projectId: 'PID-TEST-001',
+      projectPath: '/test/project',
+      projectName: 'Test Project',
       languages: ['typescript', 'javascript'],
       frameworks: ['react', 'node.js'],
+      buildTools: ['npm', 'vite'],
       tools: ['vite', 'vitest'],
+      configFiles: ['package.json', 'tsconfig.json'],
+      entryPoints: ['src/index.ts'],
+      architecturalPatterns: ['MVC'],
       existingTasks: [],
       codebaseSize: 'medium',
       teamSize: 3,
-      complexity: 'medium'
+      complexity: 'medium',
+      structure: {
+        sourceDirectories: ['src'],
+        testDirectories: ['tests'],
+        docDirectories: ['docs'],
+        buildDirectories: ['dist']
+      },
+      dependencies: {
+        production: ['react', 'typescript'],
+        development: ['vitest', 'vite'],
+        external: []
+      },
+      metadata: {
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        version: '1.0.0',
+        source: 'manual'
+      }
     };
   });
 
@@ -726,6 +783,128 @@ describe('RDDEngine', () => {
 
       const health = engine.getHealthStatus();
       expect(health.activeOperations).toBe(0);
+    });
+  });
+
+  describe('Functional Area Validation', () => {
+    it('should accept valid functional areas from LLM response', async () => {
+      // Mock LLM to return valid functional areas
+      mockPerformFormatAwareLlmCall.mockResolvedValueOnce(JSON.stringify({
+        epics: [
+          {
+            name: "User Management",
+            functionalArea: "user-management",
+            description: "User profiles and account management",
+            priority: "high",
+            estimatedComplexity: "medium"
+          },
+          {
+            name: "Auth System",
+            functionalArea: "authentication",
+            description: "Login and security features",
+            priority: "high",
+            estimatedComplexity: "high"
+          }
+        ]
+      }));
+
+      mockAtomicDetector.analyzeTask.mockResolvedValue({
+        isAtomic: false,
+        confidence: 0.8,
+        reasoning: 'Task needs decomposition',
+        estimatedHours: 8,
+        complexityFactors: ['multiple features'],
+        recommendations: ['decompose by feature']
+      });
+
+      const result = await engine.decomposeTask(mockTask, mockContext);
+      expect(result.success).toBe(true);
+      expect(result.epics).toHaveLength(2);
+      expect(result.epics[0].functionalArea).toBe('user-management');
+      expect(result.epics[1].functionalArea).toBe('authentication');
+    });
+
+    it('should use integration as fallback for invalid functional areas', async () => {
+      // Mock LLM to return invalid functional areas
+      mockPerformFormatAwareLlmCall.mockResolvedValueOnce(JSON.stringify({
+        epics: [
+          {
+            name: "Data Processing",
+            functionalArea: "decomposition", // Invalid
+            description: "Process and analyze data",
+            priority: "medium",
+            estimatedComplexity: "high"
+          },
+          {
+            name: "Analytics",
+            functionalArea: "analysis", // Invalid
+            description: "Generate analytics reports",
+            priority: "low",
+            estimatedComplexity: "medium"
+          }
+        ]
+      }));
+
+      mockAtomicDetector.analyzeTask.mockResolvedValue({
+        isAtomic: false,
+        confidence: 0.7,
+        reasoning: 'Task needs decomposition',
+        estimatedHours: 10,
+        complexityFactors: ['multiple components'],
+        recommendations: ['decompose by component']
+      });
+
+      const result = await engine.decomposeTask(mockTask, mockContext);
+      expect(result.success).toBe(true);
+      expect(result.epics).toHaveLength(2);
+      // Should use 'integration' as fallback for invalid areas
+      expect(result.epics[0].functionalArea).toBe('integration');
+      expect(result.epics[1].functionalArea).toBe('integration');
+    });
+
+    it('should handle mixed valid and invalid functional areas', async () => {
+      // Mock LLM to return mix of valid and invalid areas
+      mockPerformFormatAwareLlmCall.mockResolvedValueOnce(JSON.stringify({
+        epics: [
+          {
+            name: "Performance Optimization",
+            functionalArea: "performance", // Valid
+            description: "Optimize system performance",
+            priority: "high",
+            estimatedComplexity: "high"
+          },
+          {
+            name: "Task Management", 
+            functionalArea: "management", // Invalid
+            description: "Manage and organize tasks",
+            priority: "medium",
+            estimatedComplexity: "medium"
+          },
+          {
+            name: "UI Design",
+            functionalArea: "ui-components", // Valid
+            description: "Design user interface components",
+            priority: "medium",
+            estimatedComplexity: "low"
+          }
+        ]
+      }));
+
+      mockAtomicDetector.analyzeTask.mockResolvedValue({
+        isAtomic: false,
+        confidence: 0.6,
+        reasoning: 'Complex task requiring decomposition',
+        estimatedHours: 15,
+        complexityFactors: ['multiple areas'],
+        recommendations: ['decompose by area']
+      });
+
+      const result = await engine.decomposeTask(mockTask, mockContext);
+      expect(result.success).toBe(true);
+      expect(result.epics).toHaveLength(3);
+      expect(result.epics[0].functionalArea).toBe('performance'); // Valid
+      expect(result.epics[1].functionalArea).toBe('integration'); // Fallback
+      expect(result.epics[2].functionalArea).toBe('ui-components'); // Valid
     });
   });
 });

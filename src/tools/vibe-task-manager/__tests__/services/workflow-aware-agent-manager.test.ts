@@ -27,7 +27,7 @@ vi.mock('../../services/decomposition-service.js', () => ({
 }));
 
 // Mock the WorkflowStateManager
-vi.mock('../../core/workflow-state-manager.js', () => ({
+vi.mock('../../services/workflow-state-manager.js', () => ({
   WorkflowStateManager: {
     getInstance: vi.fn().mockReturnValue({
       on: vi.fn(),
@@ -251,7 +251,7 @@ describe('WorkflowAwareAgentManager', () => {
   describe('Error Handling and Resilience', () => {
     it('should continue functioning when dependencies fail to initialize', async () => {
       // Mock WorkflowStateManager to throw error
-      const { WorkflowStateManager } = vi.mocked(await import('../../core/workflow-state-manager.js'));
+      const { WorkflowStateManager } = vi.mocked(await import('../../services/workflow-state-manager.js'));
       vi.mocked(WorkflowStateManager.getInstance).mockImplementationOnce(() => {
         throw new Error('WorkflowStateManager initialization failed');
       });

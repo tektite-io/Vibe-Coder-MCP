@@ -145,44 +145,27 @@ describe('IdGenerator', () => {
 
   describe('generateTaskId', () => {
     it('should generate unique task ID with correct format', async () => {
-      mockStorageManager.projectExists.mockResolvedValue(true);
-      mockStorageManager.epicExists.mockResolvedValue(true);
-      mockStorageManager.taskExists.mockResolvedValue(false);
+      const storageManager = await getStorageManager();
+      vi.mocked(storageManager.taskExists).mockResolvedValue(false);
 
-      const result = await idGenerator.generateTaskId('PID-TEST-001', 'E001');
+      const result = await idGenerator.generateTaskId();
 
       expect(result.success).toBe(true);
       expect(result.id).toMatch(/^T\d{4}$/);
       expect(result.attempts).toBe(1);
     });
 
-    it('should reject non-existent project', async () => {
-      mockStorageManager.projectExists.mockResolvedValue(false);
+    // Test removed: Task IDs are now globally unique, no project validation needed
 
-      const result = await idGenerator.generateTaskId('PID-NONEXISTENT-001', 'E001');
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Project PID-NONEXISTENT-001 not found');
-    });
-
-    it('should reject non-existent epic', async () => {
-      mockStorageManager.projectExists.mockResolvedValue(true);
-      mockStorageManager.epicExists.mockResolvedValue(false);
-
-      const result = await idGenerator.generateTaskId('PID-TEST-001', 'E999');
-
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Epic E999 not found');
-    });
+    // Test removed: Task IDs are now globally unique, no epic validation needed
 
     it('should generate unique ID when first attempt exists', async () => {
-      mockStorageManager.projectExists.mockResolvedValue(true);
-      mockStorageManager.epicExists.mockResolvedValue(true);
-      mockStorageManager.taskExists
+      const storageManager = await getStorageManager();
+      vi.mocked(storageManager.taskExists)
         .mockResolvedValueOnce(true)  // First ID exists
         .mockResolvedValueOnce(false); // Second ID is unique
 
-      const result = await idGenerator.generateTaskId('PID-TEST-001', 'E001');
+      const result = await idGenerator.generateTaskId();
 
       expect(result.success).toBe(true);
       expect(result.id).toBe('T0002');
@@ -192,7 +175,8 @@ describe('IdGenerator', () => {
 
   describe('generateDependencyId', () => {
     it('should generate unique dependency ID with correct format', async () => {
-      mockStorageManager.dependencyExists.mockResolvedValue(false);
+      const storageManager = await getStorageManager();
+      vi.mocked(storageManager.dependencyExists).mockResolvedValue(false);
 
       const result = await idGenerator.generateDependencyId('T0001', 'T0002');
 
@@ -216,7 +200,8 @@ describe('IdGenerator', () => {
     });
 
     it('should generate unique ID when first attempt exists', async () => {
-      mockStorageManager.dependencyExists
+      const storageManager = await getStorageManager();
+      vi.mocked(storageManager.dependencyExists)
         .mockResolvedValueOnce(true)  // First ID exists
         .mockResolvedValueOnce(false); // Second ID is unique
 
@@ -272,7 +257,8 @@ describe('IdGenerator', () => {
     });
 
     it('should reject unknown ID types', () => {
-      const result = idGenerator.validateId('TEST-001', 'unknown' as Record<string, unknown>);
+      // @ts-expect-error Testing invalid type
+      const result = idGenerator.validateId('TEST-001', 'unknown');
       expect(result.valid).toBe(false);
       expect(result.errors).toContain('Unknown ID type: unknown');
     });
