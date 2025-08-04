@@ -65,8 +65,15 @@
     "dynamic-port-allocation",
     "production-ready"
   ],
-  "author": "Vibe Coder MCP Team",
+  "author": {
+    "name": "Vibe Coder MCP Team",
+    "url": "https://github.com/freshtechbro/Vibe-Coder-MCP"
+  },
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.7.0",
     "@types/uuid": "^10.0.0",
