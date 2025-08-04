@@ -1,9 +1,25 @@
 # Vibe Coder MCP Server
 
 [![npm version](https://badge.fury.io/js/vibe-coder-mcp.svg)](https://badge.fury.io/js/vibe-coder-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/vibe-coder-mcp.svg)](https://www.npmjs.com/package/vibe-coder-mcp)
+[![GitHub release](https://img.shields.io/github/release/freshtechbro/Vibe-Coder-MCP.svg)](https://github.com/freshtechbro/Vibe-Coder-MCP/releases)
 [![Node.js Version](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/freshtechbro/Vibe-Coder-MCP.svg?style=social&label=Star)](https://github.com/freshtechbro/Vibe-Coder-MCP)
 
 Vibe Coder is an MCP (Model Context Protocol) server designed to supercharge your AI assistant (like Cursor, Cline AI, or Claude Desktop) with powerful tools for software development. It helps with research, planning, generating requirements, creating starter projects, and more!
+
+## 📦 NPM Package
+
+**Available on npm**: [`vibe-coder-mcp`](https://www.npmjs.com/package/vibe-coder-mcp)
+
+```bash
+# Run instantly with npx (recommended)
+npx vibe-coder-mcp
+
+# Or install globally
+npm install -g vibe-coder-mcp
+```
 
 ## 🚀 Quick Start (Recommended)
 
