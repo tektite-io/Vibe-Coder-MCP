@@ -1,6 +1,139 @@
 # Vibe Coder MCP Server
 
+[![npm version](https://badge.fury.io/js/vibe-coder-mcp.svg)](https://badge.fury.io/js/vibe-coder-mcp)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D20.0.0-brightgreen.svg)](https://nodejs.org/)
+
 Vibe Coder is an MCP (Model Context Protocol) server designed to supercharge your AI assistant (like Cursor, Cline AI, or Claude Desktop) with powerful tools for software development. It helps with research, planning, generating requirements, creating starter projects, and more!
+
+## 🚀 Quick Start (Recommended)
+
+**The easiest way to get started:**
+
+### Option 1: Run with npx (No Installation Required)
+```bash
+npx vibe-coder-mcp
+```
+
+### Option 2: Install Globally
+```bash
+# Install globally
+npm install -g vibe-coder-mcp
+
+# Run the server
+vibe-coder-mcp
+```
+
+### Option 3: Install Locally in Your Project
+```bash
+# Install in your project
+npm install vibe-coder-mcp
+
+# Run via npm scripts or npx
+npx vibe-coder-mcp
+```
+
+### Command Line Options
+```bash
+# Default stdio transport (for MCP clients)
+vibe-coder-mcp
+
+# Server-Sent Events transport (for web clients)
+vibe-coder-mcp --sse
+```
+
+**After running, you'll need to:**
+1. Set up your OpenRouter API key (see [Environment Configuration](#environment-configuration))
+2. Configure your MCP client (see [MCP Client Setup](#mcp-client-setup))
+
+## 🔧 Environment Configuration
+
+**Required:** You need an OpenRouter API key to use Vibe Coder MCP.
+
+### Get Your OpenRouter API Key
+1. Visit [openrouter.ai](https://openrouter.ai/)
+2. Create an account if you don't have one
+3. Navigate to API Keys section
+4. Create a new API key and copy it
+
+### Set Up Environment Variables
+
+**Option 1: Environment Variables (Recommended)**
+```bash
+# Set your OpenRouter API key
+export OPENROUTER_API_KEY="your_api_key_here"
+
+# Optional: Set custom directories
+export VIBE_CODER_OUTPUT_DIR="/path/to/output/directory"
+export CODE_MAP_ALLOWED_DIR="/path/to/your/source/code"
+export VIBE_TASK_MANAGER_READ_DIR="/path/to/your/project"
+```
+
+**Option 2: Create .env file**
+Create a `.env` file in your working directory:
+```dotenv
+# Required: Your OpenRouter API key
+OPENROUTER_API_KEY="your_api_key_here"
+
+# Optional: Custom directories
+VIBE_CODER_OUTPUT_DIR="/path/to/output/directory"
+CODE_MAP_ALLOWED_DIR="/path/to/your/source/code"  
+VIBE_TASK_MANAGER_READ_DIR="/path/to/your/project"
+
+# Optional: Other settings
+OPENROUTER_BASE_URL="https://openrouter.ai/api/v1"
+GEMINI_MODEL="google/gemini-2.5-flash-preview-05-20"
+```
+
+### Directory Configuration (Optional)
+- **VIBE_CODER_OUTPUT_DIR**: Where generated files are saved (default: `./VibeCoderOutput/`)
+- **CODE_MAP_ALLOWED_DIR**: Security boundary for code analysis (default: current directory)
+- **VIBE_TASK_MANAGER_READ_DIR**: Security boundary for task manager file operations (default: current directory)
+
+## 🔌 MCP Client Setup
+
+Configure your AI assistant to connect to Vibe Coder MCP:
+
+### For Cursor AI / Windsurf / VS Code MCP Clients
+
+Add this to your MCP settings (usually in `settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "vibe-coder-mcp": {
+      "command": "npx",
+      "args": ["vibe-coder-mcp"],
+      "env": {
+        "OPENROUTER_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+### For Claude Desktop
+
+Add this to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "vibe-coder-mcp": {
+      "command": "npx",
+      "args": ["vibe-coder-mcp"],
+      "env": {
+        "OPENROUTER_API_KEY": "your_api_key_here"
+      }
+    }
+  }
+}
+```
+
+---
+
+## 📚 Development Setup (Advanced)
+
+If you want to contribute to development or run from source, follow the detailed setup guide below.
 
 ## Overview & Features
 
@@ -52,9 +185,9 @@ Vibe Coder MCP integrates with MCP-compatible clients to provide the following c
 
 *(See "Detailed Tool Documentation" and "Feature Details" sections below for more)*
 
-## Setup Guide
+## Development Setup Guide
 
-Follow these micro-steps to get the Vibe Coder MCP server running and connected to your AI assistant.
+**For developers who want to run from source or contribute to the project.**
 
 ### Step 1: Prerequisites
 
