@@ -53,6 +53,9 @@ test-workflow-states/
 !.vscode/extensions.json
 *.code-workspace
 .history/
+AGENT.md
+AGENTS.md
+CLAUDE.md
 
 # IDE - JetBrains
 .idea/
