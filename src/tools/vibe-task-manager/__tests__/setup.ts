@@ -10,10 +10,18 @@ import { TimeoutManager } from '../utils/timeout-manager.js';
 import { VibeTaskManagerConfig } from '../utils/config-loader.js';
 import { OpenRouterConfigManager } from '../../../utils/openrouter-config-manager.js';
 import { setConfigProvider, TestConfigProvider } from '../../../utils/config-provider.js';
+import { SingletonResetManager, initializeSingletonResetManager, resetAllSingletons } from '../../../testUtils/singleton-reset-manager.js';
+import { restoreTestEnvironment } from '../../../testUtils/env-cleanup-manager.js';
+import { initializeResourceCleanupManager, cleanupResources, checkForResourceLeaks } from '../../../testUtils/resource-cleanup-manager.js';
+import { initializeMemoryLeakDetector, startMemoryMonitoring, stopMemoryMonitoring, detectMemoryLeaks, forceGarbageCollection, getMemoryReport } from '../../../testUtils/memory-leak-detector.js';
+import { initializeTimeoutManager, getTimeoutStats } from '../../../testUtils/timeout-manager.js';
 import logger from '../../../logger.js';
 
 // Load environment variables from .env file
 config({ path: resolve(process.cwd(), '.env') });
+
+// Suppress excessive logging during tests
+process.env.LOG_LEVEL = 'error'; // Only show errors during tests
 
 /**
  * Setup CI-safe environment variables
@@ -59,6 +67,21 @@ export function setupCISafeEnvironment(): void {
 
 // Initialize CI-safe environment immediately
 setupCISafeEnvironment();
+
+// Initialize singleton reset manager for test isolation
+initializeSingletonResetManager();
+
+// Initialize Phase 4 testing infrastructure for comprehensive resource management
+initializeResourceCleanupManager();
+initializeMemoryLeakDetector({
+  maxHeapSizeMB: 512,
+  maxRSSizeMB: 1024,
+  leakThresholdMB: 50,
+  monitoringIntervalMs: 10000,
+  enableGCForcing: true,
+  warningThresholdMB: 256
+});
+initializeTimeoutManager();
 
 /**
  * Setup universal LLM call mocking for CI-safe tests
@@ -650,6 +673,9 @@ export const epicTestUtils = {
       // Ensure test services are initialized
       initializeTestServices();
 
+      // Start Phase 4 comprehensive monitoring
+      startMemoryMonitoring();
+
       // Create test directories
       const fs = await import('fs/promises');
       const testDataDir = process.env.TEST_DATA_DIR;
@@ -663,7 +689,7 @@ export const epicTestUtils = {
         await fs.mkdir(testOutputDir, { recursive: true });
       }
 
-      logger.debug('Test environment setup completed');
+      logger.debug('Test environment setup completed with comprehensive monitoring');
     } catch (error) {
       logger.error({ err: error }, 'Failed to setup test environment');
       throw error;
@@ -675,13 +701,123 @@ export const epicTestUtils = {
    */
   teardownTestEnvironment: async () => {
     try {
-      // Clean up any remaining resources
+      const teardownStart = Date.now();
+
+      // Stop memory monitoring and generate final report
+      stopMemoryMonitoring();
+      const memoryReport = getMemoryReport();
+      
+      // Check for resource leaks before cleanup
+      const resourceLeaks = checkForResourceLeaks();
+      if (resourceLeaks.hasLeaks) {
+        logger.warn({ leaks: resourceLeaks.leaks }, 'Resource leaks detected before cleanup');
+      }
+
+      // Clean up any remaining resources (Phase 4 comprehensive cleanup)
+      await cleanupResources();
+
+      // Clean up existing test data
       await epicTestUtils.cleanupTestData();
 
-      logger.debug('Test environment teardown completed');
+      // Reset all singletons to prevent state pollution
+      await epicTestUtils.resetAllSingletons();
+
+      // Restore environment variables to prevent pollution between tests
+      restoreTestEnvironment();
+
+      // Force garbage collection and check for memory leaks
+      const gcResult = forceGarbageCollection();
+      const finalMemoryCheck = detectMemoryLeaks();
+      
+      // Get timeout statistics for performance monitoring
+      const timeoutStats = getTimeoutStats();
+
+      const teardownDuration = Date.now() - teardownStart;
+
+      // Log comprehensive teardown summary
+      logger.debug({
+        teardownDuration,
+        memoryReport: {
+          current: `${memoryReport.current.heapUsed}MB heap, ${memoryReport.current.rss}MB RSS`,
+          peak: `${memoryReport.peak.heapUsed}MB heap peak`,
+          trend: memoryReport.trend,
+          gcFreed: `${gcResult.freed.toFixed(2)}MB`
+        },
+        resourceLeaks: resourceLeaks.hasLeaks ? resourceLeaks.leaks.length : 0,
+        memoryLeaks: finalMemoryCheck.hasLeak ? {
+          severity: finalMemoryCheck.severity,
+          heapIncrease: `${finalMemoryCheck.heapIncrease.toFixed(2)}MB`
+        } : null,
+        timeoutStats: {
+          activeOperations: timeoutStats.activeOperations,
+          timedOutOperations: timeoutStats.timedOutOperations,
+          environment: timeoutStats.currentEnvironment
+        }
+      }, 'Comprehensive test environment teardown completed');
+
+      // Warn about significant issues
+      if (finalMemoryCheck.hasLeak && finalMemoryCheck.severity === 'critical') {
+        logger.error({
+          memoryLeak: finalMemoryCheck,
+          recommendations: finalMemoryCheck.recommendations
+        }, 'CRITICAL: Memory leak detected during test teardown');
+      }
+
+      if (timeoutStats.timedOutOperations > 0) {
+        logger.warn({
+          timedOutOperations: timeoutStats.timedOutOperations
+        }, 'Some operations timed out during test execution');
+      }
+
     } catch (error) {
-      logger.warn({ err: error }, 'Failed to teardown test environment');
+      logger.error({ err: error }, 'Failed to complete comprehensive test environment teardown');
+      
+      // Even if teardown fails, try to clean up critical resources
+      try {
+        await cleanupResources();
+        forceGarbageCollection();
+      } catch (cleanupError) {
+        logger.error({ err: cleanupError }, 'Critical resource cleanup also failed');
+      }
     }
+  },
+
+  /**
+   * Reset all singleton instances to prevent state pollution between tests
+   */
+  resetAllSingletons: async () => {
+    try {
+      await resetAllSingletons();
+      logger.debug('All singletons reset successfully');
+    } catch (error) {
+      logger.error({ err: error }, 'Failed to reset singletons');
+      throw error;
+    }
+  },
+
+  /**
+   * Reset a specific singleton by name
+   */
+  resetSingleton: async (name: string) => {
+    try {
+      const success = await SingletonResetManager.resetSingleton(name);
+      if (success) {
+        logger.debug({ name }, 'Singleton reset successfully');
+      } else {
+        logger.warn({ name }, 'Failed to reset singleton');
+      }
+      return success;
+    } catch (error) {
+      logger.error({ err: error, name }, 'Error resetting singleton');
+      throw error;
+    }
+  },
+
+  /**
+   * Get list of registered singletons for debugging
+   */
+  getRegisteredSingletons: () => {
+    return SingletonResetManager.getRegisteredSingletons();
   },
 };
 
