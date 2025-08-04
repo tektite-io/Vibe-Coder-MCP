@@ -71,6 +71,9 @@ describe('Singleton Initialization Guards', () => {
       (AgentOrchestrator as typeof AgentOrchestrator & { isInitializing: boolean; instance: unknown }).isInitializing = false;
       (AgentOrchestrator as typeof AgentOrchestrator & { isInitializing: boolean; instance: unknown }).instance = null;
       
+      // Clear mock calls before this test to ensure clean state
+      mockLogger.warn.mockClear();
+      
       const instance = AgentOrchestrator.getInstance();
       
       expect(instance).toBeDefined();

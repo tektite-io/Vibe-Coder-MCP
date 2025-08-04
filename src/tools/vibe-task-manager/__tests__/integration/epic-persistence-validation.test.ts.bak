@@ -6,199 +6,24 @@
  * meaningful functional area-based epics.
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { RDDEngine } from '../../core/rdd-engine.js';
 import { AtomicTask, FunctionalArea } from '../../types/task.js';
 import { ProjectContext } from '../../types/project-context.js';
+import { getVibeTaskManagerConfig } from '../../utils/config-loader.js';
 import logger from '../../../../logger.js';
 import { EpicContextResolver } from '../../services/epic-context-resolver.js';
-
-// Mock all external dependencies to avoid live LLM calls
-vi.mock('../../../../utils/llmHelper.js', () => ({
-  performDirectLlmCall: vi.fn().mockResolvedValue(JSON.stringify({
-    isAtomic: true,
-    confidence: 0.95,
-    reasoning: 'Task is atomic and focused',
-    estimatedHours: 0.1
-  })),
-  performFormatAwareLlmCall: vi.fn().mockResolvedValue(JSON.stringify({
-    tasks: [{
-      title: 'Test Subtask',
-      description: 'Test subtask description',
-      estimatedHours: 0.1,
-      acceptanceCriteria: ['Test criteria'],
-      priority: 'medium'
-    }]
-  })),
-  performFormatAwareLlmCallWithCentralizedConfig: vi.fn().mockResolvedValue(JSON.stringify({
-    tasks: [{
-      title: 'Test Subtask',
-      description: 'Test subtask description',
-      estimatedHours: 0.1,
-      acceptanceCriteria: ['Test criteria'],
-      priority: 'medium'
-    }]
-  }))
-}));
-
-vi.mock('../../utils/config-loader.js', () => ({
-  getVibeTaskManagerConfig: vi.fn().mockResolvedValue({
-    taskManager: {
-      rddConfig: {
-        maxDepth: 3,
-        maxSubTasks: 50,
-        minConfidence: 0.7,
-        enableParallelDecomposition: false,
-        epicTimeLimit: 400
-      },
-      openRouterConfig: {
-        apiKey: 'test-api-key',
-        baseUrl: 'https://test.openrouter.ai/api/v1',
-        geminiModel: 'google/gemini-2.5-flash-preview',
-        perplexityModel: 'perplexity/llama-3.1-sonar-small-128k-online',
-        llm_mapping: {
-          'task_decomposition': 'google/gemini-2.5-flash-preview',
-          'atomic_detection': 'google/gemini-2.5-flash-preview',
-          'intent_recognition': 'google/gemini-2.5-flash-preview',
-          'default_generation': 'google/gemini-2.5-flash-preview'
-        }
-      }
-    }
-  }),
-  getVibeTaskManagerOutputDir: vi.fn().mockReturnValue('/tmp/test-output'),
-  getBaseOutputDir: vi.fn().mockReturnValue('/tmp'),
-  getLLMModelForOperation: vi.fn().mockResolvedValue('test-model')
-}));
-
-vi.mock('fs-extra', async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const actual = await importOriginal() as any;
-  return {
-    ...actual,
-    ensureDir: vi.fn().mockResolvedValue(undefined),
-    ensureDirSync: vi.fn().mockReturnValue(undefined),
-    readFile: vi.fn().mockResolvedValue('{}'),
-    writeFile: vi.fn().mockResolvedValue(undefined),
-    pathExists: vi.fn().mockResolvedValue(true),
-    stat: vi.fn().mockResolvedValue({ isFile: () => true, isDirectory: () => false }),
-    remove: vi.fn().mockResolvedValue(undefined)
-  };
-});
-
-// Mock auto-research detector
-vi.mock('../../services/auto-research-detector.js', () => ({
-  AutoResearchDetector: {
-    getInstance: vi.fn().mockReturnValue({
-      evaluateResearchNeed: vi.fn().mockResolvedValue({
-        decision: {
-          shouldTriggerResearch: false,
-          confidence: 0.9,
-          primaryReason: 'sufficient_context',
-          reasoning: ['Test context is sufficient'],
-          recommendedScope: { estimatedQueries: 0 }
-        }
-      })
-    })
-  }
-}));
-
-// Mock context enrichment service
-vi.mock('../../services/context-enrichment-service.js', () => ({
-  ContextEnrichmentService: {
-    getInstance: vi.fn().mockReturnValue({
-      gatherContext: vi.fn().mockResolvedValue({
-        contextFiles: [],
-        failedFiles: [],
-        summary: {
-          totalFiles: 0,
-          totalSize: 0,
-          averageRelevance: 0,
-          topFileTypes: [],
-          gatheringTime: 1
-        }
-      })
-    })
-  }
-}));
-
-// Mock storage manager
-vi.mock('../../core/storage/storage-manager.js', () => ({
-  getStorageManager: vi.fn().mockResolvedValue({
-    projectExists: vi.fn().mockResolvedValue(true),
-    epicExists: vi.fn().mockResolvedValue(false),
-    taskExists: vi.fn().mockResolvedValue(false),
-    dependencyExists: vi.fn().mockResolvedValue(false),
-    getProject: vi.fn().mockResolvedValue({
-      success: true,
-      data: {
-        id: 'test-project',
-        name: 'Test Project',
-        epicIds: []
-      }
-    }),
-    getEpic: vi.fn().mockResolvedValue({
-      success: true,
-      data: {
-        id: 'test-epic',
-        title: 'Test Epic',
-        taskIds: []
-      }
-    }),
-    getTask: vi.fn().mockResolvedValue({
-      success: true,
-      data: {
-        id: 'test-task',
-        title: 'Test Task'
-      }
-    }),
-    updateProject: vi.fn().mockResolvedValue({ success: true }),
-    updateEpic: vi.fn().mockResolvedValue({ success: true }),
-    updateTask: vi.fn().mockResolvedValue({ success: true }),
-    getDependenciesForTask: vi.fn().mockResolvedValue({ success: true, data: [] })
-  })
-}));
-
-// Mock epic service
-vi.mock('../../services/epic-service.js', () => ({
-  getEpicService: vi.fn().mockReturnValue({
-    createEpic: vi.fn().mockResolvedValue({
-      success: true,
-      data: {
-        id: 'test-created-epic',
-        title: 'Test Created Epic'
-      }
-    })
-  })
-}));
-
-// Mock project operations
-vi.mock('../../core/operations/project-operations.js', () => ({
-  getProjectOperations: vi.fn().mockReturnValue({
-    getProject: vi.fn().mockResolvedValue({
-      success: true,
-      data: {
-        id: 'test-project',
-        name: 'Test Project',
-        epicIds: []
-      }
-    })
-  })
-}));
-
 describe('Epic Persistence Validation', () => {
   let rddEngine: RDDEngine;
   let projectContext: ProjectContext;
   let projectId: string;
-  let epicResolver: EpicContextResolver;
 
   beforeEach(async () => {
-    // Initialize RDD engine for testing epic assignment
-    const configResult = await import('../../utils/config-loader.js');
-    const config = await configResult.getVibeTaskManagerConfig();
-    rddEngine = new RDDEngine(config.taskManager.openRouterConfig, config.taskManager.rddConfig);
+  let epicResolver: EpicContextResolver;    // Initialize RDD engine for testing epic assignment
+    const config = await getVibeTaskManagerConfig();
+    rddEngine = new RDDEngine(config.taskManager.rddConfig, config.taskManager.openRouterConfig);
     projectId = `test-project-${Date.now()}`;
     epicResolver = EpicContextResolver.getInstance();    
-    
     // Create minimal project context
     projectContext = {
       projectId,

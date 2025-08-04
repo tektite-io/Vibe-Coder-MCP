@@ -1,6 +1,6 @@
 {
   "name": "vibe-coder-mcp",
-  "version": "2.3.0",
+  "version": "0.1.0",
   "description": "Production-ready MCP server with complete agent integration, multi-transport support, and comprehensive development automation tools for AI-assisted workflows.",
   "main": "build/index.js",
   "type": "module",
@@ -116,5 +116,22 @@
   },
   "engines": {
     "node": ">=20.0.0"
-  }
+  },
+  "bin": {
+    "vibe-coder-mcp": "./build/index.js"
+  },
+  "files": [
+    "build/**/*",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freshtechbro/Vibe-Coder-MCP.git"
+  },
+  "bugs": {
+    "url": "https://github.com/freshtechbro/Vibe-Coder-MCP/issues"
+  },
+  "homepage": "https://github.com/freshtechbro/Vibe-Coder-MCP#readme"
 }

@@ -99,7 +99,7 @@ export default defineConfig(({ mode }) => {
       teardownTimeout: isCIOptimized ? 10000 : 15000, // Increased for stability
 
       // Performance optimizations - different strategies for CI vs local
-      isolate: false, // Keep disabled for speed
+      isolate: true, // Enable test isolation to prevent state pollution
       pool: isCIOptimized ? 'threads' : 'forks', // Threads faster for unit tests in CI
       poolOptions: {
         threads: {
@@ -149,7 +149,26 @@ export default defineConfig(({ mode }) => {
       watch: false,
       forceRerunTriggers: ['**/vitest.config.*'],
       clearMocks: true,
-      restoreMocks: true
+      restoreMocks: true,
+
+      // Centralized mock configuration
+      server: {
+        deps: {
+          external: [
+            // External dependencies that should not be bundled
+            'fs-extra',
+            'chalk',
+            'inquirer'
+          ]
+        }
+      },
+      
+      // Enable automatic mocking of modules from __mocks__ directory
+      mockReset: true,
+      unmockedModulePathPatterns: [
+        // Patterns for modules that should not be automatically mocked
+        'node_modules/(?!fs-extra|@types)'
+      ]
     }
   };
 });
