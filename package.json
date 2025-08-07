@@ -76,9 +76,13 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.7.0",
+    "@types/inquirer": "^9.0.9",
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.18.1",
     "axios": "^1.6.7",
+    "boxen": "^7.1.1",
+    "chalk": "^5.3.0",
+    "cli-table3": "^0.6.5",
     "commander": "^14.0.0",
     "cors": "^2.8.5",
     "dependency-cruiser": "^16.10.2",
@@ -86,8 +90,10 @@
     "express": "^4.21.2",
     "fs-extra": "^11.2.0",
     "glob": "^11.0.2",
+    "inquirer": "^12.9.0",
     "js-yaml": "^4.1.0",
     "node-fetch": "^3.3.2",
+    "ora": "^8.0.1",
     "pino": "^9.6.0",
     "simple-git": "^3.22.0",
     "uuid": "^11.1.0",
@@ -125,7 +131,8 @@
     "node": ">=20.0.0"
   },
   "bin": {
-    "vibe-coder-mcp": "./build/index.js"
+    "vibe-coder-mcp": "./build/unified-cli.js",
+    "vibe": "./build/unified-cli.js"
   },
   "files": [
     "build/**/*",
@@ -141,10 +148,6 @@
     "url": "https://github.com/freshtechbro/Vibe-Coder-MCP/issues"
   },
   "homepage": "https://github.com/freshtechbro/Vibe-Coder-MCP#readme",
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/"
-  },
   "funding": {
     "type": "github",
     "url": "https://github.com/freshtechbro"
