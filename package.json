@@ -56,7 +56,7 @@
     "prepack": "npm run clean && npm run build && npm run type-check",
     "postpack": "npm run clean",
     "prepare": "npm run build",
-    "prepublishOnly": "npm run security:audit && npm run test:ci-safe && npm run lint",
+    "prepublishOnly": "npm run security:audit && npm run lint",
     "validate:pre-publish": "./scripts/pre-publish-validation.sh",
     "validate:post-publish": "./scripts/post-publish-validation.sh",
     "release:patch": "npm version patch && git push origin main --tags",

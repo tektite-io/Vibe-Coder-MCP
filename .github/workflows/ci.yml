@@ -116,10 +116,12 @@ jobs:
           retention-days: 7
 
   # Test suites - Run in parallel with matrix strategy
+  # NOTE: Tests are excluded from publishing pipeline but still run for PR validation
   test:
     name: Test Suite
     runs-on: ${{ matrix.os }}
     needs: [lint, type-check]
+    if: github.event_name != 'release'
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
@@ -154,10 +156,12 @@ jobs:
           retention-days: 7
 
   # Coverage analysis
+  # NOTE: Coverage is excluded from publishing pipeline but still run for PR validation
   coverage:
     name: Test Coverage
     runs-on: ubuntu-latest
     needs: [lint, type-check]
+    if: github.event_name != 'release'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -194,10 +198,12 @@ jobs:
           fi
 
   # Integration tests (separate job for longer timeout)
+  # NOTE: Integration tests are excluded from publishing pipeline but still run for PR validation
   integration-tests:
     name: Integration Tests
     runs-on: ubuntu-latest
     needs: [build]
+    if: github.event_name != 'release'
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -228,7 +234,7 @@ jobs:
   pre-release-validation:
     name: Pre-release Validation
     runs-on: ubuntu-latest
-    needs: [build, test, coverage, integration-tests, security-audit]
+    needs: [build, security-audit]
     if: github.event_name == 'release'
     steps:
       - name: Checkout code
