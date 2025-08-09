@@ -37,6 +37,13 @@ export class VibeInteractiveREPL {
   private enableMarkdown = true;
   private requestConcurrency = 0;
   
+  // Add pending confirmation state for tool execution
+  private pendingConfirmation: {
+    toolName: string;
+    parameters: Record<string, unknown>;
+    originalRequest: string;
+  } | null = null;
+  
   constructor() {
     this.sessionId = `interactive-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     this.history = new CommandHistory();
@@ -257,6 +264,114 @@ export class VibeInteractiveREPL {
    * Handle user message input
    */
   private async handleUserMessage(message: string): Promise<void> {
+    // Check if we're waiting for confirmation
+    if (this.pendingConfirmation) {
+      const normalizedMessage = message.toLowerCase().trim();
+      
+      // Check for confirmation responses - be flexible with natural language
+      const confirmationPatterns = [
+        'yes', 'y', 'yeah', 'yep', 'sure', 'ok', 'okay',
+        'proceed', 'go ahead', 'do it', 'confirm', 'continue',
+        'please proceed', 'go for it', 'lets do it', "let's do it"
+      ];
+      
+      const cancellationPatterns = [
+        'no', 'n', 'nope', 'cancel', 'stop', 'abort', 'nevermind',
+        'never mind', "don't", 'dont', 'skip', 'forget it'
+      ];
+      
+      // Check if message contains any confirmation pattern
+      const isConfirmation = confirmationPatterns.some(pattern => 
+        normalizedMessage === pattern || 
+        normalizedMessage.startsWith(pattern + ' ') ||
+        normalizedMessage.includes(' ' + pattern + ' ') ||
+        normalizedMessage.endsWith(' ' + pattern)
+      );
+      
+      // Check if message contains any cancellation pattern
+      const isCancellation = cancellationPatterns.some(pattern =>
+        normalizedMessage === pattern ||
+        normalizedMessage.startsWith(pattern + ' ') ||
+        normalizedMessage.includes(' ' + pattern + ' ') ||
+        normalizedMessage.endsWith(' ' + pattern)
+      );
+      
+      if (isConfirmation && !isCancellation) {
+        // User confirmed - execute the pending tool directly
+        const { toolName, parameters } = this.pendingConfirmation;
+        this.pendingConfirmation = null; // Clear pending state
+        
+        // Start progress indicator
+        progress.start(`Executing ${toolName}...`);
+        
+        try {
+          // Create execution context
+          const context: ToolExecutionContext = {
+            sessionId: this.sessionId,
+            transportType: 'interactive',
+            metadata: {
+              conversationHistory: this.conversationHistory,
+              interactiveMode: true
+            }
+          };
+          
+          // Execute the tool directly (bypassing process-request since we already know what to do)
+          const result = await executeTool(
+            toolName,
+            parameters,
+            this.openRouterConfig!,
+            context
+          );
+          
+          // Stop progress
+          progress.success('Tool execution complete');
+          
+          // Extract and display response
+          const responseText = result.content[0]?.text;
+          const response = typeof responseText === 'string' ? responseText : 'Tool executed successfully';
+          
+          // Format and display response
+          console.log();
+          if (this.enableMarkdown) {
+            const rendered = MarkdownRenderer.renderWrapped(response);
+            ResponseFormatter.formatResponse(rendered);
+          } else {
+            ResponseFormatter.formatResponse(response);
+          }
+          console.log();
+          
+          // Add to history
+          this.conversationHistory.push({ role: 'assistant', content: response });
+          
+        } catch (error) {
+          progress.fail('Tool execution failed');
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          console.log();
+          ResponseFormatter.formatError(errorMessage);
+          console.log();
+          logger.error({ err: error }, `Error executing confirmed tool ${toolName}`);
+        }
+        
+        return; // Exit early - we've handled the confirmation
+      } else if (isCancellation) {
+        // User cancelled
+        this.pendingConfirmation = null;
+        console.log();
+        ResponseFormatter.formatInfo('Tool execution cancelled.');
+        console.log();
+        return;
+      } else if (!isConfirmation && !isCancellation) {
+        // Ambiguous response - ask for clarification
+        console.log();
+        ResponseFormatter.formatWarning(
+          'Please respond with "yes" to proceed or "no" to cancel.\n' +
+          `Tool waiting: ${this.pendingConfirmation.toolName}`
+        );
+        console.log();
+        return; // Keep pending state, wait for clear response
+      }
+    }
+    
     // Check concurrent request limit
     const maxConcurrent = configManager.get('performance', 'maxConcurrentRequests');
     if (this.requestConcurrency >= maxConcurrent) {
@@ -273,46 +388,81 @@ export class VibeInteractiveREPL {
     progress.start('Processing your request...');
     
     try {
-      // Create execution context
-      const context: ToolExecutionContext = {
-        sessionId: this.sessionId,
-        transportType: 'interactive',
-        metadata: {
-          conversationHistory: this.conversationHistory,
-          interactiveMode: true
-        }
-      };
+      // Import hybridMatch to check if we need confirmation
+      const { hybridMatch } = await import('../../services/hybrid-matcher/index.js');
       
-      // Update progress
-      progress.update('Analyzing request and routing to appropriate tool...');
+      // First, determine what tool and parameters to use
+      const matchResult = await hybridMatch(message, this.openRouterConfig!);
       
-      // Execute through process-request tool
-      const result = await executeTool(
-        'process-request',
-        { request: message },
-        this.openRouterConfig!,
-        context
-      );
-      
-      // Stop progress
-      progress.success('Response ready');
-      
-      // Extract and display response
-      const responseText = result.content[0]?.text;
-      const response = typeof responseText === 'string' ? responseText : 'No response';
-      
-      // Format and display response with markdown if enabled
-      console.log();
-      if (this.enableMarkdown) {
-        const rendered = MarkdownRenderer.renderWrapped(response);
-        ResponseFormatter.formatResponse(rendered);
+      // Check if confirmation is required
+      if (matchResult.requiresConfirmation) {
+        // Store pending confirmation details
+        this.pendingConfirmation = {
+          toolName: matchResult.toolName,
+          parameters: matchResult.parameters,
+          originalRequest: message
+        };
+        
+        // Stop progress
+        progress.success('Analysis complete');
+        
+        // Display confirmation message
+        console.log();
+        ResponseFormatter.formatInfo(
+          `I plan to use the '${matchResult.toolName}' tool for your request.\n` +
+          `Confidence: ${Math.round(matchResult.confidence * 100)}%\n\n` +
+          `Do you want to proceed? (yes/no)`
+        );
+        console.log();
+        
+        // Add to history
+        this.conversationHistory.push({ 
+          role: 'assistant', 
+          content: `Requesting confirmation to use ${matchResult.toolName} tool (confidence: ${Math.round(matchResult.confidence * 100)}%)`
+        });
+        
       } else {
-        ResponseFormatter.formatResponse(response);
+        // High confidence - execute directly
+        const context: ToolExecutionContext = {
+          sessionId: this.sessionId,
+          transportType: 'interactive',
+          metadata: {
+            conversationHistory: this.conversationHistory,
+            interactiveMode: true
+          }
+        };
+        
+        // Update progress
+        progress.update(`Executing ${matchResult.toolName}...`);
+        
+        // Execute the tool directly
+        const result = await executeTool(
+          matchResult.toolName,
+          matchResult.parameters,
+          this.openRouterConfig!,
+          context
+        );
+        
+        // Stop progress
+        progress.success('Response ready');
+        
+        // Extract and display response
+        const responseText = result.content[0]?.text;
+        const response = typeof responseText === 'string' ? responseText : 'No response';
+        
+        // Format and display response
+        console.log();
+        if (this.enableMarkdown) {
+          const rendered = MarkdownRenderer.renderWrapped(response);
+          ResponseFormatter.formatResponse(rendered);
+        } else {
+          ResponseFormatter.formatResponse(response);
+        }
+        console.log();
+        
+        // Add to history
+        this.conversationHistory.push({ role: 'assistant', content: response });
       }
-      console.log();
-      
-      // Add to history
-      this.conversationHistory.push({ role: 'assistant', content: response });
       
     } catch (error) {
       // Stop progress with error

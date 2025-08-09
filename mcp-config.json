@@ -6,9 +6,34 @@
       "input_patterns": ["create starter kit for {use_case}", "generate {type} project", "scaffold {application_type} app", "setup boilerplate for {project}"]
     },
     "research-manager": {
-      "description": "Performs in-depth research on technical topics, concepts, or comparisons using Perplexity Sonar.",
-      "use_cases": ["research", "comparison", "best practices", "explain concept", "technical deep dive", "learn about {topic}"],
-      "input_patterns": ["research {topic}", "compare {A} and {B}", "best practices for {domain}", "explain {concept}"]
+      "description": "Performs comprehensive research on any technical topic including frameworks, libraries, packages, tools, and best practices using Perplexity Sonar.",
+      "use_cases": [
+        "research {any topic}",
+        "find latest {technology} packages",
+        "explore {framework} ecosystem",
+        "investigate UI/UX libraries",
+        "discover CLI tools and frameworks",
+        "analyze development trends",
+        "compare {tool} alternatives",
+        "best practices for {domain}",
+        "explain {concept}",
+        "technical deep dive",
+        "learn about {topic}",
+        "research packages and libraries",
+        "investigate framework options"
+      ],
+      "input_patterns": [
+        "research {topic}",
+        "perform research on {topic}",
+        "investigate {technology}",
+        "explore {framework}",
+        "find {library} alternatives",
+        "discover {tool} options",
+        "compare {A} and {B}",
+        "best practices for {domain}",
+        "explain {concept}",
+        "latest {technology} packages"
+      ]
     },
     "prd-generator": {
       "description": "Creates comprehensive Product Requirements Documents (PRDs) based on a feature or product description.",
