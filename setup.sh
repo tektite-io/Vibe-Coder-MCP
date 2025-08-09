@@ -356,6 +356,21 @@ else
     print_warning "Server startup test failed. Check for runtime issues."
 fi
 
+# Test CLI interface
+echo "Testing CLI interface..."
+if timeout 5s node build/unified-cli.js --help &> /dev/null; then
+    print_status "CLI interface test passed."
+else
+    print_warning "CLI interface test failed. Check for CLI runtime issues."
+fi
+
+# Test setup wizard (dry run)
+if timeout 5s node -e "import('./build/setup-wizard.js').then(m => console.log('Setup wizard loaded'))" &> /dev/null; then
+    print_status "Setup wizard validation passed."
+else
+    print_warning "Setup wizard validation failed. Check for setup wizard issues."
+fi
+
 # Validate directory structure
 echo "Validating directory structure..."
 if [ -d "VibeCoderOutput" ] && [ -d "build" ] && [ -d "src" ]; then
@@ -431,9 +446,11 @@ echo "   - llm_config.json: LLM model mappings for different tasks"
 echo "   - mcp-config.json: MCP tool configurations and routing patterns"
 echo "   - workflows.json: Predefined workflow definitions"
 echo ""
-echo -e "${GREEN}3. START THE SERVER${NC}"
-echo "   - For Claude Desktop (stdio): npm start"
+echo -e "${GREEN}3. START THE SERVER OR USE CLI${NC}"
+echo "   - For MCP Server (stdio): npm start"
 echo "   - For web clients (SSE): npm run start:sse"
+echo "   - For CLI interface: node build/unified-cli.js"
+echo "   - For interactive setup: node build/unified-cli.js --setup"
 echo "   - For development with hot reload: npm run dev"
 echo "   - For development with SSE: npm run dev:sse"
 echo ""
@@ -449,10 +466,12 @@ echo "   - Run E2E tests: npm run test:e2e"
 echo "   - Check test coverage: npm run coverage"
 echo ""
 echo -e "${BLUE}6. TEST TOOL FUNCTIONALITY${NC}"
-echo "   - Try: 'Research modern JavaScript frameworks' (research-manager)"
-echo "   - Try: 'vibe-task-manager create project \"Test Project\" \"Testing setup\"'"
-echo "   - Try: 'map-codebase ./src' (code-map-generator)"
-echo "   - Try: 'curate-context' for intelligent context curation"
+echo "   - CLI Mode: node build/unified-cli.js \"research modern JavaScript frameworks\""
+echo "   - CLI Mode: node build/unified-cli.js \"create a PRD for a todo app\""
+echo "   - CLI Mode: node build/unified-cli.js \"map the codebase structure\""
+echo "   - MCP Mode: 'Research modern JavaScript frameworks' (via MCP client)"
+echo "   - Task Manager: 'vibe-task-manager create project \"Test Project\" \"Testing setup\"'"
+echo "   - Context Curation: 'curate-context' for intelligent context packages"
 echo "   - Try: 'generate-fullstack-starter-kit' for dynamic project scaffolding"
 echo ""
 echo -e "${YELLOW}7. ADVANCED USAGE${NC}"

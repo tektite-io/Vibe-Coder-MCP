@@ -38,6 +38,180 @@
           "Development Rules generated based on description and generated user stories."
         ]
       }
+    },
+    "researchAndPlan": {
+      "description": "Research a topic and create comprehensive planning documents.",
+      "inputSchema": {
+        "topic": "string",
+        "projectType": "string"
+      },
+      "steps": [
+        {
+          "id": "step1_research",
+          "toolName": "research",
+          "params": {
+            "query": "{workflow.input.topic}"
+          }
+        },
+        {
+          "id": "step2_prd",
+          "toolName": "generate-prd",
+          "params": {
+            "productDescription": "{workflow.input.projectType}",
+            "researchContext": "{steps.step1_research.output.content[0].text}"
+          }
+        },
+        {
+          "id": "step3_user_stories",
+          "toolName": "generate-user-stories",
+          "params": {
+            "productDescription": "{steps.step2_prd.output.content[0].text}"
+          }
+        }
+      ],
+      "output": {
+        "summary": "Research and planning workflow completed.",
+        "details": [
+          "Research conducted on specified topic.",
+          "PRD generated based on research findings.",
+          "User stories created from PRD requirements."
+        ]
+      }
+    },
+    "codebaseAnalysis": {
+      "description": "Analyze codebase and create development context.",
+      "inputSchema": {
+        "projectPath": "string",
+        "analysisGoal": "string"
+      },
+      "steps": [
+        {
+          "id": "step1_map_codebase",
+          "toolName": "map-codebase",
+          "params": {
+            "path": "{workflow.input.projectPath}",
+            "output_format": "markdown"
+          }
+        },
+        {
+          "id": "step2_curate_context",
+          "toolName": "curate-context",
+          "params": {
+            "goal": "{workflow.input.analysisGoal}",
+            "codebaseMap": "{steps.step1_map_codebase.output.content[0].text}"
+          }
+        },
+        {
+          "id": "step3_generate_tasks",
+          "toolName": "generate-task-list",
+          "params": {
+            "productDescription": "{workflow.input.analysisGoal}",
+            "codebaseContext": "{steps.step2_curate_context.output.content[0].text}"
+          }
+        }
+      ],
+      "output": {
+        "summary": "Codebase analysis workflow completed.",
+        "details": [
+          "Codebase mapped and analyzed.",
+          "Context curated for development goals.",
+          "Task list generated based on analysis."
+        ]
+      }
+    },
+    "agentCoordination": {
+      "description": "Register agents and distribute tasks for multi-agent development.",
+      "inputSchema": {
+        "projectName": "string",
+        "agentCapabilities": "array"
+      },
+      "steps": [
+        {
+          "id": "step1_register_agents",
+          "toolName": "register-agent",
+          "params": {
+            "agentId": "coordinator-{workflow.input.projectName}",
+            "capabilities": "{workflow.input.agentCapabilities}",
+            "transport": "stdio"
+          }
+        },
+        {
+          "id": "step2_get_tasks",
+          "toolName": "get-agent-tasks",
+          "params": {
+            "agentId": "coordinator-{workflow.input.projectName}",
+            "maxTasks": 5
+          }
+        },
+        {
+          "id": "step3_create_project",
+          "toolName": "vibe-task-manager",
+          "params": {
+            "command": "create project \"{workflow.input.projectName}\" \"Multi-agent coordinated project\""
+          }
+        }
+      ],
+      "output": {
+        "summary": "Agent coordination workflow completed.",
+        "details": [
+          "Agents registered with specified capabilities.",
+          "Tasks retrieved and assigned to agents.",
+          "Project created in task manager for coordination."
+        ]
+      }
+    },
+    "fullStackSetup": {
+      "description": "Complete full-stack project setup with research, planning, and scaffolding.",
+      "inputSchema": {
+        "projectName": "string",
+        "frontend": "string",
+        "backend": "string",
+        "features": "array"
+      },
+      "steps": [
+        {
+          "id": "step1_research_stack",
+          "toolName": "research",
+          "params": {
+            "query": "best practices for {workflow.input.frontend} and {workflow.input.backend} integration"
+          }
+        },
+        {
+          "id": "step2_generate_starter",
+          "toolName": "generate-fullstack-starter-kit",
+          "params": {
+            "projectName": "{workflow.input.projectName}",
+            "frontend": "{workflow.input.frontend}",
+            "backend": "{workflow.input.backend}",
+            "features": "{workflow.input.features}",
+            "researchContext": "{steps.step1_research_stack.output.content[0].text}"
+          }
+        },
+        {
+          "id": "step3_create_tasks",
+          "toolName": "generate-task-list",
+          "params": {
+            "productDescription": "{workflow.input.projectName} with {workflow.input.frontend} frontend and {workflow.input.backend} backend",
+            "features": "{workflow.input.features}"
+          }
+        },
+        {
+          "id": "step4_setup_project",
+          "toolName": "vibe-task-manager",
+          "params": {
+            "command": "create project \"{workflow.input.projectName}\" \"Full-stack project with {workflow.input.frontend} and {workflow.input.backend}\""
+          }
+        }
+      ],
+      "output": {
+        "summary": "Full-stack project setup completed.",
+        "details": [
+          "Research conducted on technology stack best practices.",
+          "Starter kit generated with specified technologies.",
+          "Development tasks created for project implementation.",
+          "Project initialized in task manager."
+        ]
+      }
     }
   }
 }

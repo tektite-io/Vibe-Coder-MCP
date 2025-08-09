@@ -1,12 +1,13 @@
 {
   "name": "vibe-coder-mcp",
-  "version": "0.1.0",
+  "version": "0.2.2",
   "description": "Production-ready MCP server with complete agent integration, multi-transport support, and comprehensive development automation tools for AI-assisted workflows.",
   "main": "build/index.js",
   "type": "module",
   "scripts": {
-    "build": "tsc && npm run copy-assets",
+    "build": "tsc && npm run copy-assets && npm run fix-permissions",
     "copy-assets": "mkdir -p build/tools/vibe-task-manager && cp -r src/tools/vibe-task-manager/prompts build/tools/vibe-task-manager/",
+    "fix-permissions": "chmod +x build/unified-cli.js",
     "start": "cross-env NODE_ENV=production LOG_LEVEL=info node build/index.js",
     "start:sse": "cross-env NODE_ENV=production LOG_LEVEL=info node build/index.js --sse",
     "dev": "tsc -w & cross-env NODE_ENV=development nodemon build/index.js | pino-pretty",
@@ -46,12 +47,30 @@
     "test:fast": "cross-env NODE_OPTIONS='--expose-gc' vitest run --exclude '**/e2e/**' --exclude '**/__integration__/**' --exclude '**/integration/**' --exclude '**/integrations/**' --exclude '**/live/**' --exclude '**/scenarios/**' --exclude '**/__tests__/scenarios/**' --reporter=basic --run --no-coverage",
     "validate-enhancements": "node build/tools/vibe-task-manager/scripts/manual-validation-runner.js",
     "test:live-validation": "vitest run \"src/tools/vibe-task-manager/__tests__/live-validation/**/*.test.ts\" --testTimeout=60000",
-    "test:ci-excluded": "vitest run \"src/tools/fullstack-starter-kit-generator/__tests__/research-enhanced.test.ts\" \"src/tools/vibe-task-manager/__tests__/core/dependency-graph.test.ts\" --reporter=verbose"
+    "test:ci-excluded": "vitest run \"src/tools/fullstack-starter-kit-generator/__tests__/research-enhanced.test.ts\" \"src/tools/vibe-task-manager/__tests__/core/dependency-graph.test.ts\" --reporter=verbose",
+    "security:audit": "npm audit --audit-level=moderate",
+    "security:fix": "npm audit fix",
+    "deps:check": "npm outdated",
+    "deps:update": "npm update",
+    "package:check": "npm pack --dry-run",
+    "package:size": "npm pack --dry-run | tail -1",
+    "prepack": "npm run clean && npm run build && npm run type-check",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run security:audit && npm run lint",
+    "validate:pre-publish": "./scripts/pre-publish-validation.sh",
+    "validate:post-publish": "./scripts/post-publish-validation.sh",
+    "release:patch": "npm version patch && git push origin main --tags",
+    "release:minor": "npm version minor && git push origin main --tags",
+    "release:major": "npm version major && git push origin main --tags",
+    "release:prerelease": "npm version prerelease --preid=alpha && git push origin main --tags"
   },
   "keywords": [
     "MCP",
+    "model-context-protocol",
     "AI",
+    "artificial-intelligence",
     "workflow",
+    "automation",
     "Claude",
     "task-manager",
     "project-management",
@@ -59,11 +78,22 @@
     "semantic-routing",
     "embeddings",
     "developer-tools",
+    "development-automation",
     "agent-orchestration",
+    "multi-agent",
     "multi-transport",
     "real-time-notifications",
     "dynamic-port-allocation",
-    "production-ready"
+    "production-ready",
+    "typescript",
+    "nodejs",
+    "cli-tool",
+    "development-workflow",
+    "code-analysis",
+    "research-automation",
+    "prd-generation",
+    "user-stories",
+    "task-decomposition"
   ],
   "author": {
     "name": "Vibe Coder MCP Team",
@@ -76,22 +106,31 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.7.0",
+    "@types/figlet": "^1.7.0",
+    "@types/inquirer": "^9.0.9",
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.18.1",
     "axios": "^1.6.7",
+    "boxen": "^7.1.1",
+    "chalk": "^5.3.0",
+    "cli-table3": "^0.6.5",
     "commander": "^14.0.0",
     "cors": "^2.8.5",
     "dependency-cruiser": "^16.10.2",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
+    "figlet": "^1.8.2",
     "fs-extra": "^11.2.0",
     "glob": "^11.0.2",
+    "inquirer": "^12.9.0",
     "js-yaml": "^4.1.0",
     "node-fetch": "^3.3.2",
+    "ora": "^8.0.1",
     "pino": "^9.6.0",
     "simple-git": "^3.22.0",
     "uuid": "^11.1.0",
     "web-tree-sitter": "^0.20.8",
+    "wrap-ansi": "^9.0.0",
     "ws": "^8.18.2",
     "yaml": "^2.8.0",
     "zod": "^3.22.4",
@@ -125,7 +164,8 @@
     "node": ">=20.0.0"
   },
   "bin": {
-    "vibe-coder-mcp": "./build/index.js"
+    "vibe-coder-mcp": "./build/unified-cli.js",
+    "vibe": "./build/unified-cli.js"
   },
   "files": [
     "build/**/*",
@@ -141,12 +181,18 @@
     "url": "https://github.com/freshtechbro/Vibe-Coder-MCP/issues"
   },
   "homepage": "https://github.com/freshtechbro/Vibe-Coder-MCP#readme",
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/"
-  },
   "funding": {
     "type": "github",
     "url": "https://github.com/freshtechbro"
-  }
+  },
+  "preferGlobal": true,
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
 }

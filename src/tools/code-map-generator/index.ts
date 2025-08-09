@@ -22,6 +22,7 @@ import {
 } from './parser.js';
 import { takeMemorySample, generateMemoryUsageReport, clearMemoryUsageSamples } from './memoryMonitor.js';
 import { initializeImportResolver, disposeImportResolver } from './utils/importResolverInitializer.js';
+import { getMetricsCollector, resetMetricsCollector } from './performanceMetrics.js';
 
 import { collectSourceFiles } from './fileScanner.js';
 import { FileInfo, CodeMap } from './codeMapModel.js';
@@ -200,6 +201,9 @@ context: ToolExecutionContext | undefined,
 jobId: string
 ): Promise<CallToolResult> {
 const sessionId = context?.sessionId || 'unknown-session';
+
+// Get abort signal for timeout/cancellation support
+const abortSignal = jobManager.getJobAbortSignal(jobId);
 
 // NEW: Clear memory samples at the start of execution
 clearMemoryUsageSamples();
@@ -380,6 +384,11 @@ try {
     const combinedIgnoredPatterns: RegExp[] = [...defaultIgnoredPatterns, ...userIgnoredPatterns as RegExp[]];
     logger.debug(`Using ${combinedIgnoredPatterns.length} ignore patterns (${userIgnoredPatterns.length} user-defined, ${defaultIgnoredPatterns.length} default)`);
 
+    // Check for timeout/cancellation before scanning
+    if (abortSignal?.aborted) {
+      throw new Error('Job was cancelled or timed out');
+    }
+
     // Update job status
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Scanning for source files...');
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Scanning for source files...');
@@ -436,6 +445,11 @@ try {
 
     // NEW: Take memory sample after file scanning
     takeMemorySample('After file scanning');
+
+    // Check for timeout/cancellation before processing files
+    if (abortSignal?.aborted) {
+      throw new Error('Job was cancelled or timed out');
+    }
 
     // Process files in batches using the new batch processor
 
@@ -918,6 +932,18 @@ try {
 
     // NEW: Take final memory sample
     takeMemorySample('Final');
+    
+    // Generate performance metrics summary
+    try {
+      const metricsCollector = getMetricsCollector();
+      metricsCollector.generateSummary();
+      logger.info('Performance metrics generated successfully');
+      
+      // Reset metrics collector for next run
+      resetMetricsCollector();
+    } catch (metricsError) {
+      logger.warn(`Error generating performance metrics: ${metricsError instanceof Error ? metricsError.message : String(metricsError)}`);
+    }
 
     // Get memory manager for additional cleanup if needed
     const memManager = getMemoryManager();

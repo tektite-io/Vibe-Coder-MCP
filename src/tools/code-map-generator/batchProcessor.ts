@@ -7,9 +7,10 @@ import logger from '../../logger.js';
 import { CodeMapGeneratorConfig } from './types.js';
 import { jobManager, JobStatus } from '../../services/job-manager/index.js';
 import { sseNotifier } from '../../services/sse-notifier/index.js';
-import { getMemoryStats, clearCaches } from './parser.js';
+import { getMemoryStats, clearCaches, getMemoryManager } from './parser.js';
 import { grammarManager } from './parser.js';
 import path from 'path';
+import { getMetricsCollector } from './performanceMetrics.js';
 
 /**
  * Gets the optimal batch size based on configuration.
@@ -18,6 +19,103 @@ import path from 'path';
  */
 export function getBatchSize(config: CodeMapGeneratorConfig): number {
   return config.processing?.batchSize || 100;
+}
+
+/**
+ * Calculates dynamic batch size based on available memory and file count.
+ * @param config The Code-Map Generator configuration
+ * @param fileCount The number of files to process
+ * @param averageFileSize Optional average file size in bytes
+ * @returns The dynamically calculated batch size
+ */
+export function calculateDynamicBatchSize(
+  config: CodeMapGeneratorConfig,
+  fileCount: number,
+  averageFileSize?: number
+): number {
+  const baseBatchSize = getBatchSize(config);
+  
+  // Get memory manager for more sophisticated memory analysis
+  const memManager = getMemoryManager();
+  
+  // Get current memory stats - prefer basic stats for consistency
+  const memStats = getMemoryStats();
+  if (!memStats) {
+    logger.debug('Memory stats unavailable, using base batch size');
+    return baseBatchSize;
+  }
+  
+  const memoryUsagePercent = memStats.memoryUsagePercentage;
+  // Calculate available memory based on heap limits
+  const availableMemoryMB = (memStats.heapTotal - memStats.heapUsed) / (1024 * 1024);
+  
+  // If MemoryManager is available, check for critical memory status
+  if (memManager) {
+    const managerStats = memManager.getMemoryStats();
+    if (managerStats.formatted?.memoryStatus === 'critical') {
+      logger.warn('Memory status is critical according to MemoryManager, using minimum batch size');
+      return 10;
+    }
+    // Also check high memory status for additional reduction
+    if (managerStats.formatted?.memoryStatus === 'high') {
+      logger.debug('Memory status is high according to MemoryManager, reducing base batch size');
+      return Math.max(20, Math.floor(baseBatchSize * 0.4));
+    }
+  }
+  
+  // Start with base batch size
+  let dynamicBatchSize = baseBatchSize;
+  
+  // Adjust based on memory usage
+  if (memoryUsagePercent > 0.7) {
+    // High memory usage: reduce batch size significantly
+    dynamicBatchSize = Math.max(10, Math.floor(baseBatchSize * 0.25));
+    logger.debug(`High memory usage (${(memoryUsagePercent * 100).toFixed(1)}%), reducing batch size to ${dynamicBatchSize}`);
+  } else if (memoryUsagePercent > 0.6) {
+    // Moderate-high memory usage: reduce batch size moderately
+    dynamicBatchSize = Math.max(20, Math.floor(baseBatchSize * 0.5));
+    logger.debug(`Moderate-high memory usage (${(memoryUsagePercent * 100).toFixed(1)}%), reducing batch size to ${dynamicBatchSize}`);
+  } else if (memoryUsagePercent > 0.5) {
+    // Moderate memory usage: slight reduction
+    dynamicBatchSize = Math.max(50, Math.floor(baseBatchSize * 0.75));
+    logger.debug(`Moderate memory usage (${(memoryUsagePercent * 100).toFixed(1)}%), reducing batch size to ${dynamicBatchSize}`);
+  } else if (memoryUsagePercent < 0.3 && availableMemoryMB > 2048) {
+    // Low memory usage with plenty available: increase batch size
+    dynamicBatchSize = Math.min(500, Math.floor(baseBatchSize * 1.5));
+    logger.debug(`Low memory usage (${(memoryUsagePercent * 100).toFixed(1)}%) with ${availableMemoryMB.toFixed(0)}MB available, increasing batch size to ${dynamicBatchSize}`);
+  }
+  
+  // Adjust based on file count
+  if (fileCount < 100) {
+    // Small codebase: process all at once if memory allows
+    if (memoryUsagePercent < 0.5) {
+      dynamicBatchSize = Math.min(fileCount, 100);
+      logger.debug(`Small codebase (${fileCount} files), setting batch size to ${dynamicBatchSize}`);
+    }
+  } else if (fileCount > 10000) {
+    // Large codebase: be more conservative
+    dynamicBatchSize = Math.min(dynamicBatchSize, 200);
+    logger.debug(`Large codebase (${fileCount} files), capping batch size at ${dynamicBatchSize}`);
+  }
+  
+  // Consider average file size if provided
+  if (averageFileSize && averageFileSize > 100 * 1024) { // Files larger than 100KB
+    // Large files: reduce batch size
+    const sizeFactor = Math.min(1, 50 * 1024 / averageFileSize); // Normalize to 50KB baseline
+    dynamicBatchSize = Math.max(10, Math.floor(dynamicBatchSize * sizeFactor));
+    logger.debug(`Large average file size (${(averageFileSize / 1024).toFixed(1)}KB), adjusting batch size to ${dynamicBatchSize}`);
+  }
+  
+  // Ensure batch size is within reasonable bounds
+  const MIN_BATCH_SIZE = 10;
+  const MAX_BATCH_SIZE = 500;
+  dynamicBatchSize = Math.max(MIN_BATCH_SIZE, Math.min(MAX_BATCH_SIZE, dynamicBatchSize));
+  
+  if (dynamicBatchSize !== baseBatchSize) {
+    logger.info(`Dynamic batch size: ${dynamicBatchSize} (base: ${baseBatchSize}, memory: ${(memoryUsagePercent * 100).toFixed(1)}%, files: ${fileCount})`);
+  }
+  
+  return dynamicBatchSize;
 }
 
 /**
@@ -62,12 +160,16 @@ export async function processBatches<T, R>(
     return [];
   }
 
-  const batchSize = getBatchSize(config);
+  // Use dynamic batch size calculation
+  const batchSize = calculateDynamicBatchSize(config, items.length);
   const batches = splitIntoBatches(items, batchSize);
   const totalBatches = batches.length;
   const results: R[] = [];
 
   logger.info(`Processing ${items.length} items in ${totalBatches} batches (batch size: ${batchSize})`);
+  
+  // Get metrics collector
+  const metricsCollector = getMetricsCollector();
 
   for (let i = 0; i < totalBatches; i++) {
     const batch = batches[i];
@@ -94,9 +196,15 @@ export async function processBatches<T, R>(
 
     logger.info(`Processing batch ${currentBatch} of ${totalBatches} (Size: ${batch.length})`);
 
+    // Start tracking batch performance
+    metricsCollector.startBatch();
+
     // Process items in parallel
     const batchPromises = batch.map(processItem);
     const batchResults = await Promise.all(batchPromises);
+    
+    // Complete batch metrics tracking
+    metricsCollector.completeBatch(batch.length);
 
     // Add batch results to overall results
     results.push(...batchResults);
@@ -165,7 +273,8 @@ export async function processBatchesWithIntermediateStorage<T, I, R>(
     return combineResults([]);
   }
 
-  const batchSize = getBatchSize(config);
+  // Use dynamic batch size calculation
+  const batchSize = calculateDynamicBatchSize(config, items.length);
   const batches = splitIntoBatches(items, batchSize);
   const totalBatches = batches.length;
 
@@ -478,7 +587,8 @@ export async function processLanguageBasedBatches<T extends { path: string }, R>
     return [];
   }
 
-  const batchSize = getBatchSize(config);
+  // Use dynamic batch size calculation
+  const batchSize = calculateDynamicBatchSize(config, files.length);
   const batches = createLanguageBasedBatches(files, batchSize);
   const totalBatches = batches.length;
   const results: R[] = [];
@@ -542,16 +652,49 @@ export async function processLanguageBasedBatches<T extends { path: string }, R>
 
     logger.info(`Processing batch ${currentBatch} of ${totalBatches} (Size: ${batch.length}, Language: ${currentLanguage})`);
 
-    // Prepare grammars for this batch if grammar manager is available
+    // Memory-aware grammar preloading
     if (grammarManager) {
-      try {
-        // Extract file extensions from the batch
-        const fileExtensions = batch.map(file => path.extname(file.path));
+      // Check memory status before preloading grammars
+      const memStats = getMemoryStats();
+      const memManager = getMemoryManager();
+      
+      // Determine if we should preload grammars based on memory
+      let shouldPreloadGrammars = true;
+      
+      if (memStats && memStats.memoryUsagePercentage > 0.6) {
+        logger.debug(`Memory usage at ${(memStats.memoryUsagePercentage * 100).toFixed(1)}%, skipping grammar preloading for batch ${currentBatch}`);
+        shouldPreloadGrammars = false;
+      }
+      
+      // Also check MemoryManager's assessment if available
+      if (memManager && shouldPreloadGrammars) {
+        const managerStats = memManager.getMemoryStats();
+        if (managerStats.formatted?.memoryStatus === 'high' || 
+            managerStats.formatted?.memoryStatus === 'critical') {
+          logger.debug(`MemoryManager indicates ${managerStats.formatted.memoryStatus} memory status, skipping grammar preloading`);
+          shouldPreloadGrammars = false;
+        }
+      }
+      
+      if (shouldPreloadGrammars) {
+        try {
+          // Extract file extensions from the batch
+          const fileExtensions = batch.map(file => path.extname(file.path));
 
-        // Prepare grammars for the batch
-        await grammarManager.prepareGrammarsForBatch(fileExtensions);
-      } catch (error) {
-        logger.warn({ err: error }, 'Error preparing grammars for batch');
+          // Prepare grammars for the batch
+          await grammarManager.prepareGrammarsForBatch(fileExtensions);
+          logger.debug(`Preloaded grammars for ${fileExtensions.length} files in batch ${currentBatch}`);
+        } catch (error) {
+          logger.warn({ err: error }, 'Error preparing grammars for batch');
+        }
+      } else {
+        // Free up memory by unloading unused grammars
+        try {
+          await grammarManager.unloadUnusedGrammars();
+          logger.debug('Unloaded unused grammars to free memory');
+        } catch {
+          logger.debug('Could not unload unused grammars');
+        }
       }
     }
 

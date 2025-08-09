@@ -9,6 +9,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import logger from '../logger.js';
 import { TimeoutOperation } from '../tools/vibe-task-manager/utils/timeout-manager.js';
+import { getProjectRoot } from '../tools/code-map-generator/utils/pathUtils.enhanced.js';
 
 /**
  * Tool timeout configuration
@@ -107,8 +108,8 @@ export class JobTimeoutConfigManager {
   private initialized = false;
 
   private constructor() {
-    // Determine config path (project root)
-    const projectRoot = process.cwd();
+    // Determine config path (project root) - using getProjectRoot for consistent path resolution
+    const projectRoot = getProjectRoot();
     this.configPath = path.join(projectRoot, 'job-timeout-config.json');
   }
 

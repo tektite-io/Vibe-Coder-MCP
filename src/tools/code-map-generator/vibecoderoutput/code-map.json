@@ -1,0 +1,289 @@
+{
+  "projectPath": "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP/src/tools/code-map-generator/test-codebase",
+  "files": [
+    {
+      "path": "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP/src/tools/code-map-generator/test-codebase/lib/database.js",
+      "relativePath": "lib/database.js",
+      "lines": 85,
+      "classes": [
+        {
+          "name": "for",
+          "properties": [
+            {
+              "name": "users",
+              "type": "any"
+            },
+            {
+              "name": "products",
+              "type": "any"
+            },
+            {
+              "name": "orders",
+              "type": "any"
+            },
+            {
+              "name": "connected",
+              "type": "any"
+            }
+          ],
+          "methods": []
+        },
+        {
+          "name": "Database",
+          "properties": [
+            {
+              "name": "users",
+              "type": "any"
+            },
+            {
+              "name": "products",
+              "type": "any"
+            },
+            {
+              "name": "orders",
+              "type": "any"
+            },
+            {
+              "name": "connected",
+              "type": "any"
+            }
+          ],
+          "methods": []
+        }
+      ],
+      "functions": [],
+      "imports": []
+    },
+    {
+      "path": "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP/src/tools/code-map-generator/test-codebase/src/index.js",
+      "relativePath": "src/index.js",
+      "lines": 35,
+      "classes": [],
+      "functions": [],
+      "imports": [
+        {
+          "path": "./user.js",
+          "importedItems": [
+            {
+              "name": "User",
+              "isDefault": false
+            }
+          ]
+        },
+        {
+          "path": "./product.js",
+          "importedItems": [
+            {
+              "name": "Product",
+              "isDefault": false
+            }
+          ]
+        },
+        {
+          "path": "./order.js",
+          "importedItems": [
+            {
+              "name": "Order",
+              "isDefault": false
+            }
+          ]
+        },
+        {
+          "path": "../lib/database.js",
+          "importedItems": [
+            {
+              "name": "Database",
+              "isDefault": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP/src/tools/code-map-generator/test-codebase/src/order.js",
+      "relativePath": "src/order.js",
+      "lines": 48,
+      "classes": [
+        {
+          "name": "representing",
+          "properties": [
+            {
+              "name": "user",
+              "type": "any"
+            },
+            {
+              "name": "products",
+              "type": "any"
+            },
+            {
+              "name": "id",
+              "type": "any"
+            },
+            {
+              "name": "createdAt",
+              "type": "any"
+            },
+            {
+              "name": "status",
+              "type": "any"
+            }
+          ],
+          "methods": []
+        },
+        {
+          "name": "Order",
+          "properties": [
+            {
+              "name": "user",
+              "type": "any"
+            },
+            {
+              "name": "products",
+              "type": "any"
+            },
+            {
+              "name": "id",
+              "type": "any"
+            },
+            {
+              "name": "createdAt",
+              "type": "any"
+            },
+            {
+              "name": "status",
+              "type": "any"
+            }
+          ],
+          "methods": []
+        }
+      ],
+      "functions": [],
+      "imports": [
+        {
+          "path": "./user.js",
+          "importedItems": [
+            {
+              "name": "User",
+              "isDefault": false
+            }
+          ]
+        },
+        {
+          "path": "./product.js",
+          "importedItems": [
+            {
+              "name": "Product",
+              "isDefault": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP/src/tools/code-map-generator/test-codebase/src/product.js",
+      "relativePath": "src/product.js",
+      "lines": 35,
+      "classes": [
+        {
+          "name": "representing",
+          "properties": [
+            {
+              "name": "name",
+              "type": "any"
+            },
+            {
+              "name": "price",
+              "type": "any"
+            },
+            {
+              "name": "id",
+              "type": "any"
+            },
+            {
+              "name": "createdAt",
+              "type": "any"
+            }
+          ],
+          "methods": []
+        },
+        {
+          "name": "Product",
+          "properties": [
+            {
+              "name": "name",
+              "type": "any"
+            },
+            {
+              "name": "price",
+              "type": "any"
+            },
+            {
+              "name": "id",
+              "type": "any"
+            },
+            {
+              "name": "createdAt",
+              "type": "any"
+            }
+          ],
+          "methods": []
+        }
+      ],
+      "functions": [],
+      "imports": []
+    },
+    {
+      "path": "/Users/bishopdotun/Documents/Dev Projects/Vibe-Coder-MCP/src/tools/code-map-generator/test-codebase/src/user.js",
+      "relativePath": "src/user.js",
+      "lines": 33,
+      "classes": [
+        {
+          "name": "representing",
+          "properties": [
+            {
+              "name": "name",
+              "type": "any"
+            },
+            {
+              "name": "email",
+              "type": "any"
+            },
+            {
+              "name": "id",
+              "type": "any"
+            },
+            {
+              "name": "createdAt",
+              "type": "any"
+            }
+          ],
+          "methods": []
+        },
+        {
+          "name": "User",
+          "properties": [
+            {
+              "name": "name",
+              "type": "any"
+            },
+            {
+              "name": "email",
+              "type": "any"
+            },
+            {
+              "name": "id",
+              "type": "any"
+            },
+            {
+              "name": "createdAt",
+              "type": "any"
+            }
+          ],
+          "methods": []
+        }
+      ],
+      "functions": [],
+      "imports": []
+    }
+  ]
+}

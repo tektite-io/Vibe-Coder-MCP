@@ -156,6 +156,76 @@ class JobManager {
   }
 
   /**
+   * Starts a timer to enforce job timeout with warning
+   * @param jobId The job ID to monitor
+   */
+  private startTimeoutTimer(jobId: string): void {
+    const job = this.jobs.get(jobId);
+    if (!job || !job.timeoutMs) return;
+    
+    // Set warning timer at 80% of timeout
+    const warningTimeMs = Math.floor(job.timeoutMs * 0.8);
+    const warningTimer = setTimeout(() => {
+      const jobStillRunning = this.jobs.get(jobId);
+      if (jobStillRunning && jobStillRunning.status === JobStatus.RUNNING) {
+        const remainingTimeMs = job.timeoutMs! - warningTimeMs;
+        const remainingTimeSec = Math.floor(remainingTimeMs / 1000);
+        
+        logger.warn({ 
+          jobId, 
+          toolName: job.toolName,
+          warningTimeMs,
+          remainingTimeMs,
+          remainingTimeSec
+        }, `Job approaching timeout - ${remainingTimeSec} seconds remaining`);
+        
+        // Update job progress message to indicate timeout warning
+        this.updateJobStatus(
+          jobId,
+          JobStatus.RUNNING,
+          `WARNING: Job approaching timeout - ${remainingTimeSec} seconds remaining`,
+          jobStillRunning.progressPercentage
+        );
+      }
+    }, warningTimeMs);
+    
+    // Set actual timeout timer
+    const timer = setTimeout(() => {
+      if (this.isJobTimedOut(jobId)) {
+        logger.warn({ jobId, timeout: job.timeoutMs }, 'Job timeout reached, cancelling job');
+        this.cancelJob(jobId, 'Job exceeded timeout limit');
+        if (job.abortController && !job.abortController.signal.aborted) {
+          job.abortController.abort('Timeout exceeded');
+        }
+      }
+    }, job.timeoutMs);
+    
+    // Store timer references for cleanup
+    (job as unknown as Record<string, unknown>).timeoutTimer = timer;
+    (job as unknown as Record<string, unknown>).warningTimer = warningTimer;
+  }
+
+  /**
+   * Clears the timeout timers for a job
+   * @param jobId The job ID
+   */
+  private clearTimeoutTimer(jobId: string): void {
+    const job = this.jobs.get(jobId);
+    if (job) {
+      // Clear warning timer
+      if ((job as unknown as Record<string, unknown>).warningTimer) {
+        clearTimeout((job as unknown as Record<string, unknown>).warningTimer as NodeJS.Timeout);
+        delete (job as unknown as Record<string, unknown>).warningTimer;
+      }
+      // Clear timeout timer
+      if ((job as unknown as Record<string, unknown>).timeoutTimer) {
+        clearTimeout((job as unknown as Record<string, unknown>).timeoutTimer as NodeJS.Timeout);
+        delete (job as unknown as Record<string, unknown>).timeoutTimer;
+      }
+    }
+  }
+
+  /**
    * Gets the minimum wait time before the next status check based on the job's access history.
    * Implements an exponential backoff strategy.
    * @param jobId The ID of the job to check.
@@ -395,7 +465,13 @@ class JobManager {
     if (status === JobStatus.RUNNING && job.status !== JobStatus.RUNNING) {
       job.startedAt = Date.now();
       job.abortController = new AbortController();
-      logger.debug({ jobId, startedAt: job.startedAt }, 'Job started running, initialized timeout tracking');
+      this.startTimeoutTimer(jobId); // Start timeout enforcement timer
+      logger.debug({ jobId, startedAt: job.startedAt }, 'Job started running, timeout timer started');
+    }
+    
+    // Clear timeout timer when job completes or fails
+    if (status === JobStatus.COMPLETED || status === JobStatus.FAILED) {
+      this.clearTimeoutTimer(jobId);
     }
 
     job.status = status;
