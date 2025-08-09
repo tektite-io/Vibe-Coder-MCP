@@ -333,6 +333,23 @@ if %ERRORLEVEL% equ 0 (
     powershell -Command "Write-Host 'Server startup test failed. Check for runtime issues.' -ForegroundColor Yellow"
 )
 
+REM Test CLI interface
+echo Testing CLI interface...
+call node build\unified-cli.js --help >nul 2>nul
+if %ERRORLEVEL% equ 0 (
+    powershell -Command "Write-Host '✓ CLI interface test passed.' -ForegroundColor Green"
+) else (
+    powershell -Command "Write-Host 'CLI interface test failed. Check for CLI runtime issues.' -ForegroundColor Yellow"
+)
+
+REM Test setup wizard (dry run)
+call node -e "import('./build/setup-wizard.js').then(m => console.log('Setup wizard loaded'))" >nul 2>nul
+if %ERRORLEVEL% equ 0 (
+    powershell -Command "Write-Host '✓ Setup wizard validation passed.' -ForegroundColor Green"
+) else (
+    powershell -Command "Write-Host 'Setup wizard validation failed. Check for setup wizard issues.' -ForegroundColor Yellow"
+)
+
 REM Validate directory structure
 echo Validating directory structure...
 if exist "VibeCoderOutput" if exist "build" if exist "src" (
@@ -408,9 +425,11 @@ echo    - llm_config.json: LLM model mappings for different tasks
 echo    - mcp-config.json: MCP tool configurations and routing patterns
 echo    - workflows.json: Predefined workflow definitions
 echo.
-powershell -Command "Write-Host '3. START THE SERVER' -ForegroundColor Green"
-echo    - For Claude Desktop (stdio): npm start
+powershell -Command "Write-Host '3. START THE SERVER OR USE CLI' -ForegroundColor Green"
+echo    - For MCP Server (stdio): npm start
 echo    - For web clients (SSE): npm run start:sse
+echo    - For CLI interface: node build\unified-cli.js
+echo    - For interactive setup: node build\unified-cli.js --setup
 echo    - For development with hot reload: npm run dev
 echo    - For development with SSE: npm run dev:sse
 echo.
@@ -426,10 +445,12 @@ echo    - Run E2E tests: npm run test:e2e
 echo    - Check test coverage: npm run coverage
 echo.
 powershell -Command "Write-Host '6. TEST TOOL FUNCTIONALITY' -ForegroundColor Blue"
-echo    - Try: 'Research modern JavaScript frameworks' (research-manager)
-echo    - Try: 'vibe-task-manager create project "Test Project" "Testing setup"'
-echo    - Try: 'map-codebase ./src' (code-map-generator)
-echo    - Try: 'curate-context' for intelligent context curation
+echo    - CLI Mode: node build\unified-cli.js "research modern JavaScript frameworks"
+echo    - CLI Mode: node build\unified-cli.js "create a PRD for a todo app"
+echo    - CLI Mode: node build\unified-cli.js "map the codebase structure"
+echo    - MCP Mode: 'Research modern JavaScript frameworks' (via MCP client)
+echo    - Task Manager: 'vibe-task-manager create project "Test Project" "Testing setup"'
+echo    - Context Curation: 'curate-context' for intelligent context packages
 echo    - Try: 'generate-fullstack-starter-kit' for dynamic project scaffolding
 echo.
 powershell -Command "Write-Host '7. ADVANCED USAGE' -ForegroundColor Yellow"

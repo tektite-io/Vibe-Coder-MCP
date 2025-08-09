@@ -297,7 +297,7 @@ export class UnifiedCommandGateway {
     context: Partial<UnifiedCommandContext> = {}
   ): Promise<{
     success: boolean;
-    result?: any;
+    result?: unknown;
     tool?: string;
     error?: string;
     processingTime: number;
@@ -548,7 +548,7 @@ export class UnifiedCommandGateway {
     tool: string,
     intent: RecognizedIntent,
     params: Record<string, unknown>,
-    context: UnifiedCommandContext
+    _context: UnifiedCommandContext
   ): Promise<{ errors: string[]; warnings: string[]; suggestions: string[] }> {
     const errors: string[] = [];
     const warnings: string[] = [];

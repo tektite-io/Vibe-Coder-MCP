@@ -44,6 +44,7 @@ test/
 */__integration__/
 tests/
 test-workflow-states/
+test-npx/
 
 # IDE - VSCode
 .vscode/*
@@ -141,6 +142,7 @@ e2e
 fix-*.sh
 remove-*.sh
 test-*.js
+
 
 # Duplicate files
 *\ 2.*

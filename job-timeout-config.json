@@ -30,7 +30,7 @@
     
     "map-codebase": {
       "timeoutOperation": "fileOperations",
-      "customTimeoutMs": 300000,
+      "customTimeoutMs": 900000,
       "description": "Code mapping can be intensive for large codebases"
     },
     
@@ -42,8 +42,8 @@
     
     "curate-context": {
       "timeoutOperation": "taskExecution",
-      "customTimeoutMs": 240000,
-      "description": "Context curation involves code analysis and LLM processing"
+      "customTimeoutMs": 1200000,
+      "description": "Context curation involves code analysis, embedded code-map generation, and LLM processing"
     },
     
     "fullstack-starter-kit-generator": {
@@ -104,6 +104,20 @@
       "timeoutOperation": "llmRequest",
       "customTimeoutMs": 45000,
       "description": "Natural language processing with tool routing"
+    }
+  },
+  
+  "adaptiveTimeouts": {
+    "enabled": true,
+    "scalingFactors": {
+      "fileCount": {
+        "threshold": 1000,
+        "multiplier": 1.5
+      },
+      "codebaseSize": {
+        "threshold": 104857600,
+        "multiplier": 2.0
+      }
     }
   },
   

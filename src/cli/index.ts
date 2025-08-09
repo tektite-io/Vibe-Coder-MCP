@@ -11,14 +11,14 @@ import { ToolExecutionContext } from '../services/routing/toolRegistry.js';
 import { CLIConfig } from './types/index.js';
 import { EnhancedCLIUtils } from './utils/cli-formatter.js';
 import { 
-  initializeCLIConfiguration,
   parseCliArgs, 
   extractRequestArgs, 
-  shouldDisplayHelp,
   generateSessionId,
   validateEnvironment
 } from './utils/config-loader.js';
 import { UnifiedCommandGateway } from './gateway/unified-command-gateway.js';
+import { appInitializer } from './core/app-initializer.js';
+import { detectCLIMode } from './utils/mode-detector.js';
 import ora, { Ora } from 'ora';
 import chalk from 'chalk';
 import logger from '../logger.js';
@@ -44,27 +44,63 @@ async function gracefulExit(code: number = 0): Promise<void> {
 }
 
 /**
- * Main CLI execution function with strict typing
+ * Main CLI execution function with mode detection
  */
 async function main(): Promise<void> {
   const args: string[] = process.argv.slice(2);
+  const mode = detectCLIMode(args);
   
-  // Handle help display
-  if (shouldDisplayHelp(args)) {
-    displayHelp();
-    await gracefulExit(0);
-    return;
+  // Handle different modes
+  switch (mode) {
+    case 'help':
+      displayHelp();
+      await gracefulExit(0);
+      return;
+      
+    case 'interactive':
+      await startInteractiveMode();
+      return;
+      
+    case 'oneshot':
+      await processOneShot(args);
+      return;
   }
+}
 
+/**
+ * Start interactive REPL mode
+ */
+async function startInteractiveMode(): Promise<void> {
+  try {
+    // Initialize core services first
+    const openRouterConfig = await appInitializer.initializeCoreServices();
+    
+    // Dynamic import to avoid circular dependencies
+    const { VibeInteractiveREPL } = await import('./interactive/repl.js');
+    const repl = new VibeInteractiveREPL();
+    await repl.start(openRouterConfig);
+    
+  } catch (error) {
+    logger.error({ err: error }, 'Failed to start interactive mode');
+    console.error(chalk.red('Failed to start interactive mode:'), error instanceof Error ? error.message : 'Unknown error');
+    await gracefulExit(1);
+  }
+}
+
+/**
+ * Process one-shot command
+ */
+async function processOneShot(args: string[]): Promise<void> {
   // Parse CLI configuration
   const cliConfig: CLIConfig = parseCliArgs(args);
   const requestArgs: ReadonlyArray<string> = extractRequestArgs(args);
   
   if (requestArgs.length === 0) {
-    EnhancedCLIUtils.formatError('No request provided');
+    // No request provided, show interactive prompt hint
+    console.log(chalk.cyan('💡 Tip: Run `vibe` without arguments to start interactive mode'));
     console.log();
     displayUsageExample();
-    await gracefulExit(1);
+    await gracefulExit(0);
     return;
   }
 
@@ -91,8 +127,8 @@ async function main(): Promise<void> {
       }).start();
     }
 
-    // Initialize configuration using CENTRALIZED systems
-    const { openRouterConfig } = await initializeCLIConfiguration();
+    // Initialize configuration using NEW centralized initializer
+    const openRouterConfig = await appInitializer.initializeCoreServices();
     
     // Initialize Unified Command Gateway for 95-99% accuracy
     const unifiedGateway = UnifiedCommandGateway.getInstance(openRouterConfig);
@@ -156,7 +192,7 @@ async function main(): Promise<void> {
     }
 
     // Format output based on CLI configuration
-    await formatAndDisplayResult(result, cliConfig);
+    await formatAndDisplayResult(result as { content: { [key: string]: unknown; type: string; text?: string | undefined; data?: string | undefined; mimeType?: string | undefined; }[]; }, cliConfig);
     
     await gracefulExit(0);
 
@@ -270,7 +306,8 @@ ${chalk.yellow('DESCRIPTION:')}
   Process natural language requests and route them to the appropriate tool.
 
 ${chalk.yellow('USAGE:')}
-  ${chalk.green('vibe')} ${chalk.blue('<request>')} ${chalk.gray('[options]')}
+  ${chalk.green('vibe')}                          ${chalk.gray('Start interactive mode (REPL)')}
+  ${chalk.green('vibe')} ${chalk.blue('<request>')} ${chalk.gray('[options]')}   ${chalk.gray('Process one-shot request')}
 
 ${chalk.yellow('OPTIONS:')}
   ${chalk.green('-v, --verbose')}     Show detailed output and error traces
@@ -279,6 +316,7 @@ ${chalk.yellow('OPTIONS:')}
   ${chalk.green('--json')}            Shorthand for --format json
   ${chalk.green('--yaml')}            Shorthand for --format yaml
   ${chalk.green('--no-color')}        Disable colored output
+  ${chalk.green('-i, --interactive')} Force interactive mode
   ${chalk.green('-h, --help')}        Show this help message
 
 ${chalk.yellow('EXAMPLES:')}`;

@@ -184,13 +184,8 @@ export async function validateEnvironment(): Promise<{
       errors.push(...configValidation.errors.map(e => `Configuration: ${e}`));
     }
 
-    // Check centralized security configuration
-    try {
-      await getCLISecurityBoundaries();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown security error';
-      errors.push(`Security configuration: ${message}`);
-    }
+    // Skip security configuration check during validation
+    // It will be initialized properly in appInitializer.initializeCoreServices()
 
     // Validate LLM configuration through centralized system
     try {

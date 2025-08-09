@@ -212,9 +212,8 @@ export class RDDEngine {
   private async initializeCentralizedConfig(): Promise<void> {
     try {
       // Dynamic import to avoid circular dependencies
-      const { ConfigLoader } = await import('../utils/config-loader.js');
-      const configLoader = ConfigLoader.getInstance();
-      const vibeConfig = await configLoader.getConfig();
+      const { getVibeTaskManagerConfig } = await import('../utils/config-loader.js');
+      const vibeConfig = await getVibeTaskManagerConfig();
       
       if (vibeConfig?.taskManager?.rddConfig) {
         // Apply centralized config while preserving any explicitly provided config

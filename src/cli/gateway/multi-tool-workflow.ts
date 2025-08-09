@@ -305,7 +305,7 @@ export class MultiToolWorkflowEngine {
   ): Promise<MultiToolWorkflowResult> {
     const toolsUsed: string[] = [];
     const crossToolContext: Record<string, unknown> = { ...params };
-    let lastResult: any = null;
+    let lastResult: unknown = null;
 
     for (let i = 0; i < pattern.tools.length; i++) {
       const toolName = pattern.tools[i];
@@ -374,7 +374,7 @@ export class MultiToolWorkflowEngine {
     return {
       success: true,
       message: 'Sequential workflow completed successfully',
-      outputs: lastResult,
+      outputs: lastResult as Record<string, unknown> | undefined,
       error: undefined,
       triggeredWorkflows: ['sequential'],
       parallelExecutions: 0,
@@ -391,7 +391,7 @@ export class MultiToolWorkflowEngine {
     params: Record<string, unknown>,
     context: UnifiedCommandContext
   ): Promise<MultiToolWorkflowResult> {
-    const toolPromises: Promise<{ tool: string; result: any; error?: string }>[] = [];
+    const toolPromises: Promise<{ tool: string; result: unknown; error?: string }>[] = [];
 
     // Start all tools in parallel
     for (const toolName of pattern.tools) {
@@ -411,7 +411,7 @@ export class MultiToolWorkflowEngine {
       const toolsUsed: string[] = [];
       const crossToolContext: Record<string, unknown> = { ...params };
       const errors: string[] = [];
-      let combinedResult: any = {};
+      const combinedResult: Record<string, unknown> = {};
 
       for (const { tool, result, error } of results) {
         toolsUsed.push(tool);
@@ -479,7 +479,7 @@ export class MultiToolWorkflowEngine {
     toolName: string,
     params: Record<string, unknown>,
     context: UnifiedCommandContext
-  ): Promise<{ tool: string; result: any; error?: string }> {
+  ): Promise<{ tool: string; result: unknown; error?: string }> {
     try {
       const executionContext: ToolExecutionContext = {
         sessionId: context.sessionId,
@@ -508,8 +508,8 @@ export class MultiToolWorkflowEngine {
   private async prepareToolParams(
     toolName: string,
     crossToolContext: Record<string, unknown>,
-    previousResult: any,
-    context: UnifiedCommandContext
+    _previousResult: unknown,
+    _context: UnifiedCommandContext
   ): Promise<Record<string, unknown>> {
     const baseParams = { ...crossToolContext };
 
@@ -550,7 +550,7 @@ export class MultiToolWorkflowEngine {
   /**
    * Extract reusable data from tool results
    */
-  private extractReusableData(toolName: string, result: any): Record<string, unknown> {
+  private extractReusableData(toolName: string, result: unknown): Record<string, unknown> {
     if (!result || typeof result !== 'object') {
       return {};
     }
@@ -568,19 +568,20 @@ export class MultiToolWorkflowEngine {
     }
 
     // Tool-specific extractions
+    const resultObj = result as Record<string, unknown>;
     switch (toolName) {
       case 'research-manager':
-        extracted.research_topic = result.topic || result.query;
+        extracted.research_topic = resultObj.topic || resultObj.query;
         break;
       
       case 'prd-generator':
-        extracted.product_name = result.product_name;
-        extracted.feature_list = result.features;
+        extracted.product_name = resultObj.product_name;
+        extracted.feature_list = resultObj.features;
         break;
       
       case 'map-codebase':
-        extracted.project_structure = result.structure;
-        extracted.main_files = result.important_files;
+        extracted.project_structure = resultObj.structure;
+        extracted.main_files = resultObj.important_files;
         break;
     }
 
@@ -592,7 +593,7 @@ export class MultiToolWorkflowEngine {
    */
   private async detectCompoundRequest(
     input: string,
-    primaryTool: string
+    _primaryTool: string
   ): Promise<WorkflowDetection> {
     const compoundIndicators = [
       'and then', 'followed by', 'after that', 'also', 'plus',
@@ -641,7 +642,7 @@ export class MultiToolWorkflowEngine {
   private async detectSequentialOpportunity(
     selectedTool: string,
     context: UnifiedCommandContext,
-    params: Record<string, unknown>
+    _params: Record<string, unknown>
   ): Promise<WorkflowDetection> {
     // Check tool history for patterns that suggest sequential workflows
     const recentTools = context.toolHistory.slice(-3).map(h => h.tool);
@@ -682,7 +683,7 @@ export class MultiToolWorkflowEngine {
   private async calculateToolCompatibility(
     toolName: string,
     workflowTools: string[],
-    context: UnifiedCommandContext
+    _context: UnifiedCommandContext
   ): Promise<{
     score: number;
     suggestions: string[];
@@ -729,7 +730,7 @@ export class MultiToolWorkflowEngine {
   private async generateNextSteps(
     workflowName: string,
     currentTool: string,
-    params: Record<string, unknown>
+    _params: Record<string, unknown>
   ): Promise<string[]> {
     const pattern = this.workflowPatterns[workflowName as keyof typeof this.workflowPatterns];
     if (!pattern) return [];

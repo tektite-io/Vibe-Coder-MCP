@@ -2,6 +2,7 @@ import axios, { AxiosError } from 'axios';
 import https from 'https';
 import { OpenRouterConfig } from '../types/workflow.js';
 import logger from '../logger.js';
+import { z } from 'zod';
 import { sequentialThoughtSchema, SequentialThought as ZodSequentialThought } from '../types/sequentialThought.js';
 // Removed ValidationIssue from import as it's no longer exported/used here
 import { ApiError, ParsingError, ValidationError, AppError, FallbackError } from '../utils/errors.js';
@@ -317,7 +318,7 @@ export async function getNextThought( // Added export back
         // --- End Cleaning ---
 
         let parsedContent: unknown; // Keep this one
-        let validationResult: Zod.SafeParseReturnType<unknown, ZodSequentialThought>; // Define type for validation result
+        let validationResult: z.SafeParseReturnType<unknown, ZodSequentialThought>; // Define type for validation result
 
         try {
           // Attempt to parse the potentially cleaned content

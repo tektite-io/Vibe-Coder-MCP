@@ -113,7 +113,7 @@ export class UnifiedIntentRegistry {
   async recognizeIntentWithToolSelection(
     input: string,
     context: UnifiedCommandContext,
-    config: OpenRouterConfig
+    _config: OpenRouterConfig
   ): Promise<IntentWithToolSelection | null> {
     await this.initialize();
 
@@ -491,10 +491,10 @@ export class UnifiedIntentRegistry {
   private async extractEntitiesForTool(
     toolName: string,
     input: string,
-    context: UnifiedCommandContext
+    _context: UnifiedCommandContext
   ): Promise<Entity[]> {
     const entities: Entity[] = [];
-    const normalizedInput = input.toLowerCase();
+    // const normalizedInput = input.toLowerCase();
 
     // Common entity extraction patterns
     const patterns = {

@@ -28,7 +28,11 @@ npm install -g vibe-coder-mcp
 
 ### Option 1: Run with npx (No Installation Required)
 ```bash
+# Start MCP server
 npx vibe-coder-mcp
+
+# Or use the CLI directly
+npx vibe-coder-mcp "research React best practices"
 ```
 
 ### Option 2: Install Globally
@@ -36,8 +40,10 @@ npx vibe-coder-mcp
 # Install globally
 npm install -g vibe-coder-mcp
 
-# Run the server
-vibe-coder-mcp
+# Use the unified 'vibe' command
+vibe                                    # Start MCP server
+vibe "create a PRD for a todo app"     # CLI mode
+vibe --setup                           # Interactive setup
 ```
 
 ### Option 3: Install Locally in Your Project
@@ -45,22 +51,51 @@ vibe-coder-mcp
 # Install in your project
 npm install vibe-coder-mcp
 
-# Run via npm scripts or npx
+# Run via npx
 npx vibe-coder-mcp
+npx vibe-coder-mcp "map the codebase structure"
 ```
 
 ### Command Line Options
+
+#### MCP Server Mode
 ```bash
-# Default stdio transport (for MCP clients)
+# Default stdio transport (for MCP clients like Claude Desktop)
 vibe-coder-mcp
 
 # Server-Sent Events transport (for web clients)
 vibe-coder-mcp --sse
 ```
 
-**After running, you'll need to:**
-1. Set up your OpenRouter API key (see [Environment Configuration](#environment-configuration))
-2. Configure your MCP client (see [MCP Client Setup](#mcp-client-setup))
+#### CLI Mode (New!)
+```bash
+# Interactive setup wizard
+vibe-coder-mcp --setup
+
+# Natural language commands
+vibe-coder-mcp "research modern JavaScript frameworks"
+vibe-coder-mcp "create a PRD for an e-commerce platform"
+vibe-coder-mcp "map the codebase structure" --json
+
+# Interactive REPL mode
+vibe-coder-mcp --interactive
+
+# Help and options
+vibe-coder-mcp --help
+```
+
+#### Global Installation Benefits
+After global installation (`npm install -g vibe-coder-mcp`), use the shorter `vibe` command:
+```bash
+vibe                                    # Start MCP server
+vibe "your request here"               # CLI mode
+vibe --setup                           # Setup wizard
+vibe --help                            # Show all options
+```
+
+**First-time setup:**
+- The setup wizard runs automatically on first use
+- Or run `vibe --setup` manually to configure your environment
 
 ## 🔧 Environment Configuration
 
@@ -144,6 +179,79 @@ Add this to your `claude_desktop_config.json`:
     }
   }
 }
+```
+
+## 💻 CLI Usage Guide
+
+Vibe Coder now includes a powerful command-line interface for direct interaction with all tools.
+
+### Interactive Setup Wizard
+```bash
+# First-time setup (runs automatically on first use)
+vibe --setup
+
+# Reconfigure existing installation
+vibe --reconfigure
+```
+
+### CLI Command Examples
+
+#### Research & Analysis
+```bash
+vibe "research modern React patterns and best practices"
+vibe "analyze current trends in microservices architecture"
+vibe "research security best practices for Node.js APIs"
+```
+
+#### Project Planning
+```bash
+vibe "create a PRD for an e-commerce platform with user authentication"
+vibe "generate user stories for authentication system"
+vibe "create development tasks from user stories"
+```
+
+#### Code Analysis & Generation
+```bash
+vibe "map the codebase structure"
+vibe "create context for implementing authentication"
+vibe "generate a fullstack starter kit for e-commerce"
+vibe "create coding standards for TypeScript projects"
+```
+
+#### Task Management
+```bash
+vibe "create a new project for building a todo app"
+vibe "list all my projects"
+vibe "show project status for MyApp"
+vibe "create high priority task for implementing OAuth"
+```
+
+### CLI Options
+```bash
+# Output formats
+vibe "research React hooks" --json
+vibe "create PRD for todo app" --yaml
+
+# Verbosity control
+vibe "create project MyApp" --verbose
+vibe "research Node.js patterns" --quiet
+
+# Interactive mode
+vibe --interactive
+```
+
+### File Organization
+Generated files are automatically organized in `VibeCoderOutput/`:
+```
+VibeCoderOutput/
+├── research/                    # Research reports
+├── prd-generator/              # Product requirements
+├── user-stories-generator/     # User stories
+├── task-list-generator/        # Development tasks
+├── fullstack-starter-kit-generator/  # Project templates
+├── map-codebase/              # Code analysis
+├── vibe-task-manager/         # Task management data
+└── workflow-runner/           # Workflow outputs
 ```
 
 ---
@@ -979,6 +1087,32 @@ For optimal performance with AI assistants and MCP clients, use the comprehensiv
 
 ## Usage Examples
 
+### Via CLI (Direct Command Line)
+```bash
+# Research and analysis
+vibe "research modern JavaScript frameworks"
+vibe "create development rules for a mobile banking application"
+
+# Project planning
+vibe "generate a PRD for a task management application"
+vibe "generate user stories for an e-commerce website"
+vibe "create a task list for a weather app based on user stories"
+
+# Code generation and analysis
+vibe "create a starter kit for a React/Node.js blog application with user authentication"
+vibe "map the codebase structure" --json
+vibe "curate context for adding authentication to my React app"
+
+# Task management
+vibe "create a new project for building a todo app"
+vibe "list all my projects"
+vibe "show status of my React project"
+
+# Workflow automation
+vibe "run workflow newProjectSetup with input {\"projectName\": \"my-new-app\"}"
+```
+
+### Via MCP Client (AI Assistant Integration)
 Interact with the tools via your connected AI assistant:
 
 *   **Research:** `Research modern JavaScript frameworks`

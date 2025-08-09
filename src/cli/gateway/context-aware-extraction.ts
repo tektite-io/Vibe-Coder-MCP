@@ -12,9 +12,12 @@
  */
 
 import { extractProjectFromContext } from '../../tools/vibe-task-manager/utils/context-extractor.js';
+import { CommandExecutionContext } from '../../tools/vibe-task-manager/nl/command-handlers.js';
 import { RecognizedIntent, Entity } from '../../tools/vibe-task-manager/types/nl.js';
 import { UnifiedCommandContext } from './unified-command-gateway.js';
 import { ToolCandidate } from './intent-registry.js';
+import { OpenRouterConfig } from '../../types/workflow.js';
+import { VibeTaskManagerConfig } from '../../tools/vibe-task-manager/utils/config-loader.js';
 import logger from '../../logger.js';
 
 /**
@@ -401,13 +404,13 @@ export class ContextAwareParameterExtractor {
     context: UnifiedCommandContext
   ): Promise<ParameterExtractionResult> {
     const parameters: Record<string, unknown> = {};
-    let confidence = 0.9; // High confidence for context data
+    const confidence = 0.9; // High confidence for context data
 
     try {
       // Map context fields to parameters if specified
       if (spec.contextFields) {
         for (const [contextField, paramName] of Object.entries(spec.contextFields)) {
-          const contextValue = (context as any)[contextField];
+          const contextValue = (context as unknown as Record<string, unknown>)[contextField];
           if (contextValue) {
             parameters[paramName] = contextValue;
           }
@@ -419,8 +422,10 @@ export class ContextAwareParameterExtractor {
         try {
           const projectContext = await extractProjectFromContext({
             sessionId: context.sessionId,
-            currentProject: context.currentProject
-          } as any);
+            currentProject: context.currentProject,
+            config: {} as OpenRouterConfig,
+            taskManagerConfig: {} as VibeTaskManagerConfig
+          } as CommandExecutionContext);
           
           if (projectContext.confidence > 0.7) {
             parameters.path = process.cwd();
@@ -501,7 +506,7 @@ export class ContextAwareParameterExtractor {
   ): Promise<ParameterExtractionResult> {
     const parameters: Record<string, unknown> = {};
     const suggestions: string[] = [];
-    let confidence = 0.7;
+    const confidence = 0.7;
 
     // Tool-specific pattern extraction
     switch (toolName) {
@@ -542,7 +547,7 @@ export class ContextAwareParameterExtractor {
   ): Promise<ParameterExtractionResult> {
     const parameters: Record<string, unknown> = {};
     const suggestions: string[] = [];
-    let confidence = 0.6; // Lower confidence for inferred parameters
+    const confidence = 0.6; // Lower confidence for inferred parameters
 
     // Infer missing required parameters based on context and input
     for (const param of spec.required) {
@@ -789,11 +794,11 @@ export class ContextAwareParameterExtractor {
     param: string,
     input: string,
     context: UnifiedCommandContext,
-    spec: ToolParameterSpec
+    _spec: ToolParameterSpec
   ): Promise<{ value: unknown; suggestion: string } | null> {
     // Parameter-specific inference logic
     switch (param) {
-      case 'topic':
+      case 'topic': {
         // Infer research topic from input
         const topicMatch = input.match(/(?:research|about|regarding|on)\s+(.+?)(?:\s|$)/i);
         if (topicMatch) {
@@ -803,8 +808,9 @@ export class ContextAwareParameterExtractor {
           };
         }
         break;
+      }
         
-      case 'feature':
+      case 'feature': {
         // Infer feature from input
         const featureMatch = input.match(/(?:feature|functionality|capability)\s+(.+?)(?:\s|$)/i);
         if (featureMatch) {
@@ -814,6 +820,7 @@ export class ContextAwareParameterExtractor {
           };
         }
         break;
+      }
         
       case 'product':
         // Use current project as product if available

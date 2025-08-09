@@ -1,0 +1,202 @@
+name: Post-Publication Monitoring
+
+on:
+  schedule:
+    # Run every 6 hours to monitor package health
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '20.x'
+
+jobs:
+  # Monitor npm package health
+  package-health:
+    name: Package Health Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check package availability
+        run: |
+          PACKAGE_INFO=$(npm view vibe-coder-mcp --json)
+          echo "Package info: $PACKAGE_INFO"
+          
+          # Check if package is available
+          if [ -z "$PACKAGE_INFO" ]; then
+            echo "❌ Package not found on npm registry"
+            exit 1
+          fi
+          
+          # Extract version and download stats
+          VERSION=$(echo $PACKAGE_INFO | jq -r '.version')
+          DOWNLOADS=$(npm view vibe-coder-mcp --json | jq -r '.downloads // "N/A"')
+          
+          echo "✅ Package vibe-coder-mcp@$VERSION is available"
+          echo "📊 Downloads: $DOWNLOADS"
+
+      - name: Test installation
+        run: |
+          # Test global installation
+          npm install -g vibe-coder-mcp@latest
+          
+          # Verify CLI works
+          vibe --version
+          vibe --help
+          
+          # Test basic functionality
+          timeout 5s vibe || [ $? -eq 124 ]
+          
+          echo "✅ Package installation and basic functionality verified"
+
+      - name: Check for security vulnerabilities
+        run: |
+          npm audit --audit-level=moderate vibe-coder-mcp || {
+            echo "⚠️ Security vulnerabilities detected in published package"
+            exit 1
+          }
+
+  # Monitor download statistics
+  download-metrics:
+    name: Download Metrics
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch download statistics
+        run: |
+          # Get download stats from npm
+          STATS=$(curl -s "https://api.npmjs.org/downloads/point/last-week/vibe-coder-mcp")
+          WEEKLY_DOWNLOADS=$(echo $STATS | jq -r '.downloads // 0')
+          
+          echo "📈 Weekly downloads: $WEEKLY_DOWNLOADS"
+          
+          # Store metrics (could be sent to monitoring service)
+          echo "WEEKLY_DOWNLOADS=$WEEKLY_DOWNLOADS" >> $GITHUB_ENV
+
+      - name: Check download trends
+        run: |
+          # Get historical data
+          LAST_MONTH=$(curl -s "https://api.npmjs.org/downloads/point/last-month/vibe-coder-mcp")
+          MONTHLY_DOWNLOADS=$(echo $LAST_MONTH | jq -r '.downloads // 0')
+          
+          echo "📊 Monthly downloads: $MONTHLY_DOWNLOADS"
+          
+          # Alert if downloads drop significantly
+          if [ "$MONTHLY_DOWNLOADS" -lt 10 ]; then
+            echo "⚠️ Low download count detected"
+          fi
+
+  # Monitor package dependencies
+  dependency-health:
+    name: Dependency Health
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Check for outdated dependencies
+        run: |
+          npm outdated || {
+            echo "⚠️ Outdated dependencies detected"
+            npm outdated --json > outdated.json
+            cat outdated.json
+          }
+
+      - name: Security audit
+        run: |
+          npm audit --audit-level=moderate || {
+            echo "🚨 Security vulnerabilities in dependencies"
+            npm audit --json > audit.json
+            cat audit.json
+            exit 1
+          }
+
+  # Monitor GitHub repository health
+  repository-health:
+    name: Repository Health
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check repository metrics
+        run: |
+          REPO_INFO=$(gh api repos/${{ github.repository }})
+          STARS=$(echo $REPO_INFO | jq -r '.stargazers_count')
+          FORKS=$(echo $REPO_INFO | jq -r '.forks_count')
+          ISSUES=$(echo $REPO_INFO | jq -r '.open_issues_count')
+          
+          echo "⭐ Stars: $STARS"
+          echo "🍴 Forks: $FORKS"
+          echo "🐛 Open Issues: $ISSUES"
+          
+          # Alert if too many open issues
+          if [ "$ISSUES" -gt 20 ]; then
+            echo "⚠️ High number of open issues: $ISSUES"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check recent activity
+        run: |
+          # Check for recent commits
+          RECENT_COMMITS=$(gh api repos/${{ github.repository }}/commits --jq 'length')
+          echo "📝 Recent commits: $RECENT_COMMITS"
+          
+          # Check for recent releases
+          RECENT_RELEASES=$(gh api repos/${{ github.repository }}/releases --jq 'length')
+          echo "🚀 Total releases: $RECENT_RELEASES"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Performance monitoring
+  performance-check:
+    name: Performance Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install and benchmark
+        run: |
+          # Install package
+          npm install -g vibe-coder-mcp@latest
+          
+          # Basic performance test
+          echo "Testing CLI startup time..."
+          time vibe --version
+          
+          # Memory usage test
+          echo "Testing memory usage..."
+          /usr/bin/time -v vibe --help 2>&1 | grep "Maximum resident set size"
+
+  # Alert on failures
+  alert-on-failure:
+    name: Alert on Monitoring Failure
+    runs-on: ubuntu-latest
+    needs: [package-health, download-metrics, dependency-health, repository-health, performance-check]
+    if: failure()
+    steps:
+      - name: Create issue on failure
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = '🚨 Package Monitoring Alert';
+            const body = `
+            ## Monitoring Alert
+            
+            One or more monitoring checks have failed for vibe-coder-mcp.
+            
+            **Workflow Run:** ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            **Timestamp:** ${new Date().toISOString()}
+            
+            Please investigate the failed checks and take appropriate action.
+            
+            ### Failed Jobs:
+            ${{ toJSON(needs) }}
+            `;
+            
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['monitoring', 'alert', 'bug']
+            });
