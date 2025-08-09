@@ -5,8 +5,9 @@
   "main": "build/index.js",
   "type": "module",
   "scripts": {
-    "build": "tsc && npm run copy-assets",
+    "build": "tsc && npm run copy-assets && npm run fix-permissions",
     "copy-assets": "mkdir -p build/tools/vibe-task-manager && cp -r src/tools/vibe-task-manager/prompts build/tools/vibe-task-manager/",
+    "fix-permissions": "chmod +x build/unified-cli.js",
     "start": "cross-env NODE_ENV=production LOG_LEVEL=info node build/index.js",
     "start:sse": "cross-env NODE_ENV=production LOG_LEVEL=info node build/index.js --sse",
     "dev": "tsc -w & cross-env NODE_ENV=development nodemon build/index.js | pino-pretty",
@@ -54,7 +55,6 @@
     "package:check": "npm pack --dry-run",
     "package:size": "npm pack --dry-run | tail -1",
     "prepack": "npm run clean && npm run build && npm run type-check",
-    "postpack": "npm run clean",
     "prepare": "npm run build",
     "prepublishOnly": "npm run security:audit && npm run lint",
     "validate:pre-publish": "./scripts/pre-publish-validation.sh",
