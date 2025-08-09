@@ -1,0 +1,22 @@
+{
+  "llm_mapping": {
+    "default_generation": "google/gemini-2.5-flash-preview-05-20",
+    "task_decomposition": "google/gemini-2.5-flash-preview-05-20",
+    "intent_recognition": "google/gemini-2.5-flash-preview-05-20",
+    
+    "research_query": "perplexity/sonar",
+    "sequential_thought_generation": "google/gemini-2.5-flash-preview-05-20",
+    "context_curator_intent_analysis": "google/gemini-2.5-flash-preview-05-20",
+    "context_curator_relevance_ranking": "google/gemini-2.5-flash-preview-05-20",
+    "agent_coordination": "google/gemini-2.5-flash-preview-05-20",
+    "atomic_task_detection": "google/gemini-2.5-flash-preview-05-20",
+    "task_refinement": "google/gemini-2.5-flash-preview-05-20",
+    "dependency_graph_analysis": "google/gemini-2.5-flash-preview-05-20",
+    
+    "code_generation": "google/gemini-2.5-flash-preview-05-20",
+    "code_review": "google/gemini-2.5-flash-preview-05-20",
+    "documentation_generation": "google/gemini-2.5-flash-preview-05-20",
+    "test_generation": "google/gemini-2.5-flash-preview-05-20",
+    "error_analysis": "google/gemini-2.5-flash-preview-05-20"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "tools": {
+    "vibe-task-manager": {
+      "description": "AI-native task management with RDD methodology",
+      "use_cases": [
+        "break down {task} into subtasks",
+        "create atomic tasks for {project}",
+        "decompose {epic} into manageable pieces"
+      ],
+      "input_patterns": [
+        "task: {description}",
+        "epic: {description}",
+        "project: {description}"
+      ],
+      "enabled": true,
+      "timeout": 300000
+    },
+    "research-manager": {
+      "description": "Deep research using Perplexity Sonar",
+      "use_cases": [
+        "research {topic}",
+        "find information about {subject}",
+        "investigate {technology}"
+      ],
+      "input_patterns": [
+        "research: {query}",
+        "investigate: {topic}",
+        "explore: {subject}"
+      ],
+      "enabled": true,
+      "timeout": 120000
+    },
+    "code-map-generator": {
+      "description": "Advanced codebase analysis and mapping",
+      "use_cases": [
+        "analyze {codebase}",
+        "map project structure",
+        "generate code documentation"
+      ],
+      "input_patterns": [
+        "analyze: {directory}",
+        "map: {project}",
+        "document: {codebase}"
+      ],
+      "enabled": true,
+      "timeout": 180000
+    }
+  },
+  "version": "0.3.0",
+  "created_at": "{{timestamp}}",
+  "last_modified": "{{timestamp}}"
+}
