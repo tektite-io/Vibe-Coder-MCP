@@ -2,6 +2,7 @@
 /**
  * Interactive Setup Wizard for Vibe Coder MCP
  * Guides users through first-time configuration
+ * Integrates UserConfigManager and ConfigValidator for robust setup
  */
 
 import inquirer from 'inquirer';
@@ -13,6 +14,8 @@ import ora from 'ora';
 import { fileURLToPath } from 'url';
 import logger from './logger.js';
 import { OpenRouterConfigManager } from './utils/openrouter-config-manager.js';
+import { UserConfigManager } from './utils/user-config-manager.js';
+import { ConfigValidator } from './utils/config-validator.js';
 
 // Get project root directory
 const __filename = fileURLToPath(import.meta.url);
@@ -47,24 +50,77 @@ interface SetupAnswers {
 
 // Type-safe inquirer wrapper for strict typing compliance
 
+// ASCII art and messages from prompts
+const ASCII_ART = `
+██╗   ██╗██╗██████╗ ███████╗
+██║   ██║██║██╔══██╗██╔════╝
+██║   ██║██║██████╔╝█████╗  
+╚██╗ ██╔╝██║██╔══██╗██╔══╝  
+ ╚████╔╝ ██║██████╔╝███████╗
+  ╚═══╝  ╚═╝╚═════╝ ╚══════╝
+     Coder MCP v0.3.0
+`;
+
+const WELCOME_MESSAGE = `
+Welcome to Vibe Coder MCP! 🎆
+
+This setup wizard will help you configure:
+• OpenRouter API for AI-powered development
+• Security boundaries for file access
+• Output directories for generated content
+
+Let's get started! This will only take a minute.
+`;
+
 export class SetupWizard {
   private envPath: string;
   private configPath: string;
+  private userConfigManager: UserConfigManager;
+  private configValidator: ConfigValidator;
+  private isInteractive: boolean;
 
   constructor() {
     this.envPath = path.join(projectRoot, '.env');
     this.configPath = path.join(projectRoot, '.vibe-config.json');
+    this.userConfigManager = UserConfigManager.getInstance();
+    this.configValidator = ConfigValidator.getInstance();
+    this.isInteractive = process.stdin.isTTY && !process.env.CI;
   }
 
   /**
-   * Check if this is the first run (no .env file exists)
+   * Check if this is the first run using multiple indicators
    */
   async isFirstRun(): Promise<boolean> {
-    const envExists = await fs.pathExists(this.envPath);
-    const configValid = await this.isConfigValid();
+    // Check multiple conditions for robust detection
+    const checks = [
+      // 1. Check for API key in environment
+      !process.env.OPENROUTER_API_KEY,
+      
+      // 2. Check for .env file in project
+      !await fs.pathExists(this.envPath),
+      
+      // 3. Check for llm_config.json
+      !await fs.pathExists(path.join(projectRoot, 'llm_config.json')),
+      
+      // 4. Check for user config directory
+      !await fs.pathExists(this.userConfigManager.getUserConfigDir())
+    ];
     
-    // If .env doesn't exist and config is not valid, it's first run
-    return !envExists && !configValid;
+    // If any check fails, consider it first run
+    const isFirstRun = checks.some(check => check);
+    
+    if (isFirstRun) {
+      logger.info({
+        checks: {
+          hasApiKey: !checks[0],
+          hasEnvFile: !checks[1],
+          hasLlmConfig: !checks[2],
+          hasUserConfig: !checks[3]
+        }
+      }, 'First run detected');
+    }
+    
+    return isFirstRun;
   }
 
   /**
@@ -83,42 +139,43 @@ export class SetupWizard {
   }
 
   /**
-   * Display welcome message
+   * Display welcome message with enhanced visuals
    */
   private displayWelcome(): void {
     console.clear();
-    const welcomeMessage = chalk.cyan.bold('🚀 Welcome to Vibe Coder MCP!');
-    const subMessage = chalk.gray('Your AI-powered development assistant');
-    
-    console.log(boxen(
-      `${welcomeMessage}\n\n${subMessage}`,
-      {
-        padding: 1,
-        margin: 1,
-        borderStyle: 'round',
-        borderColor: 'cyan',
-        textAlignment: 'center'
-      }
-    ));
-
-    console.log(chalk.yellow('\n📋 First-time Setup Wizard\n'));
-    console.log(chalk.gray('This wizard will help you configure Vibe Coder MCP.\n'));
+    console.log(chalk.cyan(ASCII_ART));
+    console.log(WELCOME_MESSAGE);
   }
 
   /**
-   * Validate OpenRouter API key format
+   * Validate OpenRouter API key format and test it
    */
   private validateApiKey(apiKey: string): boolean | string {
     if (!apiKey || apiKey.trim() === '') {
       return 'API key is required';
     }
-    if (apiKey.length < 20) {
-      return 'API key seems too short. Please check and try again';
-    }
-    if (!apiKey.startsWith('sk-')) {
-      return chalk.yellow('⚠ API key usually starts with "sk-". Continue anyway? (yes)');
+    if (!apiKey.startsWith('sk-or-')) {
+      return 'Invalid API key format (should start with sk-or-)';
     }
     return true;
+  }
+
+  /**
+   * Test API key by making a request to OpenRouter
+   */
+  private async testApiKeyLive(apiKey: string): Promise<boolean> {
+    try {
+      const response = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      return response.ok;
+    } catch (error) {
+      logger.error({ err: error }, 'API key validation failed');
+      return false;
+    }
   }
 
   /**
@@ -283,21 +340,19 @@ export class SetupWizard {
   }
 
   /**
-   * Test API key by making a simple request
+   * Test API key with visual feedback
    */
   private async testApiKey(apiKey: string): Promise<boolean> {
-    const spinner = ora('Testing API key...').start();
+    const spinner = ora('Validating API key...').start();
     
     try {
-      // Simple test - just check if the key format is valid
-      // In a real implementation, you might make a test API call
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
+      const isValid = await this.testApiKeyLive(apiKey);
       
-      if (apiKey && apiKey.length > 20) {
+      if (isValid) {
         spinner.succeed('API key validated successfully!');
         return true;
       } else {
-        spinner.fail('API key validation failed');
+        spinner.fail('Invalid API key');
         return false;
       }
     } catch (error) {
@@ -348,10 +403,100 @@ export class SetupWizard {
   }
 
   /**
+   * Handle non-interactive setup for CI/CD environments
+   */
+  private async runNonInteractiveSetup(): Promise<boolean> {
+    const hasApiKey = !!process.env.OPENROUTER_API_KEY;
+    
+    if (!hasApiKey) {
+      console.error(`
+ERROR: Non-interactive setup requires OPENROUTER_API_KEY
+
+To run in non-interactive mode (CI/CD environments), set:
+  export OPENROUTER_API_KEY=your_api_key
+
+Or run interactively with a TTY terminal.
+`);
+      return false;
+    }
+    
+    try {
+      // Ensure user config directory exists
+      await this.userConfigManager.ensureUserConfigDir();
+      
+      // Generate config from environment
+      const config: SetupConfig = {
+        OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY || '',
+        VIBE_CODER_OUTPUT_DIR: process.env.VIBE_CODER_OUTPUT_DIR || './VibeCoderOutput',
+        CODE_MAP_ALLOWED_DIR: process.env.CODE_MAP_ALLOWED_DIR || '.',
+        VIBE_TASK_MANAGER_READ_DIR: process.env.VIBE_TASK_MANAGER_READ_DIR || '.',
+        VIBE_TASK_MANAGER_SECURITY_MODE: (process.env.VIBE_TASK_MANAGER_SECURITY_MODE as 'strict' | 'permissive') || 'strict',
+        OPENROUTER_BASE_URL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
+        GEMINI_MODEL: process.env.GEMINI_MODEL || 'google/gemini-2.5-flash-preview-05-20',
+        PERPLEXITY_MODEL: process.env.PERPLEXITY_MODEL || 'perplexity/sonar',
+        configureDirs: false,
+        configureAdvanced: false
+      };
+      
+      // Save configuration
+      await this.saveEnhancedConfiguration(config);
+      
+      logger.info('Auto-setup completed successfully');
+      return true;
+      
+    } catch (error) {
+      logger.error({ err: error }, 'Auto-setup failed');
+      return false;
+    }
+  }
+
+  /**
+   * Save configuration with UserConfigManager integration
+   */
+  private async saveEnhancedConfiguration(config: SetupConfig): Promise<void> {
+    // Ensure user config directory exists
+    await this.userConfigManager.ensureUserConfigDir();
+    
+    // Save to multiple locations for compatibility
+    const locations = [
+      // 1. User config directory (primary)
+      {
+        dir: path.join(this.userConfigManager.getUserConfigDir(), 'configs'),
+        priority: 1
+      },
+      // 2. Project directory (backward compatibility)
+      {
+        dir: projectRoot,
+        priority: 2
+      }
+    ];
+    
+    for (const location of locations) {
+      try {
+        // Create .env file
+        await this.createEnvFile(config);
+        
+        // Copy template files if they don't exist
+        await this.userConfigManager.copyDefaultConfigs();
+        
+      } catch (error) {
+        logger.warn({ err: error, location }, 'Failed to save config to location');
+      }
+    }
+  }
+
+  /**
    * Run the setup wizard
    */
   async run(): Promise<boolean> {
     try {
+      // Check for non-interactive environment
+      if (!this.isInteractive) {
+        console.log(chalk.yellow('Non-interactive environment detected.'));
+        console.log(chalk.gray('Attempting auto-setup from environment variables...'));
+        return await this.runNonInteractiveSetup();
+      }
+      
       this.displayWelcome();
       
       // Check if reconfiguration is requested
@@ -385,8 +530,7 @@ export class SetupWizard {
       
       // Create .env file
       const spinner = ora('Creating configuration files...').start();
-      await this.createEnvFile(config);
-      await this.saveConfigJson(config);
+      await this.saveEnhancedConfiguration(config);
       spinner.succeed('Configuration files created!');
       
       // Display success message
