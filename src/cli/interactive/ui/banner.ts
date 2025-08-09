@@ -6,6 +6,25 @@
 import boxen from 'boxen';
 import figlet from 'figlet';
 import { themeManager } from '../themes.js';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import path from 'path';
+
+// Get package version - following established pattern from embeddingStore.ts
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+function getPackageVersion(): string {
+  try {
+    const packagePath = path.resolve(__dirname, '../../../../package.json');
+    const packageContent = readFileSync(packagePath, 'utf-8');
+    const packageJson = JSON.parse(packageContent);
+    return packageJson.version || '0.0.0';
+  } catch {
+    // Fallback version if package.json can't be read
+    return '0.0.0';
+  }
+}
 
 /**
  * Get ASCII art banner
@@ -29,9 +48,10 @@ export function getAsciiBanner(): string {
 export function getBanner(): string {
   const asciiArt = getAsciiBanner();
   const colors = themeManager.getColors();
+  const version = getPackageVersion();
   
   const content = colors.primary(asciiArt) + '\n\n' +
-    colors.textBright('AI Development Assistant v1.0.0') + '\n' +
+    colors.textBright(`AI Development Assistant v${version}`) + '\n' +
     colors.textMuted('Powered by OpenRouter & Claude') + '\n\n' +
     colors.warning('Quick Commands:') + '\n' +
     colors.success('  /help   ') + colors.textMuted('Show available commands') + '\n' +

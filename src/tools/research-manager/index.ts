@@ -278,8 +278,8 @@ const researchInputSchemaShape = {
 
 // Tool definition for the research tool, using the raw shape
 const researchToolDefinition: ToolDefinition = {
-  name: "research", // Keep the original tool name
-  description: "Performs deep research on a given topic using Perplexity Sonar and enhances the result.",
+  name: "research-manager", // Align with mcp-config.json and hybrid-matcher expectations
+  description: "Performs comprehensive research on any technical topic including frameworks, libraries, packages, tools, and best practices using Perplexity Sonar.",
   inputSchema: researchInputSchemaShape, // Use the raw shape here
   executor: performResearch // Reference the adapted function
 };
