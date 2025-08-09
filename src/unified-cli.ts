@@ -28,7 +28,7 @@ const envPath = path.join(projectRoot, '.env');
 const args = process.argv.slice(2);
 
 // Detect mode based on arguments
-function detectMode(): 'server' | 'cli' | 'help' | 'setup' {
+function detectMode(): 'server' | 'cli' | 'help' | 'setup' | 'interactive' {
   // Check for special flags first
   if (args.includes('--help') || args.includes('-h')) {
     return 'help';
@@ -36,6 +36,11 @@ function detectMode(): 'server' | 'cli' | 'help' | 'setup' {
   
   if (args.includes('--setup') || args.includes('--reconfigure')) {
     return 'setup';
+  }
+  
+  // Check for interactive mode
+  if (args.includes('--interactive') || args.includes('-i')) {
+    return 'interactive';
   }
   
   // If no arguments or only server-related flags, start server
@@ -69,6 +74,7 @@ function displayHelp(): void {
   console.log(chalk.yellow('\n📋 Usage:\n'));
   
   console.log(chalk.green('  vibe                    ') + chalk.gray('Start MCP server (default)'));
+  console.log(chalk.green('  vibe --interactive      ') + chalk.gray('Start interactive CLI mode'));
   console.log(chalk.green('  vibe "your request"     ') + chalk.gray('Process natural language request'));
   console.log(chalk.green('  vibe --setup            ') + chalk.gray('Run setup wizard'));
   console.log(chalk.green('  vibe --help             ') + chalk.gray('Show this help message'));
@@ -174,6 +180,9 @@ async function main() {
       case 'cli':
         await runCLI();
         break;
+      case 'interactive':
+        await runInteractive();
+        break;
     }
     
   } catch (error) {
@@ -213,6 +222,19 @@ async function startServer() {
   } catch (error) {
     spinner.fail('Failed to start server');
     throw error;
+  }
+}
+
+// Run interactive CLI mode
+async function runInteractive() {
+  try {
+    // Start the interactive REPL
+    process.argv = [process.argv[0], process.argv[1], '--interactive'];
+    await import('./cli/index.js');
+  } catch (error) {
+    console.error(chalk.red('❌ Interactive CLI Error:'), error);
+    logger.error({ err: error }, 'Interactive CLI execution error');
+    process.exit(1);
   }
 }
 

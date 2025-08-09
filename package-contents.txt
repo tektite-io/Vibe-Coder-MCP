@@ -1,0 +1,41 @@
+
+> vibe-coder-mcp@0.2.0 prepack
+> npm run clean && npm run build && npm run type-check
+
+
+> vibe-coder-mcp@0.2.0 clean
+> rm -rf build
+
+
+> vibe-coder-mcp@0.2.0 build
+> tsc && npm run copy-assets
+
+
+> vibe-coder-mcp@0.2.0 copy-assets
+> mkdir -p build/tools/vibe-task-manager && cp -r src/tools/vibe-task-manager/prompts build/tools/vibe-task-manager/
+
+
+> vibe-coder-mcp@0.2.0 type-check
+> tsc --noEmit
+
+
+> vibe-coder-mcp@0.2.0 prepare
+> npm run build
+
+
+> vibe-coder-mcp@0.2.0 build
+> tsc && npm run copy-assets
+
+
+> vibe-coder-mcp@0.2.0 copy-assets
+> mkdir -p build/tools/vibe-task-manager && cp -r src/tools/vibe-task-manager/prompts build/tools/vibe-task-manager/
+
+
+> vibe-coder-mcp@0.2.0 postpack
+> npm run clean
+
+
+> vibe-coder-mcp@0.2.0 clean
+> rm -rf build
+
+vibe-coder-mcp-0.2.0.tgz
