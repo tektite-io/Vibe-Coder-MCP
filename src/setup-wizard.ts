@@ -22,6 +22,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..');
 
+// Get package version dynamically
+function getPackageVersion(): string {
+  try {
+    const packagePath = path.resolve(projectRoot, 'package.json');
+    const packageContent = fs.readFileSync(packagePath, 'utf-8');
+    const packageJson = JSON.parse(packageContent);
+    return packageJson.version || '0.0.0';
+  } catch {
+    // Fallback version if package.json can't be read
+    return '0.0.0';
+  }
+}
+
 interface SetupConfig {
   OPENROUTER_API_KEY: string;
   VIBE_CODER_OUTPUT_DIR: string;
@@ -51,14 +64,14 @@ interface SetupAnswers {
 // Type-safe inquirer wrapper for strict typing compliance
 
 // ASCII art and messages from prompts
-const ASCII_ART = `
+const getAsciiArt = (): string => `
 ██╗   ██╗██╗██████╗ ███████╗
 ██║   ██║██║██╔══██╗██╔════╝
 ██║   ██║██║██████╔╝█████╗  
 ╚██╗ ██╔╝██║██╔══██╗██╔══╝  
  ╚████╔╝ ██║██████╔╝███████╗
   ╚═══╝  ╚═╝╚═════╝ ╚══════╝
-     Coder MCP v0.3.0
+     Coder MCP v${getPackageVersion()}
 `;
 
 const WELCOME_MESSAGE = `
@@ -91,9 +104,22 @@ export class SetupWizard {
    * Check if this is the first run using multiple indicators
    */
   async isFirstRun(): Promise<boolean> {
+    // First, check if .env file exists and load it if not already loaded
+    // This ensures we don't miss existing configuration
+    if (await fs.pathExists(this.envPath) && !process.env.OPENROUTER_API_KEY) {
+      try {
+        // Load environment variables from .env file
+        const dotenv = await import('dotenv');
+        dotenv.config({ path: this.envPath });
+        logger.debug('Loaded .env file in isFirstRun check');
+      } catch (error) {
+        logger.warn({ err: error }, 'Failed to load .env in isFirstRun check');
+      }
+    }
+    
     // Check multiple conditions for robust detection
     const checks = [
-      // 1. Check for API key in environment
+      // 1. Check for API key in environment (after loading .env if it exists)
       !process.env.OPENROUTER_API_KEY,
       
       // 2. Check for .env file in project
@@ -143,7 +169,7 @@ export class SetupWizard {
    */
   private displayWelcome(): void {
     console.clear();
-    console.log(chalk.cyan(ASCII_ART));
+    console.log(chalk.cyan(getAsciiArt()));
     console.log(WELCOME_MESSAGE);
   }
 
