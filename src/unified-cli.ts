@@ -15,7 +15,8 @@ import chalk from 'chalk';
 import boxen from 'boxen';
 import ora from 'ora';
 import dotenv from 'dotenv';
-import { setupWizard } from './setup-wizard.js';
+import { createSetupWizard } from './setup-wizard.js';
+import { TransportContext } from './index-with-setup.js';
 import logger from './logger.js';
 
 // Get directory paths
@@ -129,16 +130,28 @@ async function main() {
   try {
     const mode = detectMode();
     
+    // Create CLI transport context for context-aware configuration
+    const cliTransportContext: TransportContext = {
+      sessionId: `cli-${Date.now()}`,
+      transportType: 'cli',
+      timestamp: Date.now(),
+      workingDirectory: process.cwd(), // User's current working directory
+      mcpClientConfig: undefined // Will be loaded by context-aware config manager
+    };
+
     // Load environment variables BEFORE checking first run
     // This ensures .env file is loaded so isFirstRun() can properly detect existing config
     dotenv.config({ path: envPath });
     
+    // Create context-aware setup wizard instance
+    const contextAwareSetupWizard = createSetupWizard(cliTransportContext);
+    
     // Always check for first run (except in help mode)
-    if (mode !== 'help' && await setupWizard.isFirstRun()) {
+    if (mode !== 'help' && await contextAwareSetupWizard.isFirstRun()) {
       console.log(chalk.cyan.bold('\n🚀 Welcome to Vibe!\n'));
       console.log(chalk.yellow('First-time setup required...\n'));
       
-      const success = await setupWizard.run();
+      const success = await contextAwareSetupWizard.run();
       if (!success) {
         console.log(chalk.red('\n❌ Setup cancelled.'));
         console.log(chalk.gray('Run ') + chalk.cyan('vibe --setup') + chalk.gray(' to configure later.'));
@@ -204,7 +217,19 @@ async function main() {
 async function runSetup() {
   console.log(chalk.cyan.bold('\n🔧 Vibe Configuration\n'));
   
-  const success = await setupWizard.run();
+  // Create CLI transport context for setup reconfiguration
+  const cliTransportContext: TransportContext = {
+    sessionId: `cli-setup-${Date.now()}`,
+    transportType: 'cli',
+    timestamp: Date.now(),
+    workingDirectory: process.cwd(), // User's current working directory
+    mcpClientConfig: undefined // Will be loaded by context-aware config manager
+  };
+  
+  // Create context-aware setup wizard for reconfiguration
+  const contextAwareSetupWizard = createSetupWizard(cliTransportContext);
+  
+  const success = await contextAwareSetupWizard.run();
   if (success) {
     console.log(chalk.green('\n✅ Configuration updated successfully!'));
     console.log(chalk.gray('Run ') + chalk.cyan('vibe') + chalk.gray(' to start the server.'));

@@ -17,6 +17,7 @@ import path from 'path';
 import { readFile } from 'fs/promises';
 import { OpenRouterConfig } from '../types/workflow.js';
 import { getProjectRoot } from '../tools/code-map-generator/utils/pathUtils.enhanced.js';
+import { TransportContext } from '../index-with-setup.js';
 import {
   ConfigurationError,
   ValidationError,
@@ -842,6 +843,269 @@ export class OpenRouterConfigManager {
    */
   static resetInstance(): void {
     OpenRouterConfigManager.instance = null;
+  }
+
+  // ========================================================================
+  // CONTEXT-AWARE CONFIGURATION METHODS
+  // ========================================================================
+
+  /**
+   * Resolve configuration file paths based on transport context
+   * Implements precedence-based path resolution for CLI vs server usage
+   * 
+   * For CLI: Check user project first, then package directory
+   * For Server: Use package directory (existing behavior)
+   * 
+   * @param context Transport context containing working directory info
+   * @returns Object with ordered paths for different config files
+   */
+  private resolveConfigPaths(context?: TransportContext): {
+    llmConfigPaths: string[];
+    envPaths: string[];
+    packageRoot: string;
+    userProjectRoot?: string;
+  } {
+    const packageRoot = getProjectRoot();
+    const result = {
+      llmConfigPaths: [] as string[],
+      envPaths: [] as string[],
+      packageRoot,
+      userProjectRoot: undefined as string | undefined
+    };
+
+    // For CLI transport with working directory: Check user project first
+    if (context?.transportType === 'cli' && context.workingDirectory) {
+      result.userProjectRoot = context.workingDirectory;
+      
+      // Priority 1: User project directory
+      result.llmConfigPaths.push(path.join(context.workingDirectory, 'llm_config.json'));
+      result.envPaths.push(path.join(context.workingDirectory, '.env'));
+    }
+
+    // Priority 2 (or only): Package directory (existing behavior)
+    result.llmConfigPaths.push(path.join(packageRoot, 'llm_config.json'));
+    result.envPaths.push(path.join(packageRoot, '.env'));
+
+    logger.debug({
+      transportType: context?.transportType,
+      userProjectRoot: result.userProjectRoot,
+      packageRoot: result.packageRoot,
+      llmConfigPaths: result.llmConfigPaths,
+      envPaths: result.envPaths
+    }, 'Resolved configuration paths with context');
+
+    return result;
+  }
+
+  /**
+   * Load LLM configuration with precedence-based path resolution
+   * Tries paths in order until a valid config is found
+   * 
+   * @param llmConfigPaths Array of paths to try in order
+   * @returns Loaded LLM configuration or null if not found
+   */
+  private async loadLLMConfigWithPrecedence(llmConfigPaths: string[]): Promise<LLMConfig | null> {
+    for (const configPath of llmConfigPaths) {
+      try {
+        const configContent = await readFile(configPath, 'utf-8');
+        const parsedConfig = JSON.parse(configContent) as LLMConfig;
+        
+        // Validate the config has the required structure
+        if (parsedConfig && typeof parsedConfig === 'object' && parsedConfig.llm_mapping) {
+          logger.info({ configPath, mappingCount: Object.keys(parsedConfig.llm_mapping).length }, 
+                     'Successfully loaded LLM configuration from path');
+          return parsedConfig;
+        } else {
+          logger.warn({ configPath }, 'LLM config file exists but has invalid structure');
+        }
+      } catch (error) {
+        // Don't log error for first path attempts - this is expected for CLI
+        const isLastPath = configPath === llmConfigPaths[llmConfigPaths.length - 1];
+        if (isLastPath) {
+          logger.warn({ err: error, configPath }, 'Failed to load LLM configuration from path');
+        } else {
+          logger.debug({ configPath }, 'LLM config not found at path, trying next');
+        }
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * Load environment variables with precedence-based path resolution
+   * Tries .env files in order until one is found
+   * 
+   * @param envPaths Array of .env file paths to try in order
+   * @returns Object with loaded environment variables or null if none found
+   */
+  private async loadEnvWithPrecedence(envPaths: string[]): Promise<Record<string, string> | null> {
+    for (const envPath of envPaths) {
+      try {
+        const dotenv = await import('dotenv');
+        const result = dotenv.config({ path: envPath });
+        
+        if (!result.error && result.parsed) {
+          logger.info({ envPath, varsLoaded: Object.keys(result.parsed).length }, 
+                     'Successfully loaded environment variables from path');
+          return result.parsed;
+        } else if (result.error) {
+          logger.debug({ envPath }, '.env file not found at path, trying next');
+        }
+      } catch (error) {
+        const isLastPath = envPath === envPaths[envPaths.length - 1];
+        if (isLastPath) {
+          logger.warn({ err: error, envPath }, 'Failed to load .env file from path');
+        } else {
+          logger.debug({ envPath }, '.env file not accessible at path, trying next');
+        }
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * Initialize configuration with context awareness
+   * Uses precedence-based loading for CLI transport
+   * Maintains existing behavior for server transports
+   * 
+   * @param context Optional transport context for path resolution
+   */
+  async initializeWithContext(context?: TransportContext): Promise<void> {
+    if (this.initializationPromise && !context) {
+      // If no context provided and already initializing, use existing promise
+      return this.initializationPromise;
+    }
+
+    // For context-aware initialization, create new promise
+    const initPromise = this.performContextAwareInitialization(context);
+    
+    if (!context) {
+      // Only cache the promise if no context (backward compatibility)
+      this.initializationPromise = initPromise;
+    }
+    
+    return initPromise;
+  }
+
+  /**
+   * Perform the actual context-aware initialization
+   */
+  private async performContextAwareInitialization(context?: TransportContext): Promise<void> {
+    try {
+      logger.debug({ 
+        hasContext: Boolean(context),
+        transportType: context?.transportType,
+        workingDirectory: context?.workingDirectory 
+      }, 'Starting context-aware configuration initialization');
+
+      // Resolve configuration paths based on context
+      const paths = this.resolveConfigPaths(context);
+
+      // Load LLM configuration with precedence
+      this.llmConfig = await this.loadLLMConfigWithPrecedence(paths.llmConfigPaths);
+      
+      if (!this.llmConfig) {
+        logger.warn({ 
+          triedPaths: paths.llmConfigPaths 
+        }, 'No valid LLM configuration found in any path. Using minimal config.');
+        
+        // Create minimal config to prevent failures
+        this.llmConfig = {
+          llm_mapping: {
+            default_generation: process.env.DEFAULT_LLM_MODEL || 'google/gemini-2.5-flash-lite'
+          }
+        };
+      }
+
+      // Load environment variables with precedence (for validation)
+      const envVars = await this.loadEnvWithPrecedence(paths.envPaths);
+      
+      // Extract configuration from environment variables
+      const apiKey = process.env.OPENROUTER_API_KEY || envVars?.OPENROUTER_API_KEY || '';
+      const baseUrl = process.env.OPENROUTER_BASE_URL || envVars?.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
+      const geminiModel = process.env.GEMINI_MODEL || envVars?.GEMINI_MODEL || 'google/gemini-2.5-flash-preview-05-20';
+      const perplexityModel = process.env.PERPLEXITY_MODEL || envVars?.PERPLEXITY_MODEL || 'perplexity/sonar';
+
+      // Create comprehensive config
+      this.config = {
+        apiKey,
+        baseUrl,
+        geminiModel,
+        perplexityModel,
+        llm_mapping: this.llmConfig.llm_mapping,
+        env: envVars || {}
+      };
+
+      logger.info({
+        apiKeyPresent: Boolean(apiKey),
+        baseUrl,
+        llmMappingCount: Object.keys(this.llmConfig.llm_mapping).length,
+        contextUsed: Boolean(context),
+        userProjectRoot: paths.userProjectRoot,
+        packageRoot: paths.packageRoot
+      }, 'Context-aware configuration initialization completed');
+
+    } catch (error) {
+      logger.error({ err: error, context }, 'Context-aware configuration initialization failed');
+      const errorContext = createErrorContext('OpenRouterConfigManager', 'performContextAwareInitialization')
+        .metadata({ 
+          hasContext: Boolean(context),
+          transportType: context?.transportType,
+          workingDirectory: context?.workingDirectory
+        })
+        .build();
+        
+      throw new ConfigurationError('Failed to initialize configuration with context', errorContext);
+    }
+  }
+
+  /**
+   * Check if configuration exists in user project (for CLI first-run detection)
+   * This is used by the setup wizard to determine if user has already configured their project
+   * 
+   * @param context Transport context containing user's working directory
+   * @returns Promise<boolean> True if valid configuration exists in user project
+   */
+  async hasValidConfigInUserProject(context: TransportContext): Promise<boolean> {
+    if (context.transportType !== 'cli' || !context.workingDirectory) {
+      return false;
+    }
+
+    try {
+      const userEnvPath = path.join(context.workingDirectory, '.env');
+      const userLLMConfigPath = path.join(context.workingDirectory, 'llm_config.json');
+
+      // Check if .env exists and has required keys
+      const dotenv = await import('dotenv');
+      const envResult = dotenv.config({ path: userEnvPath });
+      const hasApiKey = Boolean(envResult.parsed?.OPENROUTER_API_KEY);
+
+      // Check if llm_config.json exists and is valid
+      let hasValidLLMConfig = false;
+      try {
+        const configContent = await readFile(userLLMConfigPath, 'utf-8');
+        const parsedConfig = JSON.parse(configContent) as LLMConfig;
+        hasValidLLMConfig = Boolean(parsedConfig?.llm_mapping);
+      } catch {
+        hasValidLLMConfig = false;
+      }
+
+      logger.debug({
+        userProjectRoot: context.workingDirectory,
+        hasApiKey,
+        hasValidLLMConfig,
+        userEnvPath,
+        userLLMConfigPath
+      }, 'Checked configuration in user project');
+
+      return hasApiKey && hasValidLLMConfig;
+
+    } catch (error) {
+      logger.debug({ err: error, context }, 'Error checking user project configuration');
+      return false;
+    }
   }
 }
 

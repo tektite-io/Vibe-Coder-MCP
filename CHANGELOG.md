@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] - 2025-08-14
+
+### Fixed
+- **Critical CLI Onboarding Loop Bug**
+  - CLI now correctly detects user's project directory using `process.cwd()`
+  - Resolved persistent first-run detection issues that caused repeated onboarding
+  - Configuration files now save to user's working directory instead of package directory
+
+### Added
+- **Context-Aware Configuration System**
+  - Enhanced `TransportContext` pattern for CLI vs Server differentiation
+  - Dual-location configuration saving (user directory + package fallback) for reliability
+  - Intelligent path resolution based on transport type
+  - Enhanced error handling for configuration persistence
+
+- **Improved CLI Auto-Detection**
+  - CLI automatically detects project root from current working directory
+  - Enhanced `OpenRouterConfigManager` with context-aware path resolution
+  - Updated `SetupWizard` with transport context support
+  - Users can now run `vibe` from any directory in their project
+
+### Changed
+- **Enhanced Setup Wizard**
+  - SetupWizard constructor now accepts optional `TransportContext`
+  - Factory function `createSetupWizard()` for context-aware initialization
+  - Improved file path resolution methods for different transport types
+  
+- **Developer Experience**
+  - Comprehensive test coverage for CLI onboarding flows
+  - Enhanced error messages and debugging information
+  - Better validation of configuration file locations
+
 ## [0.2.4] - 2025-08-14
 
 ### Added

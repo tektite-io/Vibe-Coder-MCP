@@ -10,6 +10,37 @@
 
 Vibe Coder is an MCP (Model Context Protocol) server designed to supercharge your AI assistant (like Cursor, Cline AI, or Claude Desktop) with powerful tools for software development. It helps with research, planning, generating requirements, creating starter projects, and more!
 
+## 🆕 What's New in Version 0.2.5
+
+### 🔧 Critical CLI Bug Fixes & Enhancements
+- **✅ Fixed CLI Onboarding Loop Bug**
+  - CLI now correctly detects user's project directory using `process.cwd()`
+  - Resolves persistent first-run detection issues
+  - Configuration files now save to user's working directory instead of package directory
+  
+- **🎯 Context-Aware Configuration System**
+  - Enhanced `TransportContext` pattern for CLI vs Server differentiation
+  - Dual-location configuration saving (user directory + package fallback)
+  - Intelligent path resolution based on transport type
+  - Maintains backward compatibility for all existing setups
+
+- **📍 Auto-Detection Improvements**
+  - CLI automatically detects project root from current working directory
+  - Enhanced `OpenRouterConfigManager` with context-aware path resolution
+  - Updated `SetupWizard` with transport context support
+  - Users can now run `vibe` from any directory in their project
+
+- **💾 Enhanced File Management**
+  - CLI saves all configuration files (`.env`, `llm_config.json`, `.vibe-config.json`) to user directory
+  - Improved error handling for configuration persistence
+  - Better validation of configuration file locations
+
+### Developer Experience Improvements
+- Comprehensive test coverage for CLI onboarding flows
+- Enhanced error messages and debugging information
+- Improved setup wizard user experience
+- Better documentation of CLI behavior and configuration
+
 ## 🆕 What's New in Version 0.2.3
 
 ### Major Features

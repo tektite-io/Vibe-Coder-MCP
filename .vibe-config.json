@@ -1,0 +1,24 @@
+{
+  "version": "1.0.0",
+  "setupDate": "2025-08-14T18:25:58.699Z",
+  "unified": {
+    "enabled": true,
+    "projectRoot": "/tmp/cli-files-test",
+    "autoDetection": "true"
+  },
+  "directories": {
+    "output": "./VibeCoderOutput",
+    "codeMap": "/tmp/cli-files-test",
+    "taskManager": "/tmp/cli-files-test"
+  },
+  "security": {
+    "mode": "strict"
+  },
+  "models": {
+    "gemini": "google/gemini-2.5-flash-preview-05-20",
+    "perplexity": "perplexity/sonar"
+  },
+  "api": {
+    "baseUrl": "https://openrouter.ai/api/v1"
+  }
+}
