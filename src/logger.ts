@@ -7,6 +7,53 @@ const isDevelopment = process.env.NODE_ENV === 'development';
 const isStdioTransport = process.env.MCP_TRANSPORT === 'stdio' || process.argv.includes('--stdio');
 const effectiveLogLevel = process.env.LOG_LEVEL || (isDevelopment ? 'debug' : 'info');
 
+/**
+ * Enhanced transport detection function
+ * Enhances existing transport detection logic to support all transport types
+ * Following DRY principle by extending existing detection patterns
+ */
+export function detectTransportType(): 'cli' | 'stdio' | 'sse' | 'http' | 'websocket' {
+  // CLI detection: Check if running via unified-cli or vibe command
+  const isCli = process.argv[1]?.includes('unified-cli') || 
+                process.argv[1]?.includes('cli/index') ||
+                process.argv[1]?.includes('vibe') ||
+                process.env.VIBE_CLI_MODE === 'true';
+  
+  if (isCli) {
+    return 'cli';
+  }
+  
+  // Enhanced STDIO detection (using existing logic)
+  if (isStdioTransport) {
+    return 'stdio';
+  }
+  
+  // SSE/HTTP/WebSocket detection based on environment or args
+  const args = getProcessArgs();
+  const isSSE = args.includes('--sse') || process.env.MCP_TRANSPORT === 'sse';
+  if (isSSE) {
+    return 'sse';
+  }
+  
+  const isWebSocket = process.env.MCP_TRANSPORT === 'websocket';
+  if (isWebSocket) {
+    return 'websocket';
+  }
+  
+  const isHTTP = process.env.MCP_TRANSPORT === 'http';
+  if (isHTTP) {
+    return 'http';
+  }
+  
+  // Default fallback (preserving existing behavior)
+  return 'sse';
+}
+
+// Helper function to parse command line arguments (avoiding global scope pollution)
+function getProcessArgs(): string[] {
+  return process.argv.slice(2);
+}
+
 // --- Calculate paths ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

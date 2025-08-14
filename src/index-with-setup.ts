@@ -8,7 +8,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import chalk from 'chalk';
 import ora, { type Ora } from 'ora';
-import logger, { registerShutdownCallback } from "./logger.js";
+import logger, { registerShutdownCallback, detectTransportType } from "./logger.js";
 import { initializeToolEmbeddings } from './services/routing/embeddingStore.js';
 import { OpenRouterConfigManager } from './utils/openrouter-config-manager.js';
 import { ToolRegistry } from './services/routing/toolRegistry.js';
@@ -17,12 +17,15 @@ import { transportManager } from './services/transport-manager/index.js';
 import { PortAllocator } from './utils/port-allocator.js';
 import { setupWizard } from './setup-wizard.js';
 import { UnifiedSecurityConfigManager } from './tools/vibe-task-manager/security/unified-security-config.js';
+import { OpenRouterConfig } from './types/workflow.js';
 
 // Define interfaces
-interface TransportContext {
+export interface TransportContext {
   sessionId: string;
-  transportType: string;
+  transportType: 'cli' | 'stdio' | 'sse' | 'http' | 'websocket';
   timestamp: number;
+  workingDirectory?: string;
+  mcpClientConfig?: OpenRouterConfig;
 }
 
 interface TransportWithMessageHandling {
@@ -107,10 +110,20 @@ async function startServer(spinner: Ora) {
   // Initialize ToolRegistry with the configuration
   ToolRegistry.getInstance(openRouterConfig);
 
-  // Initialize Unified Security Configuration
+  // Create transport context using enhanced detection
+  const transportType = detectTransportType();
+  const transportContext: TransportContext = {
+    sessionId: 'server-session',
+    transportType,
+    timestamp: Date.now(),
+    workingDirectory: process.cwd(), // May not be user project for server
+    mcpClientConfig: openRouterConfig
+  };
+
+  // Initialize Unified Security Configuration with transport context
   const securityManager = UnifiedSecurityConfigManager.getInstance();
-  securityManager.initializeFromMCPConfig(openRouterConfig);
-  logger.info('Unified Security Configuration initialized with centralized config');
+  securityManager.initializeFromMCPConfig(openRouterConfig, transportContext);
+  logger.info({ transportType }, 'Unified Security Configuration initialized with transport context');
 
   // Initialize tool embeddings
   try {
