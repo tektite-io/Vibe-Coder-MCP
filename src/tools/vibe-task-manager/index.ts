@@ -4,7 +4,7 @@ import { OpenRouterConfig } from '../../types/workflow.js';
 import { registerTool, ToolDefinition, ToolExecutor, ToolExecutionContext } from '../../services/routing/toolRegistry.js';
 import { getBaseOutputDir, getVibeTaskManagerOutputDir, getVibeTaskManagerConfig } from './utils/config-loader.js';
 import { getTimeoutManager, isTimeoutManagerInitialized } from './utils/timeout-manager.js';
-import logger from '../../logger.js';
+import logger, { detectTransportType } from '../../logger.js';
 import { AgentOrchestrator } from './services/agent-orchestrator.js';
 import { ProjectOperations } from './core/operations/project-operations.js';
 import { DecompositionService } from './services/decomposition-service.js';
@@ -14,6 +14,7 @@ import fs from 'fs/promises';
 import type { AtomicTask, Project } from './types/task.js';
 import { ProjectContext } from './types/project-context.js';
 import { getUnifiedSecurityConfig } from './security/unified-security-config.js';
+import { TransportContext } from '../../index-with-setup.js';
 
 // Input schema for the Vibe Task Manager tool
 const vibeTaskManagerInputSchema = z.object({
@@ -207,6 +208,19 @@ export const vibeTaskManagerExecutor: ToolExecutor = async (
 
   try {
     logger.info({ sessionId, params }, 'Vibe Task Manager execution started');
+
+    // Create transport context for security config initialization
+    const transportContext: TransportContext = {
+      sessionId,
+      transportType: detectTransportType(),
+      timestamp: Date.now(),
+      workingDirectory: process.cwd(),
+      mcpClientConfig: config
+    };
+
+    // Initialize unified security config with transport context
+    const unifiedConfig = getUnifiedSecurityConfig();
+    unifiedConfig.initializeFromMCPConfig(config, transportContext);
 
     // Initialize configuration and timeout manager before any service usage
     await initializeVibeTaskManagerConfig();

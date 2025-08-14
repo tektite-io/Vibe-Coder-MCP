@@ -16,6 +16,7 @@ import { validateContextPackage, ProcessedFile, FileReference } from './types/ou
 import logger from '../../logger.js';
 import fs from 'fs-extra';
 import path from 'path';
+import { getToolOutputDirectory, ensureToolOutputDirectory } from '../vibe-task-manager/security/unified-security-config.js';
 
 // Type-safe helper functions to extract properties from unknown context packages
 function getPackageId(pkg: unknown): string | undefined {
@@ -209,11 +210,16 @@ function getMetaPromptGuidelinesCount(pkg: unknown): number {
   return 0;
 }
 
-// Helper function to get the base output directory
+// Helper function to get the base output directory using centralized security
 function getBaseOutputDir(): string {
-  return process.env.VIBE_CODER_OUTPUT_DIR
-    ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
-    : path.join(process.cwd(), 'VibeCoderOutput');
+  try {
+    return getToolOutputDirectory();
+  } catch {
+    // Fallback for backward compatibility during migration
+    return process.env.VIBE_CODER_OUTPUT_DIR
+      ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
+      : path.join(process.cwd(), 'VibeCoderOutput');
+  }
 }
 
 /**
@@ -481,14 +487,21 @@ const contextCuratorToolDefinition: ToolDefinition = {
  * Creates the necessary directory structure for storing context packages
  */
 export async function initDirectories() {
-  const baseOutputDir = getBaseOutputDir();
   try {
-    await fs.ensureDir(baseOutputDir);
-    const toolDir = path.join(baseOutputDir, 'context-curator');
-    await fs.ensureDir(toolDir);
+    const toolDir = await ensureToolOutputDirectory('context-curator');
     logger.debug(`Ensured context-curator directory exists: ${toolDir}`);
   } catch (error) {
-    logger.error({ err: error, path: baseOutputDir }, `Failed to ensure base output directory exists for context-curator.`);
+    logger.error({ err: error }, `Failed to ensure base output directory exists for context-curator.`);
+    // Fallback to original implementation for backward compatibility
+    const baseOutputDir = getBaseOutputDir();
+    try {
+      await fs.ensureDir(baseOutputDir);
+      const toolDir = path.join(baseOutputDir, 'context-curator');
+      await fs.ensureDir(toolDir);
+      logger.debug(`Ensured context-curator directory exists (fallback): ${toolDir}`);
+    } catch (fallbackError) {
+      logger.error({ err: fallbackError, path: baseOutputDir }, `Fallback directory creation also failed.`);
+    }
   }
 }
 
