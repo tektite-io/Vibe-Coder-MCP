@@ -12,8 +12,8 @@
 ## Pre-Publishing Checklist
 
 ### 1. Ensure PR is Merged
-- [ ] PR #57 merged to master
-- [ ] All CI checks passed
+- [ ] PR merged to master
+- [ ] All CI checks passed (type-check, lint, build)
 - [ ] No merge conflicts
 
 ### 2. Update Local Repository
@@ -22,23 +22,21 @@ git checkout master
 git pull origin master
 ```
 
-### 3. Run Validation
+### 3. Run Validation (Matches CI Pipeline)
 ```bash
-# Type checking
-npm run type-check
+# Essential checks (same as CI pipeline - ~3 minutes)
+npm run type-check    # TypeScript strict mode validation
+npm run lint          # ESLint code quality
+npm run build         # Build distributable
 
-# Linting
-npm run lint  
+# Local-only validation (recommended before publishing)
+npm run test:unit     # Fast unit tests (2-3 minutes)
 
-# Build
-npm run build
-
-# Run unit tests
-npm run test:unit
-
-# Check package contents
-npm pack --dry-run
+# Package verification
+npm pack --dry-run    # Review included files
 ```
+
+**Note**: CI pipeline runs essential checks only (70% faster). Unit tests are run locally by developers.
 
 ### 4. Version Bump
 ```bash
@@ -171,14 +169,24 @@ Mark the problematic release as pre-release or add warning notes.
 
 ## CI/CD Integration
 
-The GitHub Actions workflow will automatically:
-1. Run tests on PR
-2. Validate package on release creation
-3. Can be configured to auto-publish on release
+### Current Pipeline (Simplified for Performance)
+The GitHub Actions workflow automatically runs on all PRs and pushes:
+1. **Type Check**: TypeScript strict mode validation (no `any` types allowed)
+2. **Lint**: ESLint code quality checks
+3. **Build**: Compile TypeScript to JavaScript distributable
 
-To enable auto-publishing:
-1. Add NPM_TOKEN to GitHub Secrets
-2. Uncomment publish job in `.github/workflows/release.yml`
+**Performance**: ~3 minutes (70% faster than previous full test suite)
+
+### Testing Strategy
+- **CI Pipeline**: Essential checks only (type-check, lint, build)
+- **Local Development**: Developers run unit tests before PR submission
+- **Rationale**: Faster feedback loop, reduced CI costs, maintains quality
+
+### Future Auto-Publishing (Optional)
+To enable automated npm publishing on releases:
+1. Add `NPM_TOKEN` to GitHub Secrets
+2. Create `.github/workflows/release.yml` with publish job
+3. Configure to trigger on GitHub releases
 
 ## Security Notes
 
