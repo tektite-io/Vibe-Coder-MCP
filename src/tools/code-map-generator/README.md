@@ -1,6 +1,6 @@
 # Code-Map Generator Tool (`map-codebase`)
 
-**Status**: Production Ready with Advanced Features | **Languages**: 35+ Supported | **Optimization**: 95-97% Token Reduction
+**Version**: 0.2.3 | **Status**: Production Ready with Advanced Features | **Languages**: 35+ Supported | **Optimization**: 95-97% Token Reduction
 
 ## Overview
 
@@ -47,9 +47,26 @@ The "Code-Map Generator" (invoked as `map-codebase`) is a high-performance, lang
 
 The tool has been designed with simplicity in mind, requiring minimal configuration:
 
-### Required Configuration
+### 🆕 Unified Configuration (v0.2.4+) - Recommended
 
-You can specify the allowed mapping directory in one of two ways:
+The simplest way to configure the Code Map Generator:
+
+```javascript
+{
+  "tools": {
+    "vibe-coder-mcp": {
+      "env": {
+        "VIBE_PROJECT_ROOT": "/absolute/path/to/your/project",
+        "VIBE_CODER_OUTPUT_DIR": "/path/to/output/directory"
+      }
+    }
+  }
+}
+```
+
+### Legacy Configuration (Still Supported)
+
+You can still use the original configuration methods:
 
 1. **In the Claude Desktop config file**:
 ```javascript
@@ -66,7 +83,7 @@ You can specify the allowed mapping directory in one of two ways:
 }
 ```
 
-2. **Using environment variables**:
+2. **Using legacy environment variables**:
 ```javascript
 {
   "tools": {
@@ -82,7 +99,11 @@ You can specify the allowed mapping directory in one of two ways:
 
 ### Configuration Details
 
-* `allowedMappingDirectory` or `CODE_MAP_ALLOWED_DIR` (required): The absolute path to the directory that the code-map generator is allowed to scan. This is a security boundary - the tool will not access files outside this directory.
+* **🆕 `VIBE_PROJECT_ROOT` (recommended since v0.2.3)**: Single variable for all project operations. Enables unified configuration across all Vibe Coder tools.
+
+* **Auto-Detection for CLI Users**: When using the unified CLI (`vibe` command), project root is automatically detected from the current working directory (zero configuration required).
+
+* `allowedMappingDirectory` or `CODE_MAP_ALLOWED_DIR` (legacy): The absolute path to the directory that the code-map generator is allowed to scan. Used as fallback if `VIBE_PROJECT_ROOT` is not set. Still fully supported for backward compatibility.
 
 * `VIBE_CODER_OUTPUT_DIR` (optional): The base directory for all Vibe Coder MCP outputs. If not specified, defaults to `./VibeCoderOutput` in the current working directory.
 
@@ -100,6 +121,32 @@ The tool still supports the following advanced configuration options, but they a
 * `cache.enabled`: Whether the cache is enabled. Default is true.
 * `processing.batchSize`: Number of files to process in each batch. Default is 100.
 * `processing.maxMemoryUsage`: Maximum memory usage in MB before triggering garbage collection. Default is 1024 (1GB).
+
+## CLI Usage (v0.2.3+)
+
+The Code Map Generator can be invoked through the unified Vibe CLI:
+
+```bash
+# Using the global vibe command
+vibe "generate a code map for my project"
+vibe "map the codebase structure"
+vibe "analyze my React application architecture"
+
+# Interactive mode for continuous mapping
+vibe --interactive
+> map my codebase
+> generate code map with focus on authentication
+> create a detailed map excluding test files
+
+# Direct MCP server mode (for Claude Desktop integration)
+vibe  # Starts the MCP server
+```
+
+**CLI Features:**
+- **Natural Language**: Use plain English to request code maps
+- **Auto-Detection**: Automatically detects project root from current directory
+- **Interactive Mode**: Continuous conversation with context retention
+- **Zero Configuration**: Works out-of-the-box for CLI users
 
 ## Input Parameters
 
@@ -428,6 +475,41 @@ The Enhanced Function Name Detection system includes sophisticated memory manage
 - **LRU Caching**: Least Recently Used (LRU) caching is used for AST nodes and source code.
 - **Automatic Garbage Collection**: The system periodically suggests garbage collection to free up memory.
 - **File-Based Caching**: Large data structures can be cached to disk to reduce memory usage.
+
+## Integration with CLI Infrastructure (v0.2.3+)
+
+The Code Map Generator is fully integrated with the new unified CLI infrastructure:
+
+### Transport Coordination
+- **Multiple Transports**: Supports stdio (MCP), SSE, WebSocket, and HTTP
+- **Unified Response Format**: Consistent output across all transport types
+- **Session Management**: Maintains context in interactive mode
+
+### CLI Features
+- **Interactive REPL**: Continuous mapping sessions with context retention
+- **Progress Tracking**: Real-time progress updates during map generation
+- **Theme Support**: Multiple output themes in interactive mode
+- **Auto-completion**: Command suggestions and parameter hints
+
+### Configuration Management
+- **Auto-Detection**: CLI automatically detects project root
+- **Environment Variables**: Respects `.env` configuration
+- **Template System**: Uses configuration templates from `src/config-templates/`
+
+### Example Integration Flow
+
+```mermaid
+flowchart LR
+    CLI[Unified CLI] --> Intent[Intent Recognition]
+    Intent --> CodeMap[Code Map Generator]
+    CodeMap --> Cache{Cache Check}
+    Cache -->|Hit| Return[Return Cached Map]
+    Cache -->|Miss| Generate[Generate New Map]
+    Generate --> Store[Store in Cache]
+    Store --> Return
+    Return --> Format[Format for Transport]
+    Format --> Output[CLI/MCP Output]
+```
 
 ## Security Considerations
 

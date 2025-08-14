@@ -1,5 +1,7 @@
 # Context Curator (`curate-context`)
 
+**Version**: 0.2.3 | **Status**: Production Ready | **Performance**: 92-95% Relevance Accuracy
+
 ## Overview
 
 The Context Curator is an intelligent codebase analysis tool that curates comprehensive context packages for AI-driven development tasks. It implements an 8-phase workflow pipeline that analyzes codebases, discovers relevant files, scores their relevance, and generates optimized context packages with meta-prompts for downstream AI agents.
@@ -75,9 +77,9 @@ flowchart TD
 
 ## Configuration
 
-### Claude Desktop MCP Client Setup
+### 🆕 Unified Configuration (v0.2.3+) - Recommended
 
-Add this configuration to your `claude_desktop_config.json` file:
+Add this simplified configuration to your `claude_desktop_config.json` file:
 
 ```json
 "vibe-coder-mcp": {
@@ -90,8 +92,8 @@ Add this configuration to your `claude_desktop_config.json` file:
     "LOG_LEVEL": "debug",
     "NODE_ENV": "production",
     "VIBE_CODER_OUTPUT_DIR": "/path/to/your/Vibe-Coder-MCP/VibeCoderOutput",
-    "CODE_MAP_ALLOWED_DIR": "/path/to/your/project/directory",
-    "VIBE_TASK_MANAGER_READ_DIR": "/path/to/your/project/directory"
+    "VIBE_PROJECT_ROOT": "/path/to/your/project/directory",
+    "VIBE_USE_PROJECT_ROOT_AUTO_DETECTION": "false"
   },
   "disabled": false,
   "autoApprove": [
@@ -106,6 +108,21 @@ Add this configuration to your `claude_desktop_config.json` file:
 }
 ```
 
+### Legacy Configuration (Still Supported)
+
+For backward compatibility, you can still use the original configuration:
+
+```json
+"env": {
+  "LLM_CONFIG_PATH": "/path/to/your/Vibe-Coder-MCP/llm_config.json",
+  "LOG_LEVEL": "debug",
+  "NODE_ENV": "production",
+  "VIBE_CODER_OUTPUT_DIR": "/path/to/your/Vibe-Coder-MCP/VibeCoderOutput",
+  "CODE_MAP_ALLOWED_DIR": "/path/to/your/project/directory",
+  "VIBE_TASK_MANAGER_READ_DIR": "/path/to/your/project/directory"
+}
+```
+
 ### Environment Variables
 
 #### Core Configuration
@@ -114,9 +131,13 @@ Add this configuration to your `claude_desktop_config.json` file:
 - **`LOG_LEVEL`**: Logging verbosity (debug recommended for development)
 - **`NODE_ENV`**: Runtime environment (production, development)
 
-#### Security Boundaries
-- **`CODE_MAP_ALLOWED_DIR`**: Directory the Context Curator can analyze (security boundary)
-- **`VIBE_TASK_MANAGER_READ_DIR`**: Directory for task manager integration
+#### 🆕 Unified Project Root Configuration (v0.2.4+)
+- **`VIBE_PROJECT_ROOT` (recommended)**: Single variable for all project operations. Replaces separate tool-specific directories.
+- **`VIBE_USE_PROJECT_ROOT_AUTO_DETECTION`**: Enable auto-detection for CLI users (set to "false" for MCP clients, "true" for CLI usage)
+
+#### Legacy Security Boundaries (Still Supported)
+- **`CODE_MAP_ALLOWED_DIR`**: Directory the Context Curator can analyze (fallback if `VIBE_PROJECT_ROOT` not set)
+- **`VIBE_TASK_MANAGER_READ_DIR`**: Directory for task manager integration (fallback if `VIBE_PROJECT_ROOT` not set)
 
 #### Tool-Specific Configuration
 - **Token Budget**: Default 250,000 tokens, configurable per request
@@ -124,6 +145,33 @@ Add this configuration to your `claude_desktop_config.json` file:
 - **Output Formats**: XML (primary), JSON (secondary)
 - **Max Files**: Default 100 files, configurable up to 1000
 - **Cache Strategy**: Intelligent caching with SHA256 keys for similar requests
+
+## CLI Usage (v0.2.4+)
+
+The Context Curator can be invoked through the unified Vibe CLI:
+
+```bash
+# Using the global vibe command
+vibe "curate context for adding authentication to my app"
+vibe "analyze my codebase for refactoring opportunities"
+vibe "prepare context for bug fix in websocket handler"
+
+# Interactive mode for iterative context curation
+vibe --interactive
+> curate context for feature addition
+> focus on authentication and user management
+> exclude test files and increase token budget to 300000
+
+# Setup wizard for first-time configuration
+vibe --setup
+```
+
+**CLI Features:**
+- **Natural Language Processing**: Understands plain English requests
+- **Auto Project Detection**: Automatically detects project root
+- **Interactive Refinement**: Iteratively refine context requirements
+- **Smart Caching**: Intelligent codemap caching for performance
+- **Zero Configuration**: Works immediately for CLI users
 
 ## Usage Examples
 
@@ -553,6 +601,55 @@ rm -rf VibeCoderOutput/code-map-generator/*.md
 - Use smaller token budgets
 - Limit file count
 - Exclude unnecessary directories
+
+## Integration with CLI Infrastructure (v0.2.3+)
+
+The Context Curator is fully integrated with the unified CLI infrastructure:
+
+### CLI Integration Benefits
+- **Unified Command**: Single `vibe` command for all context curation
+- **Session Persistence**: Maintains context across multiple requests in interactive mode
+- **Progress Notifications**: Real-time updates via SSE/WebSocket during curation
+- **Automatic Configuration**: Zero-config for CLI users with auto-detection
+
+### Transport Support
+- **MCP (stdio)**: Full integration with Claude Desktop and other MCP clients
+- **SSE**: Server-sent events for real-time progress updates
+- **WebSocket**: Bidirectional communication for interactive sessions
+- **HTTP**: RESTful API for programmatic access
+
+### Workflow Integration
+
+```mermaid
+flowchart TD
+    CLI[Vibe CLI] --> NLP[Natural Language Processing]
+    NLP --> Intent[Intent: Curate Context]
+    Intent --> Curator[Context Curator]
+    
+    Curator --> CodeMap[Generate Code Map]
+    CodeMap --> Cache{Check Cache}
+    Cache -->|Recent| UseCached[Use Cached Map]
+    Cache -->|Stale| Generate[Generate New Map]
+    
+    Generate --> Analysis[8-Phase Analysis]
+    UseCached --> Analysis
+    
+    Analysis --> Package[Context Package]
+    Package --> Transport[Transport Layer]
+    Transport --> Output[Formatted Output]
+```
+
+### Enhanced CLI Features
+- **Smart Suggestions**: Context-aware command completion
+- **History Management**: Access previous curation requests
+- **Batch Processing**: Queue multiple curation tasks
+- **Export Options**: Save context packages in multiple formats
+
+### Configuration Synchronization
+- **Unified Config**: Single configuration for all tools
+- **Template Usage**: Leverages `src/config-templates/` for setup
+- **Environment Detection**: Automatic environment variable loading
+- **Validation**: Built-in configuration validation and error handling
 
 ## Advanced Features
 

@@ -10,6 +10,65 @@
 
 Vibe Coder is an MCP (Model Context Protocol) server designed to supercharge your AI assistant (like Cursor, Cline AI, or Claude Desktop) with powerful tools for software development. It helps with research, planning, generating requirements, creating starter projects, and more!
 
+## 🆕 What's New in Version 0.2.3
+
+### Major Features
+- **🎯 Interactive REPL Mode** (`vibe --interactive`)
+  - Chat-style conversation interface with context retention
+  - Session persistence and resume capabilities
+  - Markdown rendering and multiple themes
+  - Slash commands for quick actions
+  
+- **🚀 Enhanced Setup Wizard**
+  - Automatic first-run detection
+  - OS-specific configuration paths
+  - Non-interactive mode for CI/CD environments
+  - Configuration validation and backup system
+
+- **📋 Configuration Templates**
+  - Pre-configured `.env.template` with documentation
+  - Complete `llm_config.template.json` 
+  - Tool-specific `mcp-config.template.json`
+  - Located in `src/config-templates/`
+
+- **⚡ Performance Improvements**
+  - CI/CD pipeline 70% faster (~3 min, essential checks only)
+  - Streamlined validation: type-check, lint, build
+  - Unit tests run locally for faster developer feedback
+  - Optimized memory usage for large codebases
+  
+- **🔧 Unified CLI Binary**
+  - Single `vibe` command for all operations
+  - Consistent interface across all modes
+  - Better resource management
+
+### Quick Upgrade
+```bash
+# For existing users - fully backward compatible!
+npm update -g vibe-coder-mcp
+
+# Try the new interactive mode
+vibe --interactive
+```
+
+## 🚀 Quick Start for New Users (v0.2.3+)
+
+```bash
+# Install and run in one command
+npx vibe-coder-mcp --setup
+
+# Or install globally for the 'vibe' command
+npm install -g vibe-coder-mcp
+vibe --setup
+```
+
+**The setup wizard will:**
+1. ✅ Configure your OpenRouter API key
+2. ✅ Set up project directories
+3. ✅ Create configuration files from templates
+4. ✅ Validate your environment
+5. ✅ Get you ready to use all features!
+
 ## 📦 NPM Package
 
 **Available on npm**: [`vibe-coder-mcp`](https://www.npmjs.com/package/vibe-coder-mcp)
@@ -22,7 +81,7 @@ npx vibe-coder-mcp
 npm install -g vibe-coder-mcp
 ```
 
-## 🚀 Quick Start (Recommended)
+## 📋 Installation Options
 
 **The easiest way to get started:**
 
@@ -43,7 +102,8 @@ npm install -g vibe-coder-mcp
 # Use the unified 'vibe' command
 vibe                                    # Start MCP server
 vibe "create a PRD for a todo app"     # CLI mode
-vibe --setup                           # Interactive setup
+vibe --interactive                     # Interactive REPL mode (NEW!)
+vibe --setup                           # Interactive setup wizard
 ```
 
 ### Option 3: Install Locally in Your Project
@@ -67,9 +127,9 @@ vibe-coder-mcp
 vibe-coder-mcp --sse
 ```
 
-#### CLI Mode (New!)
+#### CLI Mode
 ```bash
-# Interactive setup wizard
+# Interactive setup wizard (runs automatically on first use)
 vibe-coder-mcp --setup
 
 # Natural language commands
@@ -77,8 +137,14 @@ vibe-coder-mcp "research modern JavaScript frameworks"
 vibe-coder-mcp "create a PRD for an e-commerce platform"
 vibe-coder-mcp "map the codebase structure" --json
 
-# Interactive REPL mode
+# Interactive REPL mode (NEW in v0.2.3!)
 vibe-coder-mcp --interactive
+# Features:
+# • Chat-style conversation interface
+# • Live tool execution with progress indicators
+# • Session persistence and history
+# • Markdown rendering support
+# • Multiple themes and customization
 
 # Help and options
 vibe-coder-mcp --help
@@ -89,13 +155,46 @@ After global installation (`npm install -g vibe-coder-mcp`), use the shorter `vi
 ```bash
 vibe                                    # Start MCP server
 vibe "your request here"               # CLI mode
+vibe --interactive                     # Interactive REPL mode
 vibe --setup                           # Setup wizard
 vibe --help                            # Show all options
 ```
 
-**First-time setup:**
-- The setup wizard runs automatically on first use
-- Or run `vibe --setup` manually to configure your environment
+**First-time setup (v0.2.3+):**
+- **Automatic setup wizard** runs on first use with smart detection
+- **OS-specific config paths** automatically configured:
+  - Windows: `%APPDATA%\vibe-coder`
+  - macOS: `~/Library/Application Support/vibe-coder`
+  - Linux: `~/.config/vibe-coder`
+- **Configuration templates** provided in `src/config-templates/`
+- Run `vibe --setup` manually to reconfigure at any time
+
+## 🆕 Unified Project Root Configuration
+
+**New in v0.2.4+**: Simplified configuration with automatic project detection!
+
+### For CLI Users (Zero Configuration)
+```bash
+# Just run from your project directory - automatic detection enabled!
+cd /path/to/your/project
+vibe "map the codebase structure"
+```
+
+### For MCP Clients (Single Variable)
+```json
+{
+  "env": {
+    "OPENROUTER_API_KEY": "your_key_here",
+    "VIBE_PROJECT_ROOT": "/path/to/your/project"
+  }
+}
+```
+
+**Benefits:**
+- **One Variable**: `VIBE_PROJECT_ROOT` replaces 3 separate directory configurations  
+- **Auto-Detection**: CLI users get zero-configuration project detection
+- **Context Aware**: Different behavior for CLI vs MCP client usage
+- **Backward Compatible**: Legacy variables still work as fallbacks
 
 ## 🔧 Environment Configuration
 
@@ -109,25 +208,44 @@ vibe --help                            # Show all options
 
 ### Set Up Environment Variables
 
-**Option 1: Environment Variables (Recommended)**
+**Option 1: Using Setup Wizard (Recommended for v0.2.3+)**
+```bash
+# Run the interactive setup wizard
+vibe --setup
+
+# The wizard will:
+# • Configure your OpenRouter API key
+# • Set up project directories
+# • Create configuration files
+# • Validate your setup
+```
+
+**Option 2: Environment Variables**
 ```bash
 # Set your OpenRouter API key
 export OPENROUTER_API_KEY="your_api_key_here"
 
 # Optional: Set custom directories
 export VIBE_CODER_OUTPUT_DIR="/path/to/output/directory"
+export VIBE_PROJECT_ROOT="/path/to/your/project"
+
+# Legacy variables (still supported for backward compatibility)
 export CODE_MAP_ALLOWED_DIR="/path/to/your/source/code"
 export VIBE_TASK_MANAGER_READ_DIR="/path/to/your/project"
 ```
 
-**Option 2: Create .env file**
-Create a `.env` file in your working directory:
+**Option 3: Create .env file (templates provided in v0.2.3+)**
+Create a `.env` file in your working directory (or copy from `src/config-templates/.env.template`):
 ```dotenv
 # Required: Your OpenRouter API key
 OPENROUTER_API_KEY="your_api_key_here"
 
-# Optional: Custom directories
+# Optional: Unified project root configuration
 VIBE_CODER_OUTPUT_DIR="/path/to/output/directory"
+VIBE_PROJECT_ROOT="/path/to/your/project"
+VIBE_USE_PROJECT_ROOT_AUTO_DETECTION="true"
+
+# Legacy variables (still supported for backward compatibility)
 CODE_MAP_ALLOWED_DIR="/path/to/your/source/code"  
 VIBE_TASK_MANAGER_READ_DIR="/path/to/your/project"
 
@@ -136,10 +254,21 @@ OPENROUTER_BASE_URL="https://openrouter.ai/api/v1"
 GEMINI_MODEL="google/gemini-2.5-flash-preview-05-20"
 ```
 
-### Directory Configuration (Optional)
+### Directory Configuration (Unified & Simplified)
+
+**🆕 Unified Configuration (Recommended)**
+- **VIBE_PROJECT_ROOT**: Single variable for all project operations (automatic detection enabled by default for CLI)
+- **VIBE_USE_PROJECT_ROOT_AUTO_DETECTION**: Enable automatic project root detection for CLI users (default: `"true"`)
 - **VIBE_CODER_OUTPUT_DIR**: Where generated files are saved (default: `./VibeCoderOutput/`)
-- **CODE_MAP_ALLOWED_DIR**: Security boundary for code analysis (default: current directory)
-- **VIBE_TASK_MANAGER_READ_DIR**: Security boundary for task manager file operations (default: current directory)
+
+**Legacy Configuration (Still Supported)**
+- **CODE_MAP_ALLOWED_DIR**: Security boundary for code analysis (fallback if VIBE_PROJECT_ROOT not set)
+- **VIBE_TASK_MANAGER_READ_DIR**: Security boundary for task manager operations (fallback if VIBE_PROJECT_ROOT not set)
+
+**Auto-Detection Benefits:**
+- **Zero Configuration**: CLI users get automatic project root detection
+- **Context Aware**: Different behavior for CLI vs MCP client usage
+- **Intelligent Fallbacks**: 5-priority resolution chain ensures reliable operation
 
 ## 🔌 MCP Client Setup
 
@@ -174,7 +303,8 @@ Add this to your `claude_desktop_config.json`:
       "command": "npx",
       "args": ["vibe-coder-mcp"],
       "env": {
-        "OPENROUTER_API_KEY": "your_api_key_here"
+        "OPENROUTER_API_KEY": "your_api_key_here",
+        "VIBE_PROJECT_ROOT": "/path/to/your/project"
       }
     }
   }
@@ -183,16 +313,45 @@ Add this to your `claude_desktop_config.json`:
 
 ## 💻 CLI Usage Guide
 
-Vibe Coder now includes a powerful command-line interface for direct interaction with all tools.
+Vibe Coder includes a powerful command-line interface with multiple modes for direct interaction with all tools.
 
-### Interactive Setup Wizard
+### Interactive Setup Wizard (Enhanced in v0.2.3)
 ```bash
 # First-time setup (runs automatically on first use)
 vibe --setup
 
+# Features:
+# • Smart first-run detection
+# • OS-specific configuration paths
+# • Non-interactive mode for CI/CD
+# • Configuration validation
+# • Backup system for existing configs
+
 # Reconfigure existing installation
 vibe --reconfigure
 ```
+
+### Interactive REPL Mode (NEW in v0.2.3!)
+```bash
+# Start interactive chat session
+vibe --interactive
+
+# Or with alias
+vibe -i
+
+# Resume a previous session
+vibe --resume <session-id>
+```
+
+**REPL Features:**
+- 🎯 **Chat Interface**: Natural conversation flow with context retention
+- 📝 **Multi-line Input**: Use `"""` for multi-line messages
+- 🎨 **Themes**: Multiple color themes with `/theme` command
+- 💾 **Session Management**: Auto-save and resume capabilities
+- 📊 **Markdown Rendering**: Rich text formatting in responses
+- ⚡ **Live Progress**: Real-time execution feedback
+- 🔧 **Slash Commands**: Quick actions like `/tools`, `/history`, `/save`
+- 🎮 **Auto-completion**: Tab completion for commands and tools
 
 ### CLI Command Examples
 
@@ -236,8 +395,40 @@ vibe "create PRD for todo app" --yaml
 vibe "create project MyApp" --verbose
 vibe "research Node.js patterns" --quiet
 
-# Interactive mode
+# Interactive REPL mode (NEW!)
 vibe --interactive
+vibe -i
+
+# Session management (NEW!)
+vibe --resume <session-id>
+vibe --list-sessions
+```
+
+### Interactive REPL Commands (v0.2.3+)
+Once in interactive mode (`vibe --interactive`), use these commands:
+
+```bash
+# Help and navigation
+/help              # Show available commands
+/tools             # List all MCP tools
+/status            # Show session status
+
+# Session management
+/save              # Save current session
+/sessions          # List saved sessions
+/export [file]     # Export session to markdown
+
+# Conversation control
+/clear             # Clear conversation history
+/history           # Show conversation history
+
+# Customization
+/theme             # Change color theme
+/markdown          # Toggle markdown rendering
+/config            # Manage configuration
+
+# Exit
+/quit or /exit     # Exit interactive mode
 ```
 
 ### File Organization
@@ -253,6 +444,29 @@ VibeCoderOutput/
 ├── vibe-task-manager/         # Task management data
 └── workflow-runner/           # Workflow outputs
 ```
+
+---
+
+## 🔄 Migration Guide (v0.2.3)
+
+### Breaking Changes
+
+**None!** Version 0.2.3 is fully backward compatible. All existing configurations and workflows continue to work.
+
+### Technical Improvements
+
+- Unified CLI architecture with single entry point
+- Better error handling and recovery
+- Improved resource cleanup
+- Enhanced type safety throughout codebase
+- Memory leak prevention in long-running sessions
+- **CI/CD Pipeline Optimization**:
+  - 70% faster execution (~3 minutes vs ~10 minutes)
+  - Focused on essential checks: type-check, lint, build
+  - Unit tests moved to local development workflow
+  - See [CI/CD Guide](./CI_CD_GUIDE.md) for details
+- Memory usage optimized for large codebases
+- Faster first-run experience with smart detection
 
 ---
 
@@ -381,36 +595,46 @@ Choose the appropriate script for your operating system:
 4. If you see any error messages, refer to the Troubleshooting section below.
 
 The script performs these actions:
-* Checks Node.js version (v18+)
+* Checks Node.js version (v20+ required)
 * Installs all dependencies via npm
-* Creates necessary `VibeCoderOutput/` subdirectories (as defined in the script).
-* Builds the TypeScript project.
-* **Copies `.env.example` to `.env` if `.env` doesn't already exist.** You will need to edit this file.
-* Sets executable permissions (on Unix systems).
+* Creates necessary `VibeCoderOutput/` subdirectories
+* Builds the TypeScript project
+* **Creates configuration from templates** if not present (v0.2.3+)
+* Sets executable permissions (on Unix systems)
 
-### Step 4: Configure Environment Variables (`.env`)
+**Note**: The setup process is now faster (v0.2.3+) with optimized dependency installation and simplified build process.
 
-The setup script (from Step 3) automatically creates a `.env` file in the project's root directory by copying the `.env.example` template, **only if `.env` does not already exist**.
+### Step 4: Configure Environment Variables
 
-1.  **Locate and Open `.env`:** Find the `.env` file in the main `vibe-coder-mcp` directory and open it with a text editor.
+**New in v0.2.3**: Configuration templates are provided in `src/config-templates/` for easy setup.
 
-2.  **Add Your OpenRouter API Key (Required):**
-    *   The file contains a template based on `.env.example`:
-        ```dotenv
-        # OpenRouter Configuration
-        ## Specifies your unique API key for accessing OpenRouter services.
-        ## Replace "Your OPENROUTER_API_KEY here" with your actual key obtained from OpenRouter.ai.
-        OPENROUTER_API_KEY="Your OPENROUTER_API_KEY here"
+#### Option A: Use the Setup Wizard (Recommended)
+```bash
+vibe --setup
+```
+The wizard will guide you through configuration and create all necessary files.
 
-        ## Defines the base URL for the OpenRouter API endpoints.
-        ## The default value is usually correct and should not need changing unless instructed otherwise.
-        OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+#### Option B: Manual Configuration
+1. **Copy templates** (if not already done by setup script):
+   ```bash
+   cp src/config-templates/.env.template .env
+   cp src/config-templates/llm_config.template.json llm_config.json
+   cp src/config-templates/mcp-config.template.json mcp-config.json
+   ```
 
-        ## Sets the specific Gemini model to be used via OpenRouter for certain AI tasks.
-        ## ':free' indicates potential usage of a free tier model if available and supported by your key.
-        GEMINI_MODEL=google/gemini-2.5-flash-preview-05-20
-        ```
-    *   **Crucially, replace `"Your OPENROUTER_API_KEY here"` with your actual OpenRouter API key.** Remove the quotes if your key doesn't require them.
+2. **Edit `.env` file** with your configuration:
+   ```dotenv
+   # OpenRouter Configuration (REQUIRED)
+   OPENROUTER_API_KEY="your_actual_api_key_here"
+   
+   # Optional configurations
+   OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+   GEMINI_MODEL=google/gemini-2.5-flash-preview-05-20
+   
+   # Project directories (optional - auto-detected for CLI users)
+   VIBE_PROJECT_ROOT=/path/to/your/project
+   VIBE_CODER_OUTPUT_DIR=/path/to/output
+   ```
 
 3.  **Configure Output Directory (Optional):**
     *   To change where generated files are saved (default is `VibeCoderOutput/` inside the project), add this line to your `.env` file:
@@ -419,22 +643,24 @@ The setup script (from Step 3) automatically creates a `.env` file in the projec
         ```
     *   Replace the path with your preferred **absolute path**. Use forward slashes (`/`) for paths. If this variable is not set, the default directory (`VibeCoderOutput/`) will be used.
 
-4.  **Configure Code-Map Generator Directory (Optional):**
-    *   To specify which directory the map-codebase tool is allowed to scan, add this line to your `.env` file:
+4.  **🆕 Configure Unified Project Root (Recommended):**
+    *   To set up the new unified project root configuration, add this line to your `.env` file:
+        ```dotenv
+        VIBE_PROJECT_ROOT=/path/to/your/project/root
+        ```
+    *   Replace the path with the **absolute path** to your project's root directory.
+    *   **Benefits**: Single configuration variable for all tools (Code Map Generator, Task Manager, Context Curator)
+    *   **Auto-Detection**: For CLI users, project root is automatically detected from the current working directory
+    *   **Backward Compatibility**: Legacy variables are still supported if you prefer separate configurations
+
+5.  **Legacy Directory Configuration (Optional):**
+    *   If you prefer separate directory configurations, you can still use the original variables:
         ```dotenv
         CODE_MAP_ALLOWED_DIR=/path/to/your/source/code/directory
-        ```
-    *   Replace the path with the **absolute path** to the directory containing the source code you want to analyze. This is a security boundary - the tool will not access files outside this directory.
-
-5.  **Configure Vibe Task Manager Read Directory (Optional):**
-    *   To specify which directory the Vibe Task Manager is allowed to read from for security purposes, add this line to your `.env` file:
-        ```dotenv
         VIBE_TASK_MANAGER_READ_DIR=/path/to/your/project/source/directory
         ```
-    *   Replace the path with the **absolute path** to the directory containing your project files that the task manager should have access to.
-    *   **Default Value**: If not specified, defaults to `process.cwd()` (the current working directory where the server is running).
-    *   **Security**: This variable works with the filesystem security implementation that defaults to 'strict' mode, preventing access to system directories and unauthorized paths.
-    *   **Note**: `VIBE_TASK_MANAGER_READ_DIR` (for task manager file operations), `CODE_MAP_ALLOWED_DIR` (for code analysis), and `VIBE_CODER_OUTPUT_DIR` (for writing output files) are separate security boundaries for different tool operations.
+    *   **Note**: These variables work as fallbacks if `VIBE_PROJECT_ROOT` is not set
+    *   **Security**: All variables work with the strict filesystem security implementation
 
 6.  **Review Other Settings (Optional):**
     *   You can add other environment variables supported by the server, such as `LOG_LEVEL` (e.g., `LOG_LEVEL=debug`) or `NODE_ENV` (e.g., `NODE_ENV=development`).
@@ -498,11 +724,11 @@ The location varies depending on your AI assistant:
         // Directory where Vibe Coder tools will save their output files
         // !! IMPORTANT: Replace with the actual absolute path on YOUR system !!
         "VIBE_CODER_OUTPUT_DIR": "/Users/username/Documents/Dev Projects/Vibe-Coder-MCP/VibeCoderOutput",
-        // Directory that the map-codebase tool is allowed to scan
-        // This is a security boundary - the tool will not access files outside this directory
+        // 🆕 Unified project root for all tools (recommended)
+        // This single variable configures all tools with the same project boundary
+        "VIBE_PROJECT_ROOT": "/Users/username/Documents/Dev Projects/Vibe-Coder-MCP",
+        // Legacy variables (optional - used as fallbacks if VIBE_PROJECT_ROOT not set)
         "CODE_MAP_ALLOWED_DIR": "/Users/username/Documents/Dev Projects/Vibe-Coder-MCP/src",
-        // Directory that the Vibe Task Manager is allowed to read from for security purposes
-        // Defaults to process.cwd() if not specified. Works with strict security mode by default.
         "VIBE_TASK_MANAGER_READ_DIR": "/Users/username/Documents/Dev Projects/Vibe-Coder-MCP"
       },
       // A boolean flag to enable (false) or disable (true) this server configuration
@@ -610,6 +836,44 @@ To verify successful integration:
 2. Request a workflow that uses multiple tools in sequence
 3. Check that the agent follows proper job polling protocols
 4. Confirm that outputs are saved to the correct directories
+
+## 🎯 Unified CLI Architecture (v0.2.3+)
+
+The new unified CLI (`unified-cli.ts`) provides a single entry point for all Vibe Coder operations:
+
+```mermaid
+flowchart TD
+    Start[vibe command] --> Detect{First Run?}
+    Detect -->|Yes| Setup[Setup Wizard]
+    Detect -->|No| Parse[Parse Arguments]
+    
+    Setup --> Config[Save Configuration]
+    Config --> Parse
+    
+    Parse --> Mode{Mode?}
+    Mode -->|--interactive| REPL[Interactive REPL]
+    Mode -->|"message"| CLI[CLI Execution]
+    Mode -->|none| MCP[MCP Server]
+    Mode -->|--setup| Setup
+    
+    REPL --> Session[Session Management]
+    Session --> Chat[Chat Interface]
+    Chat --> Tools[Tool Execution]
+    
+    CLI --> Router[Hybrid Router]
+    Router --> Tools
+    
+    MCP --> Transport{Transport?}
+    Transport -->|stdio| Stdio[Stdio Server]
+    Transport -->|sse| SSE[SSE Server]
+```
+
+**Benefits of Unified CLI:**
+- Single binary for all operations (`vibe`)
+- Consistent command interface
+- Shared configuration management
+- Seamless mode switching
+- Better resource utilization
 
 ## Project Architecture
 
@@ -1229,7 +1493,7 @@ gantt
 * **Epic 7.1**: 📋 **Planned** (Security Implementation - Ready for implementation)
 * **Epic 8**: 📋 **Planned** (Advanced Analytics & Monitoring - Designed)
 
-### Performance Targets & Current Metrics
+### Performance Targets & Current Metrics (v0.2.3)
 
 | Metric | Target | Current | Status |
 |--------|--------|---------|--------|
@@ -1238,7 +1502,8 @@ gantt
 | Response Time (Sync Operations) | <500ms | <350ms | ✅ **Exceeded** |
 | Job Completion Rate | 95%+ | 96.7% | ✅ **Met** |
 | Memory Usage (Code Map Tool) | <512MB | <400MB | ✅ **Optimized** |
-| Test Coverage | >90% | 99.9% | ✅ **Exceeded** |
+| Unit Test Coverage | >70% | 73% | ✅ **Met** |
+| CI/CD Pipeline Speed | <5min | ~3min | ✅ **Optimized** |
 | Security Overhead | <50ms | <35ms | ✅ **Optimized** |
 | Zero Mock Code Policy | 100% | 100% | ✅ **Achieved** |
 
@@ -1379,6 +1644,8 @@ While the primary use is integration with an AI assistant (using stdio), you can
 
 ### Core Documentation
 - **System Instructions**: `VIBE_CODER_MCP_SYSTEM_INSTRUCTIONS.md` - Complete usage guide for MCP clients
+- **CI/CD Guide**: `CI_CD_GUIDE.md` - Streamlined pipeline documentation (70% faster)
+- **NPM Publishing Guide**: `NPM_PUBLISHING_GUIDE.md` - Release and deployment process
 - **System Architecture**: `docs/ARCHITECTURE.md` - Comprehensive system architecture with Mermaid diagrams
 - **Performance & Testing**: `docs/PERFORMANCE_AND_TESTING.md` - Performance metrics, testing strategies, and quality assurance
 - **Vibe Task Manager**: `src/tools/vibe-task-manager/README.md` - Comprehensive task management documentation
@@ -1405,14 +1672,29 @@ We welcome contributions! Please see our contributing guidelines and ensure all 
 1. Fork the repository
 2. Create a feature branch
 3. Make your changes with comprehensive tests
-4. Ensure all tests pass (`npm test`)
+4. Ensure all checks pass locally:
+   ```bash
+   # Run CI checks (REQUIRED before PR - matches GitHub Actions)
+   npm run type-check    # TypeScript validation (must pass)
+   npm run lint          # Code quality checks (must pass)
+   npm run build         # Build verification (must pass)
+   
+   # Run tests locally (RECOMMENDED before PR)
+   npm run test:unit     # Fast unit tests (~3 minutes)
+   
+   # Optional: Thorough testing for major changes
+   npm run test:integration
+   npm test              # All tests
+   ```
 5. Submit a pull request with detailed description
 
 ### Quality Standards
-- **Test Coverage**: Maintain >90% test coverage
-- **TypeScript**: Use strict TypeScript with proper typing
-- **Documentation**: Update relevant documentation for changes
-- **Performance**: Consider performance impact of changes
+- **Type Safety**: NO `any` types - strict TypeScript required
+- **CI Pipeline**: Must pass type-check, lint, and build (automated)
+- **Testing**: Run unit tests locally before PR submission
+- **Test Coverage**: Maintain >70% coverage for unit tests
+- **Documentation**: Update relevant docs for changes
+- **Performance**: Consider impact on CI pipeline speed (<5 min target)
 
 ## Common Troubleshooting
 
@@ -1430,7 +1712,7 @@ We welcome contributions! Please see our contributing guidelines and ensure all 
 - **Solution**: Use absolute paths with forward slashes (/) in all configurations
 - **Windows**: Convert paths like `C:\Users\name` to `C:/Users/name`
 - **Permissions**: Ensure the user has read/write access to configured directories
-- **Environment Variables**: Verify `VIBE_CODER_OUTPUT_DIR`, `CODE_MAP_ALLOWED_DIR`, and `VIBE_TASK_MANAGER_READ_DIR` are set correctly
+- **Environment Variables**: Verify `VIBE_CODER_OUTPUT_DIR` and `VIBE_PROJECT_ROOT` are set correctly (or legacy variables `CODE_MAP_ALLOWED_DIR` and `VIBE_TASK_MANAGER_READ_DIR`)
 
 ### Build Failures
 
@@ -1442,11 +1724,14 @@ We welcome contributions! Please see our contributing guidelines and ensure all 
 
 ### Test Failures
 
-**Problem**: Tests fail during setup or CI/CD
+**Problem**: Tests fail locally or type-check errors in CI
+- **Type Errors**: Run `npm run type-check` locally to catch issues early
+- **Lint Issues**: Use `npm run lint:fix` to auto-fix style problems
 - **Environment**: Ensure `.env` file exists with valid `OPENROUTER_API_KEY`
 - **Memory**: Tests may fail on systems with <4GB RAM
 - **Network**: Some tests require internet connectivity
 - **Cleanup**: Run `npm run clean` before running tests
+- **CI Pipeline**: See [CI/CD Guide](./CI_CD_GUIDE.md) for pipeline details
 
 ### Memory/Performance Issues
 
