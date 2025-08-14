@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7] - 2025-08-14
+
+### Fixed
+- **Missing Configuration Files in NPM Package**
+  - Added `llm_config.json` and `job-timeout-config.json` to package files array
+  - Resolved "Failed to read file" errors for configuration loading
+  - Ensures complete package functionality out of the box
+  - All essential configuration files now properly bundled with npm package
+
+### Changed
+- **Package Completeness**
+  - Updated package.json files field to include all necessary configuration files
+  - Enhanced npm package integrity for production deployments
+  - Improved reliability of global package installations
+
+## [0.2.6] - 2025-08-14
+
+### Fixed
+- **Runtime Dependency Issues**
+  - Moved `@xenova/transformers` from devDependencies to dependencies
+  - Resolved "Cannot find package '@xenova/transformers'" errors
+  - Ensures all semantic matching and embedding functionality works correctly
+  - Fixed CLI startup failures related to missing runtime dependencies
+
+### Changed
+- **Dependency Management**
+  - Corrected package.json dependency placement for production use
+  - Enhanced package reliability for npm installations
+  - Improved runtime dependency resolution
+
 ## [0.2.5] - 2025-08-14
 
 ### Fixed
