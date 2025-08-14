@@ -16,6 +16,7 @@ import logger from './logger.js';
 import { OpenRouterConfigManager } from './utils/openrouter-config-manager.js';
 import { UserConfigManager } from './utils/user-config-manager.js';
 import { ConfigValidator } from './utils/config-validator.js';
+import { TransportContext } from './index-with-setup.js';
 
 // Get project root directory
 const __filename = fileURLToPath(import.meta.url);
@@ -103,62 +104,117 @@ export class SetupWizard {
   private userConfigManager: UserConfigManager;
   private configValidator: ConfigValidator;
   private isInteractive: boolean;
+  private transportContext?: TransportContext;
 
-  constructor() {
-    this.envPath = path.join(projectRoot, '.env');
-    this.configPath = path.join(projectRoot, '.vibe-config.json');
+  constructor(transportContext?: TransportContext) {
+    this.transportContext = transportContext;
+    this.envPath = this.resolveEnvPath();
+    this.configPath = this.resolveConfigPath();
     this.userConfigManager = UserConfigManager.getInstance();
     this.configValidator = ConfigValidator.getInstance();
     this.isInteractive = process.stdin.isTTY && !process.env.CI;
   }
 
   /**
-   * Check if this is the first run using multiple indicators
+   * Resolve .env file path based on transport context
+   * For CLI: Save to user's working directory
+   * For Server: Save to package directory (existing behavior)
+   */
+  private resolveEnvPath(): string {
+    if (this.transportContext?.transportType === 'cli' && this.transportContext.workingDirectory) {
+      return path.join(this.transportContext.workingDirectory, '.env');
+    }
+    return path.join(projectRoot, '.env');
+  }
+
+  /**
+   * Resolve config file path based on transport context
+   * For CLI: Save to user's working directory  
+   * For Server: Save to package directory (existing behavior)
+   */
+  private resolveConfigPath(): string {
+    if (this.transportContext?.transportType === 'cli' && this.transportContext.workingDirectory) {
+      return path.join(this.transportContext.workingDirectory, '.vibe-config.json');
+    }
+    return path.join(projectRoot, '.vibe-config.json');
+  }
+
+  /**
+   * Check if this is the first run using context-aware detection
+   * For CLI: Checks user's working directory for configuration
+   * For Server: Checks package directory for configuration (existing behavior)
    */
   async isFirstRun(): Promise<boolean> {
-    // First, check if .env file exists and load it if not already loaded
-    // This ensures we don't miss existing configuration
-    if (await fs.pathExists(this.envPath) && !process.env.OPENROUTER_API_KEY) {
-      try {
-        // Load environment variables from .env file
-        const dotenv = await import('dotenv');
-        dotenv.config({ path: this.envPath });
-        logger.debug('Loaded .env file in isFirstRun check');
-      } catch (error) {
-        logger.warn({ err: error }, 'Failed to load .env in isFirstRun check');
+    try {
+      // For CLI transport, use the OpenRouterConfigManager's context-aware method
+      if (this.transportContext?.transportType === 'cli') {
+        const configManager = OpenRouterConfigManager.getInstance();
+        const hasValidConfig = await configManager.hasValidConfigInUserProject(this.transportContext);
+        
+        logger.info({
+          transportType: 'cli',
+          workingDirectory: this.transportContext.workingDirectory,
+          hasValidConfig,
+          isFirstRun: !hasValidConfig
+        }, 'CLI first-run detection completed');
+        
+        return !hasValidConfig;
       }
-    }
-    
-    // Check multiple conditions for robust detection
-    const checks = [
-      // 1. Check for API key in environment (after loading .env if it exists)
-      !process.env.OPENROUTER_API_KEY,
+
+      // For server transports, use existing logic with package directory
+      await this.loadAndCheckPackageConfig();
       
-      // 2. Check for .env file in project
-      !await fs.pathExists(this.envPath),
+      const checks = [
+        // 1. Check for API key in environment
+        !process.env.OPENROUTER_API_KEY,
+        
+        // 2. Check for .env file in package directory
+        !await fs.pathExists(this.envPath),
+        
+        // 3. Check for llm_config.json in package directory
+        !await fs.pathExists(path.join(projectRoot, 'llm_config.json')),
+        
+        // 4. Check for user config directory
+        !await fs.pathExists(this.userConfigManager.getUserConfigDir())
+      ];
       
-      // 3. Check for llm_config.json
-      !await fs.pathExists(path.join(projectRoot, 'llm_config.json')),
+      // For server: ALL conditions must be satisfied (not first run)
+      const isFirstRun = checks.some(check => check);
       
-      // 4. Check for user config directory
-      !await fs.pathExists(this.userConfigManager.getUserConfigDir())
-    ];
-    
-    // If any check fails, consider it first run
-    const isFirstRun = checks.some(check => check);
-    
-    if (isFirstRun) {
       logger.info({
+        transportType: this.transportContext?.transportType || 'server',
         checks: {
           hasApiKey: !checks[0],
           hasEnvFile: !checks[1],
           hasLlmConfig: !checks[2],
           hasUserConfig: !checks[3]
-        }
-      }, 'First run detected');
+        },
+        isFirstRun
+      }, 'Server first-run detection completed');
+      
+      return isFirstRun;
+      
+    } catch (error) {
+      logger.error({ err: error, context: this.transportContext }, 'Error during first-run detection');
+      // Default to first run if detection fails to ensure setup runs
+      return true;
     }
-    
-    return isFirstRun;
+  }
+
+  /**
+   * Load and check package configuration for server transports
+   */
+  private async loadAndCheckPackageConfig(): Promise<void> {
+    // Load .env from package directory if it exists and API key not already loaded
+    if (await fs.pathExists(this.envPath) && !process.env.OPENROUTER_API_KEY) {
+      try {
+        const dotenv = await import('dotenv');
+        dotenv.config({ path: this.envPath });
+        logger.debug({ envPath: this.envPath }, 'Loaded .env file for server first-run check');
+      } catch (error) {
+        logger.warn({ err: error, envPath: this.envPath }, 'Failed to load .env file for server first-run check');
+      }
+    }
   }
 
   /**
@@ -435,6 +491,81 @@ export class SetupWizard {
   }
 
   /**
+   * Create .env file at specific path (helper for dual-location saving)
+   */
+  private async createEnvFileAtPath(config: SetupConfig, envPath: string): Promise<void> {
+    let envContent = '# Vibe Coder MCP Configuration\n';
+    envContent += '# Generated by setup wizard\n\n';
+    
+    // Required configuration
+    envContent += '# Required: Your OpenRouter API key\n';
+    envContent += `OPENROUTER_API_KEY="${config.OPENROUTER_API_KEY}"\n\n`;
+    
+    // Unified Configuration (if selected)
+    if (config.useUnifiedConfig && config.VIBE_PROJECT_ROOT) {
+      envContent += '# Unified Project Root Configuration (Recommended)\n';
+      envContent += `VIBE_PROJECT_ROOT="${config.VIBE_PROJECT_ROOT}"\n`;
+      if (config.VIBE_USE_PROJECT_ROOT_AUTO_DETECTION) {
+        envContent += `VIBE_USE_PROJECT_ROOT_AUTO_DETECTION="${config.VIBE_USE_PROJECT_ROOT_AUTO_DETECTION}"\n`;
+      }
+      envContent += '\n';
+    }
+    
+    // Directory Configuration
+    envContent += '# Directory Configuration\n';
+    envContent += `VIBE_CODER_OUTPUT_DIR="${config.VIBE_CODER_OUTPUT_DIR}"\n`;
+    
+    // Legacy configuration (only if unified not used)
+    if (!config.useUnifiedConfig || config.configureDirs) {
+      envContent += '\n# Legacy Directory Configuration (Fallbacks)\n';
+      envContent += `CODE_MAP_ALLOWED_DIR="${config.CODE_MAP_ALLOWED_DIR}"\n`;
+      envContent += `VIBE_TASK_MANAGER_READ_DIR="${config.VIBE_TASK_MANAGER_READ_DIR}"\n`;
+      envContent += `VIBE_TASK_MANAGER_SECURITY_MODE="${config.VIBE_TASK_MANAGER_SECURITY_MODE}"\n`;
+    }
+    envContent += '\n';
+    
+    // Advanced configuration
+    envContent += '# Advanced Configuration\n';
+    envContent += `OPENROUTER_BASE_URL="${config.OPENROUTER_BASE_URL}"\n`;
+    envContent += `GEMINI_MODEL="${config.GEMINI_MODEL}"\n`;
+    envContent += `PERPLEXITY_MODEL="${config.PERPLEXITY_MODEL}"\n`;
+    
+    await fs.writeFile(envPath, envContent, 'utf-8');
+  }
+
+  /**
+   * Save configuration JSON at specific path (helper for dual-location saving)
+   */
+  private async saveConfigJsonAtPath(config: SetupConfig, configPath: string): Promise<void> {
+    const configData = {
+      version: '1.0.0',
+      setupDate: new Date().toISOString(),
+      unified: {
+        enabled: config.useUnifiedConfig || false,
+        projectRoot: config.VIBE_PROJECT_ROOT,
+        autoDetection: config.VIBE_USE_PROJECT_ROOT_AUTO_DETECTION
+      },
+      directories: {
+        output: config.VIBE_CODER_OUTPUT_DIR,
+        codeMap: config.CODE_MAP_ALLOWED_DIR,
+        taskManager: config.VIBE_TASK_MANAGER_READ_DIR
+      },
+      security: {
+        mode: config.VIBE_TASK_MANAGER_SECURITY_MODE
+      },
+      models: {
+        gemini: config.GEMINI_MODEL,
+        perplexity: config.PERPLEXITY_MODEL
+      },
+      api: {
+        baseUrl: config.OPENROUTER_BASE_URL
+      }
+    };
+    
+    await fs.writeJson(configPath, configData, { spaces: 2 });
+  }
+
+  /**
    * Test API key with visual feedback
    */
   private async testApiKey(apiKey: string): Promise<boolean> {
@@ -546,38 +677,140 @@ Or run interactively with a TTY terminal.
   }
 
   /**
-   * Save configuration with UserConfigManager integration
+   * Save configuration with context-aware dual-location strategy
+   * For CLI: Save to user's working directory + package directory as fallback
+   * For Server: Save to package directory + user config directory
    */
   private async saveEnhancedConfiguration(config: SetupConfig): Promise<void> {
-    // Ensure user config directory exists
-    await this.userConfigManager.ensureUserConfigDir();
-    
-    // Save to multiple locations for compatibility
-    const locations = [
-      // 1. User config directory (primary)
-      {
-        dir: path.join(this.userConfigManager.getUserConfigDir(), 'configs'),
-        priority: 1
-      },
-      // 2. Project directory (backward compatibility)
-      {
-        dir: projectRoot,
-        priority: 2
+    const savedLocations: string[] = [];
+    const errors: Array<{ location: string; error: unknown }> = [];
+
+    try {
+      // Always ensure user config directory exists
+      await this.userConfigManager.ensureUserConfigDir();
+
+      if (this.transportContext?.transportType === 'cli' && this.transportContext.workingDirectory) {
+        // CLI: Save to user's working directory (primary) + package directory (fallback)
+        await this.saveCLIConfiguration(config, savedLocations, errors);
+      } else {
+        // Server: Save to package directory + user config directory
+        await this.saveServerConfiguration(config, savedLocations, errors);
       }
-    ];
+
+      // Report results
+      if (savedLocations.length > 0) {
+        logger.info({ 
+          savedLocations, 
+          transportType: this.transportContext?.transportType || 'server',
+          errorCount: errors.length 
+        }, 'Configuration saved successfully');
+      }
+
+      if (errors.length > 0) {
+        logger.warn({ 
+          errors: errors.map(e => ({ location: e.location, error: String(e.error) })),
+          successfulLocations: savedLocations
+        }, 'Some configuration saves failed, but at least one succeeded');
+      }
+
+      if (savedLocations.length === 0) {
+        throw new Error('Failed to save configuration to any location');
+      }
+
+    } catch (error) {
+      logger.error({ err: error, context: this.transportContext }, 'Configuration saving failed completely');
+      throw error;
+    }
+  }
+
+  /**
+   * Save configuration for CLI transport
+   */
+  private async saveCLIConfiguration(
+    config: SetupConfig, 
+    savedLocations: string[], 
+    errors: Array<{ location: string; error: unknown }>
+  ): Promise<void> {
+    const userProjectDir = this.transportContext!.workingDirectory!;
     
-    for (const location of locations) {
-      try {
-        // Create .env file
-        await this.createEnvFile(config);
-        
-        // Copy template files if they don't exist
-        await this.userConfigManager.copyDefaultConfigs();
-        
-      } catch (error) {
-        logger.warn({ err: error, location }, 'Failed to save config to location');
+    // Priority 1: User's working directory (primary location for CLI)
+    try {
+      await this.saveConfigToDirectory(config, userProjectDir, 'user-project');
+      savedLocations.push(userProjectDir);
+      logger.info({ userProjectDir }, 'Configuration saved to user project directory');
+    } catch (error) {
+      errors.push({ location: userProjectDir, error });
+      logger.warn({ err: error, userProjectDir }, 'Failed to save config to user project directory');
+    }
+
+    // Priority 2: Package directory (fallback for CLI)
+    try {
+      await this.saveConfigToDirectory(config, projectRoot, 'package-fallback');
+      savedLocations.push(projectRoot);
+      logger.info({ packageRoot: projectRoot }, 'Configuration saved to package directory as fallback');
+    } catch (error) {
+      errors.push({ location: projectRoot, error });
+      logger.warn({ err: error, packageRoot: projectRoot }, 'Failed to save config to package directory');
+    }
+  }
+
+  /**
+   * Save configuration for server transport
+   */
+  private async saveServerConfiguration(
+    config: SetupConfig, 
+    savedLocations: string[], 
+    errors: Array<{ location: string; error: unknown }>
+  ): Promise<void> {
+    // Priority 1: Package directory (primary for server)
+    try {
+      await this.saveConfigToDirectory(config, projectRoot, 'package-primary');
+      savedLocations.push(projectRoot);
+      logger.info({ packageRoot: projectRoot }, 'Configuration saved to package directory');
+    } catch (error) {
+      errors.push({ location: projectRoot, error });
+      logger.warn({ err: error, packageRoot: projectRoot }, 'Failed to save config to package directory');
+    }
+
+    // Priority 2: User config directory (secondary for server)
+    try {
+      const userConfigDir = path.join(this.userConfigManager.getUserConfigDir(), 'configs');
+      await this.saveConfigToDirectory(config, userConfigDir, 'user-config');
+      savedLocations.push(userConfigDir);
+      logger.info({ userConfigDir }, 'Configuration saved to user config directory');
+    } catch (error) {
+      const userConfigDir = path.join(this.userConfigManager.getUserConfigDir(), 'configs');
+      errors.push({ location: userConfigDir, error });
+      logger.warn({ err: error, userConfigDir }, 'Failed to save config to user config directory');
+    }
+  }
+
+  /**
+   * Save configuration files to a specific directory
+   */
+  private async saveConfigToDirectory(config: SetupConfig, targetDir: string, context: string): Promise<void> {
+    // Ensure target directory exists
+    await fs.ensureDir(targetDir);
+
+    // Save .env file
+    const envPath = path.join(targetDir, '.env');
+    await this.createEnvFileAtPath(config, envPath);
+
+    // Save .vibe-config.json file
+    const configPath = path.join(targetDir, '.vibe-config.json');
+    await this.saveConfigJsonAtPath(config, configPath);
+
+    // Copy llm_config.json if it doesn't exist in target directory
+    const llmConfigPath = path.join(targetDir, 'llm_config.json');
+    if (!await fs.pathExists(llmConfigPath)) {
+      const templateLLMConfigPath = path.join(projectRoot, 'llm_config.json');
+      if (await fs.pathExists(templateLLMConfigPath)) {
+        await fs.copy(templateLLMConfigPath, llmConfigPath);
+        logger.debug({ source: templateLLMConfigPath, dest: llmConfigPath }, 'Copied llm_config.json to target directory');
       }
     }
+
+    logger.debug({ targetDir, context }, 'Configuration files saved to directory');
   }
 
   /**
@@ -661,7 +894,12 @@ Or run interactively with a TTY terminal.
   }
 }
 
-// Export singleton instance
+// Export factory function for context-aware setup wizard instances
+export function createSetupWizard(transportContext?: TransportContext): SetupWizard {
+  return new SetupWizard(transportContext);
+}
+
+// Export singleton instance (backward compatibility for server usage)
 export const setupWizard = new SetupWizard();
 
 // If run directly, execute the wizard
