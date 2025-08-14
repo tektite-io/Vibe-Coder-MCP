@@ -143,6 +143,8 @@ export class OpenRouterConfigManager {
           VIBE_TASK_MANAGER_READ_DIR: process.env.VIBE_TASK_MANAGER_READ_DIR,
           VIBE_CODER_OUTPUT_DIR: process.env.VIBE_CODER_OUTPUT_DIR,
           CODE_MAP_ALLOWED_DIR: process.env.CODE_MAP_ALLOWED_DIR,
+          VIBE_PROJECT_ROOT: process.env.VIBE_PROJECT_ROOT,
+          VIBE_USE_PROJECT_ROOT_AUTO_DETECTION: process.env.VIBE_USE_PROJECT_ROOT_AUTO_DETECTION,
           VIBE_TASK_MANAGER_SECURITY_MODE: process.env.VIBE_TASK_MANAGER_SECURITY_MODE as 'strict' | 'permissive' | undefined,
           LOG_LEVEL: process.env.LOG_LEVEL,
           NODE_ENV: process.env.NODE_ENV,

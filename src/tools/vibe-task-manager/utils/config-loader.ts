@@ -13,7 +13,7 @@ import {
   validateAllEnvironmentVariables
 } from './config-defaults.js';
 import logger from '../../../logger.js';
-import { getProjectRootSafe, logWorkingDirectorySafety } from '../../../utils/safe-path-resolver.js';
+import { logWorkingDirectorySafety } from '../../../utils/safe-path-resolver.js';
 import { getProjectRoot } from '../../code-map-generator/utils/pathUtils.enhanced.js';
 
 /**
@@ -889,6 +889,67 @@ function validateExtractedSecurityConfig(
 }
 
 /**
+ * Resolves the unified project root directory following the same priority chain as UnifiedSecurityConfig
+ * but without requiring the security config to be initialized (for use in config-loader).
+ * @param config Optional OpenRouter configuration object
+ * @returns The resolved project root directory
+ */
+function resolveUnifiedProjectRootForConfig(config?: OpenRouterConfig): string {
+  try {
+    // Priority 1: VIBE_PROJECT_ROOT environment variable
+    const unifiedProjectRoot = process.env.VIBE_PROJECT_ROOT;
+    if (unifiedProjectRoot?.trim()) {
+      logger.debug({ 
+        unifiedProjectRoot,
+        priorityUsed: 'env-var'
+      }, 'Config-loader using VIBE_PROJECT_ROOT environment variable');
+      return unifiedProjectRoot.trim();
+    }
+
+    // Priority 2: MCP client config (if provided)
+    if (config?.env?.VIBE_PROJECT_ROOT) {
+      const mcpProjectRoot = config.env.VIBE_PROJECT_ROOT;
+      logger.debug({ 
+        mcpProjectRoot,
+        priorityUsed: 'mcp-config'
+      }, 'Config-loader using VIBE_PROJECT_ROOT from MCP client config');
+      return mcpProjectRoot;
+    }
+
+    // Priority 3: Legacy environment variables
+    const legacyTaskManagerDir = process.env.VIBE_TASK_MANAGER_READ_DIR;
+    if (legacyTaskManagerDir?.trim()) {
+      logger.debug({ 
+        legacyTaskManagerDir,
+        priorityUsed: 'legacy-task-manager'
+      }, 'Config-loader using legacy VIBE_TASK_MANAGER_READ_DIR');
+      return legacyTaskManagerDir.trim();
+    }
+
+    const legacyCodeMapDir = process.env.CODE_MAP_ALLOWED_DIR;
+    if (legacyCodeMapDir?.trim()) {
+      logger.debug({ 
+        legacyCodeMapDir,
+        priorityUsed: 'legacy-code-map'
+      }, 'Config-loader using legacy CODE_MAP_ALLOWED_DIR');
+      return legacyCodeMapDir.trim();
+    }
+
+    // Priority 4: Fallback to current working directory
+    const fallbackDir = process.cwd();
+    logger.debug({ 
+      fallbackDir,
+      priorityUsed: 'cwd-fallback'
+    }, 'Config-loader using process.cwd() as fallback');
+    return fallbackDir;
+
+  } catch (error) {
+    logger.error({ err: error }, 'Error resolving unified project root in config-loader, using process.cwd()');
+    return process.cwd();
+  }
+}
+
+/**
  * Extracts and validates the Vibe Task Manager security configuration from the MCP client config.
  * This follows the same pattern as the Code Map Generator's extractCodeMapConfig function.
  * @param config The OpenRouter configuration object from MCP client
@@ -947,14 +1008,14 @@ export function extractVibeTaskManagerSecurityConfig(config?: OpenRouterConfig):
   // SECURITY CHECK: Log working directory safety before path resolution
   logWorkingDirectorySafety();
 
-  // Apply environment variable fallbacks with SAFE path resolution
+  // Apply environment variable fallbacks with UNIFIED path resolution
   const allowedReadDirectory: string = securityConfig.allowedReadDirectory ||
                                       process.env.VIBE_TASK_MANAGER_READ_DIR ||
-                                      getProjectRootSafe(); // SECURITY FIX: Use safe project root
+                                      resolveUnifiedProjectRootForConfig(config); // UNIFIED FIX: Use unified project root
 
   const allowedWriteDirectory: string = securityConfig.allowedWriteDirectory ||
                                        process.env.VIBE_CODER_OUTPUT_DIR ||
-                                       path.join(getProjectRootSafe(), 'VibeCoderOutput'); // SECURITY FIX: Use safe project root
+                                       path.join(resolveUnifiedProjectRootForConfig(config), 'VibeCoderOutput'); // UNIFIED FIX: Use unified project root
 
   const securityMode: 'strict' | 'permissive' = (securityConfig.securityMode ||
                                                 process.env.VIBE_TASK_MANAGER_SECURITY_MODE ||
