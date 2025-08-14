@@ -1,6 +1,6 @@
 # Vibe Task Manager - AI-Native Task Management System
 
-**Status**: Production Ready (v1.2.0) | **Test Success Rate**: 99.9% | **Zero Mock Code Policy**: ✅ Achieved
+**Version**: 0.2.3 | **Status**: Production Ready | **Test Success Rate**: 99.9% | **Zero Mock Code Policy**: ✅ Achieved
 
 ## Overview
 
@@ -82,6 +82,35 @@ flowchart TD
 
 ## Command Structure
 
+### CLI Usage with Unified Vibe Command (v0.2.3+)
+
+The Vibe Task Manager can be invoked through the unified CLI:
+
+```bash
+# Using the global vibe command
+vibe "create a new project for my React app"
+vibe "decompose the authentication feature into tasks"
+vibe "show me all pending tasks"
+vibe "parse the PRD for my e-commerce project"
+
+# Interactive mode for continuous task management
+vibe --interactive
+> create project for mobile app with React Native
+> list all my projects
+> decompose user authentication into atomic tasks
+> import task list from document
+
+# Setup wizard for configuration
+vibe --setup
+```
+
+**Unified CLI Features:**
+- **Single Command**: One `vibe` command for all operations
+- **Natural Language**: Plain English for all task operations
+- **Auto-Detection**: Automatic project root detection
+- **Interactive Mode**: Continuous conversation with session persistence
+- **Zero Configuration**: Works immediately for CLI users
+
 ### Natural Language Commands (Recommended)
 
 ```bash
@@ -108,24 +137,26 @@ flowchart TD
 "Load task list from document"
 ```
 
-### Structured Commands
+### Structured Commands (Legacy - Use Unified CLI Instead)
+
+Note: These commands are maintained for backward compatibility. We recommend using the unified `vibe` command for all operations.
 
 ```bash
-# Project Operations
+# Project Operations (Legacy)
 vibe-task-manager create project "Project Name" "Description" [--options]
 vibe-task-manager list projects [--status pending|in_progress|completed]
 vibe-task-manager status project-id [--detailed]
 
-# Task Operations
+# Task Operations (Legacy)
 vibe-task-manager create task "Task Title" "Description" --project-id PID --epic-id EID
 vibe-task-manager list tasks [--project-id PID] [--status STATUS]
 vibe-task-manager run task task-id [--force]
 
-# Advanced Operations
+# Advanced Operations (Legacy)
 vibe-task-manager decompose task-id|project-name [--description "Additional context"]
 vibe-task-manager refine task-id "Refinement description"
 
-# Artifact Parsing Operations (NEW)
+# Artifact Parsing Operations (Legacy)
 vibe-task-manager parse prd [--project-name "Project Name"] [--file "path/to/prd.md"]
 vibe-task-manager parse tasks [--project-name "Project Name"] [--file "path/to/tasks.md"]
 vibe-task-manager import artifact --type prd|tasks --file "path/to/file.md" [--project-name "Name"]
@@ -245,6 +276,37 @@ interface VibeTaskManagerConfig {
   };
 }
 ```
+
+### 🆕 Unified Project Root Configuration (v0.2.4+)
+
+The Vibe Task Manager now supports unified project root detection for simplified configuration:
+
+#### Directory Security Configuration
+
+The task manager's security boundaries are now managed through the UnifiedSecurityConfigManager:
+
+```bash
+# Unified configuration (recommended)
+VIBE_PROJECT_ROOT="/path/to/your/project"
+VIBE_USE_PROJECT_ROOT_AUTO_DETECTION="true"
+
+# Legacy configuration (backward compatible)
+VIBE_TASK_MANAGER_READ_DIR="/path/to/your/project"
+```
+
+#### Auto-Detection Features
+
+- **CLI Users**: Automatic project root detection from current working directory
+- **MCP Clients**: Uses `VIBE_PROJECT_ROOT` environment variable
+- **Fallback**: Legacy `VIBE_TASK_MANAGER_READ_DIR` variable still supported
+- **Transport Context**: Different behavior for CLI vs MCP client usage
+
+#### Benefits
+
+- **Simplified Setup**: One variable replaces tool-specific configurations
+- **Zero Configuration**: CLI users get automatic project detection  
+- **Security Boundaries**: Maintains strict file access controls
+- **Backward Compatible**: Existing configurations continue to work
 
 ## File Storage Structure
 
@@ -494,6 +556,85 @@ flowchart TD
 
     TaskManager --> Decompose[Task Decomposition]
     TaskManager --> Execute[Task Execution]
+```
+
+## Integration with CLI Infrastructure (v0.2.3+)
+
+The Vibe Task Manager is deeply integrated with the unified CLI infrastructure:
+
+### Unified CLI Architecture
+- **Single Entry Point**: All task operations through `vibe` command
+- **Intent Recognition**: Advanced NLP for natural language commands
+- **Session Management**: Persistent context in interactive mode
+- **Multi-Transport**: Supports stdio, SSE, WebSocket, and HTTP
+
+### Enhanced Features with CLI
+
+#### Real-time Progress Tracking
+```mermaid
+flowchart LR
+    Task[Task Decomposition] --> Event[Progress Event]
+    Event --> SSE[SSE Stream]
+    SSE --> CLI[CLI Display]
+    CLI --> User[User Feedback]
+```
+
+Progress events are streamed in real-time:
+- Decomposition phases (10% → 100%)
+- Task creation notifications
+- Dependency analysis updates
+- Completion confirmations
+
+#### Interactive Workflow
+```bash
+vibe --interactive
+> create project for e-commerce platform
+✓ Project created: P001-ecommerce-platform
+
+> decompose the project
+⠸ Decomposing project... [45%]
+  ✓ Context enrichment completed
+  ✓ Task generation in progress
+  → Creating atomic tasks...
+
+> show progress
+Current Progress: 75%
+- Tasks created: 45/60
+- Dependencies mapped: 30/45
+- Estimated completion: 30 seconds
+```
+
+### Configuration Integration
+- **Auto-Detection**: Project root automatically detected from CWD
+- **Template System**: Uses templates from `src/config-templates/`
+- **Environment Sync**: Reads from `.env` for API keys and settings
+- **Validation**: Automatic configuration validation on startup
+
+### Transport Coordination
+The Task Manager works seamlessly across all transport types:
+
+| Transport | Use Case | Features |
+|-----------|----------|----------|
+| stdio (MCP) | Claude Desktop | Full bidirectional communication |
+| SSE | Web clients | Real-time progress streaming |
+| WebSocket | Interactive apps | Persistent connections |
+| HTTP | REST API | Stateless operations |
+
+### CLI-Specific Enhancements
+- **Command Suggestions**: Intelligent command completion
+- **Batch Operations**: Process multiple tasks in sequence
+- **Pipeline Support**: Chain commands with Unix pipes
+- **Export Formats**: Multiple output formats (JSON, Markdown, CSV)
+
+### Setup Wizard Integration
+The Task Manager is automatically configured during setup:
+```bash
+vibe --setup
+# Automatically configures:
+# - Project directories
+# - API keys
+# - Output paths
+# - Task manager settings
 ```
 
 ## Contributing

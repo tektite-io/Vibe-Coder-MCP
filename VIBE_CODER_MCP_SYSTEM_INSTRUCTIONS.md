@@ -10,7 +10,11 @@
 
 **Quick Start:**
 ```bash
+# Zero configuration for CLI users (v0.2.4+)
 npx vibe-coder-mcp
+
+# Or run the setup wizard for custom configuration
+npx vibe-coder-mcp --setup
 ```
 
 **MCP Client Configuration:**
@@ -21,7 +25,9 @@ npx vibe-coder-mcp
       "command": "npx",
       "args": ["vibe-coder-mcp"],
       "env": {
-        "OPENROUTER_API_KEY": "your_api_key_here"
+        "OPENROUTER_API_KEY": "your_api_key_here",
+        "VIBE_PROJECT_ROOT": "/path/to/your/project",
+        "VIBE_CODER_OUTPUT_DIR": "/path/to/output"
       }
     }
   }
@@ -294,11 +300,27 @@ flowchart TD
 
 ### Configuration Management
 
+**🆕 Unified Configuration (v0.2.4+)**:
+- **Single Project Root**: One `VIBE_PROJECT_ROOT` variable replaces multiple tool-specific paths
+- **Zero Configuration**: CLI automatically detects project root when run from project directory
+- **Setup Wizard**: Interactive configuration for first-time users (`vibe --setup`)
+- **Configuration Templates**: Pre-configured templates in `src/config-templates/`
+  - `.env.template`: Environment variables with documentation
+  - `llm_config.template.json`: LLM model mappings
+  - `mcp-config.template.json`: Tool-specific settings
+
 **OpenRouterConfigManager**:
 - Centralized LLM configuration loading
 - Task-specific model mapping via `llm_config.json`
 - Configuration validation and warnings
 - Deep copy for thread safety
+
+**Configuration Priority Order**:
+1. CLI auto-detection (if enabled)
+2. `VIBE_PROJECT_ROOT` environment variable
+3. MCP client configuration
+4. Legacy environment variables (backward compatible)
+5. Current working directory (fallback)
 
 **Example llm_config.json Structure**:
 ```json
@@ -519,10 +541,8 @@ The vibe-task-manager supports exactly 21 intent patterns:
       "transport": "stdio",
       "env": {
         "OPENROUTER_API_KEY": "your-api-key",
-        "LLM_CONFIG_PATH": "/absolute/path/to/llm_config.json",
+        "VIBE_PROJECT_ROOT": "/absolute/path/to/your/project",
         "VIBE_CODER_OUTPUT_DIR": "/absolute/path/to/output",
-        "CODE_MAP_ALLOWED_DIR": "/absolute/path/to/scan",
-        "VIBE_TASK_MANAGER_READ_DIR": "/absolute/path/to/project",
         "LOG_LEVEL": "info",
         "NODE_ENV": "production"
       }
@@ -530,6 +550,11 @@ The vibe-task-manager supports exactly 21 intent patterns:
   }
 }
 ```
+
+**🆕 Simplified Configuration (v0.2.4+)**:
+- Use `VIBE_PROJECT_ROOT` instead of multiple directory variables
+- Legacy variables (`CODE_MAP_ALLOWED_DIR`, `VIBE_TASK_MANAGER_READ_DIR`) still supported for backward compatibility
+- Run `npx vibe-coder-mcp --setup` for interactive configuration
 
 ---
 

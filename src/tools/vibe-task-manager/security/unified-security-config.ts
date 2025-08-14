@@ -10,6 +10,7 @@ import path from 'path';
 import { OpenRouterConfig } from '../../../types/workflow.js';
 import { extractVibeTaskManagerSecurityConfig } from '../utils/config-loader.js';
 import logger from '../../../logger.js';
+import { TransportContext } from '../../../index-with-setup.js';
 
 /**
  * Path validation result for centralized security boundary validation
@@ -118,25 +119,105 @@ export class UnifiedSecurityConfigManager {
   }
 
   /**
+   * Resolve unified read directory based on priority chain
+   * Priority: Auto-detection → VIBE_PROJECT_ROOT → MCP config → Legacy vars → Fallback
+   */
+  private resolveUnifiedReadDirectory(context?: TransportContext): string {
+    try {
+      // Priority 1: Auto-detection (only for CLI transport && enabled)
+      if (context?.transportType === 'cli' && this.shouldUseAutoDetection()) {
+        const autoDetected = context.workingDirectory || process.cwd();
+        logger.info({ 
+          autoDetected, 
+          transportType: context.transportType,
+          priorityUsed: 'auto-detection'
+        }, 'Using auto-detected project root directory');
+        return autoDetected;
+      }
+
+      // Priority 2: VIBE_PROJECT_ROOT environment variable
+      const unifiedProjectRoot = process.env.VIBE_PROJECT_ROOT;
+      if (unifiedProjectRoot?.trim()) {
+        logger.info({ 
+          unifiedProjectRoot,
+          priorityUsed: 'env-var'
+        }, 'Using VIBE_PROJECT_ROOT environment variable');
+        return unifiedProjectRoot.trim();
+      }
+
+      // Priority 3: MCP client config
+      if (context?.mcpClientConfig?.env?.VIBE_PROJECT_ROOT) {
+        const mcpProjectRoot = context.mcpClientConfig.env.VIBE_PROJECT_ROOT;
+        logger.info({ 
+          mcpProjectRoot,
+          priorityUsed: 'mcp-config'
+        }, 'Using VIBE_PROJECT_ROOT from MCP client config');
+        return mcpProjectRoot;
+      }
+
+      // Priority 4: Legacy environment variables
+      const legacyTaskManagerDir = process.env.VIBE_TASK_MANAGER_READ_DIR;
+      if (legacyTaskManagerDir?.trim()) {
+        logger.warn({ 
+          legacyTaskManagerDir,
+          priorityUsed: 'legacy-task-manager'
+        }, 'Using legacy VIBE_TASK_MANAGER_READ_DIR (consider migrating to VIBE_PROJECT_ROOT)');
+        return legacyTaskManagerDir.trim();
+      }
+
+      const legacyCodeMapDir = process.env.CODE_MAP_ALLOWED_DIR;
+      if (legacyCodeMapDir?.trim()) {
+        logger.warn({ 
+          legacyCodeMapDir,
+          priorityUsed: 'legacy-code-map'
+        }, 'Using legacy CODE_MAP_ALLOWED_DIR (consider migrating to VIBE_PROJECT_ROOT)');
+        return legacyCodeMapDir.trim();
+      }
+
+      // Priority 5: Fallback to getProjectRootSafe() equivalent
+      const fallbackDir = process.cwd();
+      logger.warn({ 
+        fallbackDir,
+        priorityUsed: 'fallback'
+      }, 'Using fallback directory (process.cwd()) - consider setting VIBE_PROJECT_ROOT');
+      return fallbackDir;
+
+    } catch (error) {
+      logger.error({ err: error, context }, 'Error resolving unified read directory, using fallback');
+      return process.cwd();
+    }
+  }
+
+  /**
+   * Check if auto-detection should be used
+   */
+  private shouldUseAutoDetection(): boolean {
+    return process.env.VIBE_USE_PROJECT_ROOT_AUTO_DETECTION === 'true';
+  }
+
+  /**
    * Initialize the security configuration from MCP client config
    * This should be called during server startup
    */
-  initializeFromMCPConfig(mcpConfig: OpenRouterConfig): void {
+  initializeFromMCPConfig(mcpConfig: OpenRouterConfig, transportContext?: TransportContext): void {
     this.mcpConfig = mcpConfig;
 
     try {
+      // Use unified directory resolution for read directory
+      const unifiedReadDirectory = this.resolveUnifiedReadDirectory(transportContext);
+      
       // Extract security configuration using the same pattern as Code Map Generator
       const securityConfig = extractVibeTaskManagerSecurityConfig(mcpConfig);
 
-      // Create unified configuration
+      // Create unified configuration with resolved unified read directory
       this.config = {
-        allowedReadDirectory: securityConfig.allowedReadDirectory,
+        allowedReadDirectory: unifiedReadDirectory,
         allowedWriteDirectory: securityConfig.allowedWriteDirectory,
         securityMode: securityConfig.securityMode,
 
         // Derived configurations
         allowedDirectories: [
-          securityConfig.allowedReadDirectory,
+          unifiedReadDirectory,
           securityConfig.allowedWriteDirectory
         ],
 
@@ -150,21 +231,21 @@ export class UnifiedSecurityConfigManager {
         maxPathLength: 4096,
 
         // Code-map-generator compatibility aliases
-        allowedDir: securityConfig.allowedReadDirectory,
+        allowedDir: unifiedReadDirectory,
         outputDir: securityConfig.allowedWriteDirectory,
 
         // Service-specific boundaries for all services
         serviceBoundaries: {
           vibeTaskManager: {
-            readDir: securityConfig.allowedReadDirectory,
+            readDir: unifiedReadDirectory,
             writeDir: securityConfig.allowedWriteDirectory
           },
           codeMapGenerator: {
-            allowedDir: securityConfig.allowedReadDirectory,
+            allowedDir: unifiedReadDirectory,
             outputDir: securityConfig.allowedWriteDirectory
           },
           contextCurator: {
-            readDir: securityConfig.allowedReadDirectory,
+            readDir: unifiedReadDirectory,
             outputDir: securityConfig.allowedWriteDirectory
           }
         }

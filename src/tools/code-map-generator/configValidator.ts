@@ -10,6 +10,9 @@ import logger from '../../logger.js';
 import { CodeMapGeneratorConfig, CacheConfig, ProcessingConfig, OutputConfig, FeatureFlagsConfig, ImportResolverConfig, DebugConfig } from './types.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
 import { getCacheDirectory } from './directoryUtils.js';
+import { detectTransportType } from '../../logger.js';
+import { getUnifiedSecurityConfig } from '../vibe-task-manager/security/unified-security-config.js';
+import { TransportContext } from '../../index-with-setup.js';
 
 /**
  * Default configuration values
@@ -86,12 +89,11 @@ const DEFAULT_CONFIG: Partial<CodeMapGeneratorConfig> = {
  * @throws Error if the configuration is invalid
  */
 export async function validateCodeMapConfig(config: Partial<CodeMapGeneratorConfig>): Promise<CodeMapGeneratorConfig> {
-  // Check if allowedMappingDirectory is provided in config or environment variable
-  const envAllowedDir = process.env.CODE_MAP_ALLOWED_DIR;
-  const allowedMappingDirectory = config.allowedMappingDirectory || envAllowedDir;
+  // allowedMappingDirectory should now be provided by unified security config
+  const allowedMappingDirectory = config.allowedMappingDirectory;
 
   if (!allowedMappingDirectory) {
-    throw new Error('allowedMappingDirectory is required in the configuration or CODE_MAP_ALLOWED_DIR environment variable');
+    throw new Error('allowedMappingDirectory is required. This should be resolved by the unified security config.');
   }
 
   // Validate allowedMappingDirectory
@@ -383,54 +385,69 @@ export function validateDebugConfig(config?: Partial<DebugConfig>): DebugConfig 
 
 /**
  * Extracts and validates the Code-Map Generator configuration from the client config.
+ * Uses unified security config with transport context for directory resolution.
  * @param config The OpenRouter configuration object
  * @returns The validated Code-Map Generator configuration
  * @throws Error if the configuration is invalid
  */
 export async function extractCodeMapConfig(config?: OpenRouterConfig): Promise<CodeMapGeneratorConfig> {
-  // Create a base configuration object
-  let codeMapConfig: Partial<CodeMapGeneratorConfig> = {};
+  // Create transport context for unified security config
+  const transportContext: TransportContext = {
+    sessionId: 'code-map-session',
+    transportType: detectTransportType(),
+    timestamp: Date.now(),
+    workingDirectory: process.cwd(), // For CLI auto-detection
+    mcpClientConfig: config // For STDIO configuration
+  };
 
-  if (config) {
-    // First try to extract from config.env (MCP client environment variables)
-    if (config.env) {
-      logger.debug({
-        configEnv: config.env,
-        hasAllowedDir: Boolean(config.env.CODE_MAP_ALLOWED_DIR),
-        hasOutputDir: Boolean(config.env.VIBE_CODER_OUTPUT_DIR)
-      }, 'Extracting code-map config from MCP client environment variables');
+  // Use unified security config instead of manual extraction
+  const unifiedConfig = getUnifiedSecurityConfig();
+  
+  // Create a mock config if none provided (for backward compatibility)
+  const mcpConfig = config || {
+    apiKey: '',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    geminiModel: 'google/gemini-2.5-flash-lite',
+    perplexityModel: 'perplexity/sonar'
+  };
+  
+  unifiedConfig.initializeFromMCPConfig(mcpConfig, transportContext);
+  const securityConfig = unifiedConfig.getCodeMapGeneratorConfig();
 
-      if (config.env.CODE_MAP_ALLOWED_DIR) {
-        codeMapConfig.allowedMappingDirectory = config.env.CODE_MAP_ALLOWED_DIR;
-      }
-      
-      // Extract output directory if provided
-      if (config.env.VIBE_CODER_OUTPUT_DIR) {
-        codeMapConfig.output = codeMapConfig.output || {};
-        codeMapConfig.output.outputDir = path.join(config.env.VIBE_CODER_OUTPUT_DIR, 'code-map-generator');
-      }
-    }
+  // Create base configuration using unified directory resolution
+  let codeMapConfig: Partial<CodeMapGeneratorConfig> = {
+    allowedMappingDirectory: securityConfig.allowedDir // ✅ Now uses unified directory!
+  };
 
-    // Fallback: Try to extract from tools['map-codebase'] (legacy support)
-    const toolConfig = config.tools?.['map-codebase'] as Partial<CodeMapGeneratorConfig>;
-
-    // If not found, try config['map-codebase']
-    const configSection = config.config?.['map-codebase'] as Partial<CodeMapGeneratorConfig>;
-
-    // Merge configurations if they exist (env takes precedence)
-    if (toolConfig || configSection) {
-      logger.debug({
-        toolConfig,
-        configSection
-      }, 'Using legacy tool config extraction as additional config');
-
-      codeMapConfig = {
-        ...configSection,
-        ...toolConfig,
-        ...codeMapConfig // Preserve any values from env extraction
-      };
-    }
+  // Extract output directory (maintains existing logic for output)
+  if (config?.env?.VIBE_CODER_OUTPUT_DIR) {
+    codeMapConfig.output = codeMapConfig.output || {};
+    codeMapConfig.output.outputDir = path.join(config.env.VIBE_CODER_OUTPUT_DIR, 'code-map-generator');
   }
+
+  // Fallback: Try to extract from tools['map-codebase'] (legacy support for other config)
+  const toolConfig = config?.tools?.['map-codebase'] as Partial<CodeMapGeneratorConfig>;
+  const configSection = config?.config?.['map-codebase'] as Partial<CodeMapGeneratorConfig>;
+
+  // Merge configurations if they exist (unified config takes precedence for directory)
+  if (toolConfig || configSection) {
+    logger.debug({
+      toolConfig,
+      configSection
+    }, 'Using legacy tool config extraction as additional config');
+
+    codeMapConfig = {
+      ...configSection,
+      ...toolConfig,
+      ...codeMapConfig // Preserve unified directory resolution
+    };
+  }
+
+  logger.info({ 
+    allowedMappingDirectory: codeMapConfig.allowedMappingDirectory,
+    transportType: transportContext.transportType,
+    autoDetectionEnabled: process.env.VIBE_USE_PROJECT_ROOT_AUTO_DETECTION 
+  }, 'Code Map Generator using unified project root configuration');
 
   logger.debug({
     extractedCodeMapConfig: codeMapConfig,
@@ -439,6 +456,6 @@ export async function extractCodeMapConfig(config?: OpenRouterConfig): Promise<C
     configKeys: config ? Object.keys(config) : []
   }, 'Extracted code-map-generator config');
 
-  // Validate the configuration (this will check for environment variables if config is empty)
+  // Validate the configuration
   return validateCodeMapConfig(codeMapConfig);
 }

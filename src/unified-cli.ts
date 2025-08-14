@@ -129,6 +129,10 @@ async function main() {
   try {
     const mode = detectMode();
     
+    // Load environment variables BEFORE checking first run
+    // This ensures .env file is loaded so isFirstRun() can properly detect existing config
+    dotenv.config({ path: envPath });
+    
     // Always check for first run (except in help mode)
     if (mode !== 'help' && await setupWizard.isFirstRun()) {
       console.log(chalk.cyan.bold('\n🚀 Welcome to Vibe!\n'));
@@ -145,10 +149,7 @@ async function main() {
       console.log(boxen(
         chalk.green.bold('✅ Setup Complete!') + '\n\n' +
         chalk.white('Vibe is now configured and ready to use.') + '\n\n' +
-        chalk.cyan('Quick Start:') + '\n' +
-        chalk.gray('• Run ') + chalk.cyan('vibe') + chalk.gray(' to start the MCP server') + '\n' +
-        chalk.gray('• Run ') + chalk.cyan('vibe "your request"') + chalk.gray(' to use the CLI') + '\n' +
-        chalk.gray('• Run ') + chalk.cyan('vibe --help') + chalk.gray(' for all options'),
+        chalk.cyan('Starting in ' + mode + ' mode...'),
         {
           padding: 1,
           margin: 1,
@@ -157,12 +158,19 @@ async function main() {
         }
       ));
       
-      // Don't auto-start server after setup, let user choose
-      process.exit(0);
+      // Reload environment variables after setup to get the new configuration
+      dotenv.config({ path: envPath });
+      
+      // Continue with the originally requested mode
+      console.log();
+      
+      // If no specific mode was requested (just 'vibe'), default to interactive
+      if (args.length === 0 && mode === 'server') {
+        // Change to interactive mode for better first-time experience
+        await runInteractive();
+        return;
+      }
     }
-    
-    // Load environment variables
-    dotenv.config({ path: envPath });
     
     switch (mode) {
       case 'help':

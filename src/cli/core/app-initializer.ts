@@ -10,6 +10,7 @@ import { ToolRegistry } from '../../services/routing/toolRegistry.js';
 import { getUnifiedSecurityConfig } from '../../tools/vibe-task-manager/security/unified-security-config.js';
 import { initializeToolEmbeddings } from '../../services/routing/embeddingStore.js';
 import { OpenRouterConfig } from '../../types/workflow.js';
+import { TransportContext } from '../../index-with-setup.js';
 import logger from '../../logger.js';
 
 export class VibeAppInitializer {
@@ -70,11 +71,24 @@ export class VibeAppInitializer {
       await import('../../tools/index.js');
       await import('../../services/request-processor/index.js');
       
-      // Step 5: Initialize unified security configuration
-      logger.debug('Step 5: Initializing UnifiedSecurityConfig');
+      // Step 5: Initialize unified security configuration with CLI transport context
+      logger.debug('Step 5: Initializing UnifiedSecurityConfig with CLI context');
       const securityConfig = getUnifiedSecurityConfig();
-      securityConfig.initializeFromMCPConfig(openRouterConfig);
-      logger.info('Unified security configuration initialized');
+      
+      // Create CLI transport context (ALWAYS CLI for app initializer)
+      const cliTransportContext: TransportContext = {
+        sessionId: 'cli-session',
+        transportType: 'cli', // Always CLI for this initializer
+        timestamp: Date.now(),
+        workingDirectory: process.cwd(), // ✅ User's project directory!
+        mcpClientConfig: openRouterConfig
+      };
+      
+      securityConfig.initializeFromMCPConfig(openRouterConfig, cliTransportContext);
+      logger.info({ 
+        workingDirectory: cliTransportContext.workingDirectory,
+        autoDetection: process.env.VIBE_USE_PROJECT_ROOT_AUTO_DETECTION 
+      }, 'CLI initialized with auto-detection capability');
       
       // Step 6: Initialize tool embeddings for semantic routing
       logger.debug('Step 6: Initializing tool embeddings');

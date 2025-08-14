@@ -1,12 +1,30 @@
 import path from 'path';
 import os from 'os';
 import fs from 'fs-extra';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 import logger from '../logger.js';
+
+// Get package version dynamically
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+function getPackageVersion(): string {
+  try {
+    const packagePath = path.resolve(__dirname, '../../package.json');
+    const packageContent = readFileSync(packagePath, 'utf-8');
+    const packageJson = JSON.parse(packageContent);
+    return packageJson.version || '0.0.0';
+  } catch {
+    // Fallback version if package.json can't be read
+    return '0.0.0';
+  }
+}
 
 export class UserConfigManager {
   private static instance: UserConfigManager | null = null;
   private userConfigDir: string;
-  private configVersion: string = '0.3.0';
+  private configVersion: string = getPackageVersion();
   
   private constructor() {
     // Determine user config directory based on OS

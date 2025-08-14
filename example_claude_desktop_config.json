@@ -8,13 +8,11 @@
         "OPENROUTER_API_KEY": "your_openrouter_api_key_here",
         "LOG_LEVEL": "info",
         "NODE_ENV": "production",
-        "VIBE_CODER_OUTPUT_DIR": "/path/to/your/output/directory",
-        "CODE_MAP_ALLOWED_DIR": "/path/to/your/codebase",
-        "VIBE_TASK_MANAGER_READ_DIR": "/path/to/your/project"
+        "VIBE_PROJECT_ROOT": "/path/to/your/project/root"
       },
       "disabled": false,
       "autoApprove": [
-        "research",
+        "research-manager",
         "generate-rules",
         "generate-user-stories",
         "generate-task-list",

@@ -14,7 +14,9 @@ import { jobManager, JobStatus } from '../../../services/job-manager/index.js';
 // import { JobDetails } from '../../../services/job-manager/jobStatusMessage.js'; // Currently unused
 import { executeCodeMapGeneration } from '../../code-map-generator/index.js';
 import { OpenRouterConfig } from '../../../types/workflow.js';
-import { UnifiedSecurityConfiguration } from '../../vibe-task-manager/security/unified-security-config.js';
+import { UnifiedSecurityConfiguration, getUnifiedSecurityConfig } from '../../vibe-task-manager/security/unified-security-config.js';
+import { detectTransportType } from '../../../logger.js';
+import { TransportContext } from '../../../index-with-setup.js';
 import {
   ContextCuratorInput,
   ContextPackage as OriginalContextPackage,
@@ -186,6 +188,36 @@ export class ContextCuratorService {
     this.llmService = ContextCuratorLLMService.getInstance();
     this.configLoader = ContextCuratorConfigLoader.getInstance();
     this.outputFormatter = OutputFormatterService.getInstance();
+    // Initialize with unified config asynchronously if needed
+    this.initializeWithUnifiedConfig().catch(error => {
+      logger.error({ err: error }, 'Failed to initialize Context Curator with unified config');
+    });
+  }
+
+  private async initializeWithUnifiedConfig(): Promise<void> {
+    try {
+      // Create transport context for unified security config
+      const transportContext: TransportContext = {
+        sessionId: 'context-curator-session',
+        transportType: detectTransportType(),
+        timestamp: Date.now(),
+        workingDirectory: process.cwd()
+      };
+
+      // Use unified security config
+      const unifiedConfig = getUnifiedSecurityConfig();
+      const securityConfig = unifiedConfig.getContextCuratorConfig();
+
+      logger.info({ 
+        readDir: securityConfig.readDir,
+        outputDir: securityConfig.outputDir,
+        transportType: transportContext.transportType 
+      }, 'Context Curator initialized with unified configuration');
+      
+    } catch (error) {
+      // This is non-critical during construction, will be handled during execution
+      logger.debug({ err: error }, 'Unified config not available during construction, will be initialized during execution');
+    }
   }
 
   /**
@@ -326,53 +358,27 @@ export class ContextCuratorService {
       }
       context.contextCuratorConfig = this.configLoader.getConfig() || undefined;
 
-      // Initialize security configuration using environment variables and input
-      // Use CODE_MAP_ALLOWED_DIR as the primary read directory since Context Curator
-      // needs to read from the same directory that Code Map Generator maps
-      const allowedReadDirectory = process.env.CODE_MAP_ALLOWED_DIR ||
-                                   process.env.VIBE_TASK_MANAGER_READ_DIR ||
-                                   context.input.projectPath ||
-                                   process.cwd();
-      const allowedWriteDirectory = process.env.VIBE_CODER_OUTPUT_DIR || path.join(process.cwd(), 'VibeCoderOutput');
-
-      context.securityConfig = {
-        allowedReadDirectory,
-        allowedWriteDirectory,
-        securityMode: (process.env.VIBE_TASK_MANAGER_SECURITY_MODE as 'strict' | 'permissive') || 'strict',
-        allowedDirectories: [allowedReadDirectory, allowedWriteDirectory],
-        performanceThresholdMs: 50,
-        enablePermissionChecking: true,
-        enableBlacklist: true,
-        enableExtensionFiltering: true,
-        maxPathLength: 4096,
-        // Code-map-generator compatibility aliases
-        allowedDir: allowedReadDirectory,
-        outputDir: allowedWriteDirectory,
-        // Service-specific boundaries for all services
-        serviceBoundaries: {
-          vibeTaskManager: {
-            readDir: allowedReadDirectory,
-            writeDir: allowedWriteDirectory
-          },
-          codeMapGenerator: {
-            allowedDir: allowedReadDirectory,
-            outputDir: allowedWriteDirectory
-          },
-          contextCurator: {
-            readDir: allowedReadDirectory,
-            outputDir: allowedWriteDirectory
-          }
-        }
+      // Use unified security config with transport context
+      const transportContext: TransportContext = {
+        sessionId: context.jobId,
+        transportType: detectTransportType(),
+        timestamp: Date.now(),
+        workingDirectory: process.cwd(),
+        mcpClientConfig: context.config
       };
 
+      // Initialize unified security config
+      const unifiedConfig = getUnifiedSecurityConfig();
+      unifiedConfig.initializeFromMCPConfig(context.config, transportContext);
+      context.securityConfig = unifiedConfig.getConfig();
+
       logger.info({
-        allowedReadDirectory,
-        allowedWriteDirectory,
-        securityMode: context.securityConfig?.securityMode || 'strict',
-        configSource: process.env.CODE_MAP_ALLOWED_DIR ? 'CODE_MAP_ALLOWED_DIR' :
-                     process.env.VIBE_TASK_MANAGER_READ_DIR ? 'VIBE_TASK_MANAGER_READ_DIR' :
-                     context.input.projectPath ? 'input.projectPath' : 'process.cwd()'
-      }, 'Context Curator security configuration initialized');
+        allowedReadDirectory: context.securityConfig.allowedReadDirectory,
+        allowedWriteDirectory: context.securityConfig.allowedWriteDirectory,
+        securityMode: context.securityConfig.securityMode,
+        transportType: transportContext.transportType,
+        autoDetectionEnabled: process.env.VIBE_USE_PROJECT_ROOT_AUTO_DETECTION
+      }, 'Context Curator using unified security configuration');
 
 
 

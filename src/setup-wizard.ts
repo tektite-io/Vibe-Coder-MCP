@@ -22,9 +22,24 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..');
 
+// Get package version dynamically
+function getPackageVersion(): string {
+  try {
+    const packagePath = path.resolve(projectRoot, 'package.json');
+    const packageContent = fs.readFileSync(packagePath, 'utf-8');
+    const packageJson = JSON.parse(packageContent);
+    return packageJson.version || '0.0.0';
+  } catch {
+    // Fallback version if package.json can't be read
+    return '0.0.0';
+  }
+}
+
 interface SetupConfig {
   OPENROUTER_API_KEY: string;
   VIBE_CODER_OUTPUT_DIR: string;
+  VIBE_PROJECT_ROOT?: string;
+  VIBE_USE_PROJECT_ROOT_AUTO_DETECTION?: 'true' | 'false';
   CODE_MAP_ALLOWED_DIR: string;
   VIBE_TASK_MANAGER_READ_DIR: string;
   VIBE_TASK_MANAGER_SECURITY_MODE: 'strict' | 'permissive';
@@ -33,11 +48,14 @@ interface SetupConfig {
   PERPLEXITY_MODEL: string;
   configureDirs?: boolean;
   configureAdvanced?: boolean;
+  useUnifiedConfig?: boolean;
 }
 
 interface SetupAnswers {
   OPENROUTER_API_KEY: string;
   VIBE_CODER_OUTPUT_DIR?: string;
+  VIBE_PROJECT_ROOT?: string;
+  VIBE_USE_PROJECT_ROOT_AUTO_DETECTION?: 'true' | 'false';
   CODE_MAP_ALLOWED_DIR?: string;
   VIBE_TASK_MANAGER_READ_DIR?: string;
   VIBE_TASK_MANAGER_SECURITY_MODE?: 'strict' | 'permissive';
@@ -46,19 +64,20 @@ interface SetupAnswers {
   PERPLEXITY_MODEL?: string;
   configureDirs?: boolean;
   configureAdvanced?: boolean;
+  useUnifiedConfig?: boolean;
 }
 
 // Type-safe inquirer wrapper for strict typing compliance
 
 // ASCII art and messages from prompts
-const ASCII_ART = `
+const getAsciiArt = (): string => `
 ██╗   ██╗██╗██████╗ ███████╗
 ██║   ██║██║██╔══██╗██╔════╝
 ██║   ██║██║██████╔╝█████╗  
 ╚██╗ ██╔╝██║██╔══██╗██╔══╝  
  ╚████╔╝ ██║██████╔╝███████╗
   ╚═══╝  ╚═╝╚═════╝ ╚══════╝
-     Coder MCP v0.3.0
+     Coder MCP v${getPackageVersion()}
 `;
 
 const WELCOME_MESSAGE = `
@@ -66,8 +85,14 @@ Welcome to Vibe Coder MCP! 🎆
 
 This setup wizard will help you configure:
 • OpenRouter API for AI-powered development
+• 🆕 Unified project root configuration (Recommended)
+  - Single variable for all tools (VIBE_PROJECT_ROOT)
+  - Automatic CLI project detection
+  - Simplified MCP client setup
 • Security boundaries for file access
 • Output directories for generated content
+
+🚀 New in v0.2.4+: Zero-configuration for CLI users!
 
 Let's get started! This will only take a minute.
 `;
@@ -91,9 +116,22 @@ export class SetupWizard {
    * Check if this is the first run using multiple indicators
    */
   async isFirstRun(): Promise<boolean> {
+    // First, check if .env file exists and load it if not already loaded
+    // This ensures we don't miss existing configuration
+    if (await fs.pathExists(this.envPath) && !process.env.OPENROUTER_API_KEY) {
+      try {
+        // Load environment variables from .env file
+        const dotenv = await import('dotenv');
+        dotenv.config({ path: this.envPath });
+        logger.debug('Loaded .env file in isFirstRun check');
+      } catch (error) {
+        logger.warn({ err: error }, 'Failed to load .env in isFirstRun check');
+      }
+    }
+    
     // Check multiple conditions for robust detection
     const checks = [
-      // 1. Check for API key in environment
+      // 1. Check for API key in environment (after loading .env if it exists)
       !process.env.OPENROUTER_API_KEY,
       
       // 2. Check for .env file in project
@@ -143,7 +181,7 @@ export class SetupWizard {
    */
   private displayWelcome(): void {
     console.clear();
-    console.log(chalk.cyan(ASCII_ART));
+    console.log(chalk.cyan(getAsciiArt()));
     console.log(WELCOME_MESSAGE);
   }
 
@@ -198,9 +236,40 @@ export class SetupWizard {
       },
       {
         type: 'confirm',
+        name: 'useUnifiedConfig',
+        message: '🆕 Use simplified unified project root configuration? (Recommended)',
+        default: true
+      },
+      {
+        type: 'input',
+        name: 'VIBE_PROJECT_ROOT',
+        message: '📁 Project root directory (all tools will use this):',
+        default: process.cwd(),
+        when: (answers: Record<string, boolean | string>) => Boolean(answers.useUnifiedConfig),
+        validate: (input: string) => {
+          if (!input || input.trim().length === 0) {
+            return 'Project root directory is required';
+          }
+          return true;
+        }
+      },
+      {
+        type: 'list',
+        name: 'VIBE_USE_PROJECT_ROOT_AUTO_DETECTION',
+        message: '🔍 Enable auto-detection for CLI users?',
+        choices: [
+          { name: 'Yes (recommended) - CLI auto-detects project root', value: 'true' },
+          { name: 'No - Always use configured path', value: 'false' }
+        ],
+        default: 'true',
+        when: (answers: Record<string, boolean | string>) => Boolean(answers.useUnifiedConfig)
+      },
+      {
+        type: 'confirm',
         name: 'configureDirs',
-        message: '📁 Would you like to configure custom directories?',
-        default: false
+        message: '📁 Would you like to configure legacy directories? (Advanced)',
+        default: false,
+        when: (answers: Record<string, boolean | string>) => !answers.useUnifiedConfig
       },
       {
         type: 'input',
@@ -278,7 +347,13 @@ export class SetupWizard {
       VIBE_TASK_MANAGER_SECURITY_MODE: rawAnswers.VIBE_TASK_MANAGER_SECURITY_MODE || 'strict',
       OPENROUTER_BASE_URL: rawAnswers.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
       GEMINI_MODEL: rawAnswers.GEMINI_MODEL || 'google/gemini-2.5-flash-preview-05-20',
-      PERPLEXITY_MODEL: rawAnswers.PERPLEXITY_MODEL || 'perplexity/sonar'
+      PERPLEXITY_MODEL: rawAnswers.PERPLEXITY_MODEL || 'perplexity/sonar',
+      // Unified configuration
+      useUnifiedConfig: rawAnswers.useUnifiedConfig,
+      VIBE_PROJECT_ROOT: rawAnswers.VIBE_PROJECT_ROOT,
+      VIBE_USE_PROJECT_ROOT_AUTO_DETECTION: rawAnswers.VIBE_USE_PROJECT_ROOT_AUTO_DETECTION,
+      configureDirs: rawAnswers.configureDirs,
+      configureAdvanced: rawAnswers.configureAdvanced
     };
     
     return config;
@@ -295,12 +370,27 @@ export class SetupWizard {
     envContent += '# Required: Your OpenRouter API key\n';
     envContent += `OPENROUTER_API_KEY="${config.OPENROUTER_API_KEY}"\n\n`;
     
+    // Unified Configuration (if selected)
+    if (config.useUnifiedConfig && config.VIBE_PROJECT_ROOT) {
+      envContent += '# Unified Project Root Configuration (Recommended)\n';
+      envContent += `VIBE_PROJECT_ROOT="${config.VIBE_PROJECT_ROOT}"\n`;
+      if (config.VIBE_USE_PROJECT_ROOT_AUTO_DETECTION) {
+        envContent += `VIBE_USE_PROJECT_ROOT_AUTO_DETECTION="${config.VIBE_USE_PROJECT_ROOT_AUTO_DETECTION}"\n`;
+      }
+      envContent += '\n';
+    }
+    
     // Directory Configuration
     envContent += '# Directory Configuration\n';
     envContent += `VIBE_CODER_OUTPUT_DIR="${config.VIBE_CODER_OUTPUT_DIR}"\n`;
-    envContent += `CODE_MAP_ALLOWED_DIR="${config.CODE_MAP_ALLOWED_DIR}"\n`;
-    envContent += `VIBE_TASK_MANAGER_READ_DIR="${config.VIBE_TASK_MANAGER_READ_DIR}"\n`;
-    envContent += `VIBE_TASK_MANAGER_SECURITY_MODE="${config.VIBE_TASK_MANAGER_SECURITY_MODE}"\n`;
+    
+    // Legacy configuration (only if unified not used)
+    if (!config.useUnifiedConfig || config.configureDirs) {
+      envContent += '\n# Legacy Directory Configuration (Fallbacks)\n';
+      envContent += `CODE_MAP_ALLOWED_DIR="${config.CODE_MAP_ALLOWED_DIR}"\n`;
+      envContent += `VIBE_TASK_MANAGER_READ_DIR="${config.VIBE_TASK_MANAGER_READ_DIR}"\n`;
+      envContent += `VIBE_TASK_MANAGER_SECURITY_MODE="${config.VIBE_TASK_MANAGER_SECURITY_MODE}"\n`;
+    }
     envContent += '\n';
     
     // Advanced configuration
@@ -319,6 +409,11 @@ export class SetupWizard {
     const configData = {
       version: '1.0.0',
       setupDate: new Date().toISOString(),
+      unified: {
+        enabled: config.useUnifiedConfig || false,
+        projectRoot: config.VIBE_PROJECT_ROOT,
+        autoDetection: config.VIBE_USE_PROJECT_ROOT_AUTO_DETECTION
+      },
       directories: {
         output: config.VIBE_CODER_OUTPUT_DIR,
         codeMap: config.CODE_MAP_ALLOWED_DIR,
