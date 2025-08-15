@@ -10,56 +10,50 @@
 
 Vibe Coder is an MCP (Model Context Protocol) server designed to supercharge your AI assistant (like Cursor, Cline AI, or Claude Desktop) with powerful tools for software development. It helps with research, planning, generating requirements, creating starter projects, and more!
 
-## 🆕 What's New in Version 0.2.7
+## 🆕 What's New in Version 0.2.8
 
-### 🔧 Critical CLI Bug Fixes & Complete Resolution
-- **✅ Fixed CLI Onboarding Loop Bug (v0.2.5)**
-  - CLI now correctly detects user's project directory using `process.cwd()`
-  - Resolves persistent first-run detection issues
-  - Configuration files now save to user's working directory instead of package directory
-  
-- **✅ Fixed Runtime Dependency Issues (v0.2.6)**
-  - Moved `@xenova/transformers` from devDependencies to dependencies
-  - Resolved "Cannot find package '@xenova/transformers'" errors
-  - Ensures all semantic matching and embedding functionality works correctly
+### 🔧 CLI Interactive Mode Enhancements
+- **✅ Fixed CLI Interactive Mode Configuration Issues**
+  - Resolved configuration persistence problems in interactive mode
+  - Fixed project root detection handling in CLI context
+  - Improved configuration file management for better reliability
+  - Enhanced unified configuration toggle behavior
 
-- **✅ Fixed Missing Configuration Files (v0.2.7)**
-  - Added `llm_config.json` and `job-timeout-config.json` to npm package files
-  - Resolved "Failed to read file" errors for configuration loading
-  - Ensures complete package functionality out of the box
+- **📦 NPM Package Improvements**
+  - Better handling of global npm installations
+  - Improved package reliability and installation experience
+  - Enhanced CLI binary execution and path resolution
+  - Fixed configuration loading for various installation scenarios
 
-### 🎯 Context-Aware Configuration System
-- **Enhanced TransportContext Pattern**
-  - Intelligent CLI vs Server differentiation for path resolution
-  - Dual-location configuration saving (user directory + package fallback)
-  - Context-aware OpenRouterConfigManager with precedence-based loading
-  - Maintains full backward compatibility for all existing setups
+### 🎯 Configuration Management Refinements
+- **Enhanced Configuration Handling**
+  - Fixed unified configuration enable/disable behavior
+  - Improved directory resolution for CLI operations
+  - Better fallback mechanisms for configuration loading
+  - Streamlined configuration file validation
 
-### 📍 Auto-Detection & User Experience
-- **Smart Project Root Detection**
-  - CLI automatically detects project root from current working directory
-  - Enhanced first-run detection with transport-specific validation
-  - Users can run `vibe` from any directory in their project
-  - Proper configuration isolation between different projects
+### 📍 Developer Experience Updates
+- **Stability & Reliability**
+  - Enhanced error handling in CLI interactive mode
+  - Improved configuration state management
+  - Better handling of edge cases in setup wizard
+  - More robust project directory detection
 
-- **💾 Robust File Management**
-  - CLI saves all configuration files (`.env`, `llm_config.json`, `.vibe-config.json`) to user directory
-  - Enhanced error handling for configuration persistence and loading
-  - Better validation of configuration file locations and accessibility
-  - Comprehensive fallback mechanisms for reliability
+### Previous Releases
 
-### 🧪 Developer Experience Improvements
-- **Comprehensive Testing & Validation**
-  - Extensive test coverage for CLI onboarding flows and edge cases
-  - Local package testing before each release to prevent runtime issues
-  - Enhanced error messages and debugging information throughout
-  - Improved setup wizard user experience with better feedback
+#### Version 0.2.7 - Complete CLI Resolution
+- Fixed missing configuration files in npm package
+- Added `llm_config.json` and `job-timeout-config.json` to package files
+- Resolved configuration loading errors
 
-- **Quality Assurance & Reliability**
-  - Security audits pass with zero vulnerabilities
-  - TypeScript compilation with strict typing enforcement
-  - ESLint validation with zero errors
-  - Full build verification before each release
+#### Version 0.2.6 - Runtime Dependencies
+- Fixed runtime dependency issues with `@xenova/transformers`
+- Resolved semantic matching functionality errors
+
+#### Version 0.2.5 - CLI Onboarding Fix
+- Fixed critical CLI onboarding loop bug
+- Implemented context-aware configuration system
+- Enhanced auto-detection improvements
 
 ## 🆕 What's New in Version 0.2.3
 

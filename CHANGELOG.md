@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.8] - 2025-08-15
+
+### Fixed
+- **CLI Interactive Mode Configuration Issues**
+  - Resolved configuration persistence problems in interactive mode
+  - Fixed project root detection handling in CLI context
+  - Improved unified configuration enable/disable behavior
+  - Enhanced configuration state management
+
+### Improved
+- **NPM Package Reliability**
+  - Better handling of global npm installations
+  - Enhanced CLI binary execution and path resolution
+  - Fixed configuration loading for various installation scenarios
+  - Improved package installation experience
+
+- **Configuration Management**
+  - Fixed unified configuration toggle behavior
+  - Improved directory resolution for CLI operations
+  - Better fallback mechanisms for configuration loading
+  - Streamlined configuration file validation
+
+### Changed
+- **Developer Experience**
+  - Enhanced error handling in CLI interactive mode
+  - Better handling of edge cases in setup wizard
+  - More robust project directory detection
+  - Improved configuration isolation between projects
+
 ## [0.2.7] - 2025-08-14
 
 ### Fixed
@@ -436,6 +465,11 @@ This release introduces a complete CLI system while maintaining full backward co
 
 ---
 
+[0.2.8]: https://github.com/freshtechbro/Vibe-Coder-MCP/compare/v0.2.7...v0.2.8
+[0.2.7]: https://github.com/freshtechbro/Vibe-Coder-MCP/compare/v0.2.6...v0.2.7
+[0.2.6]: https://github.com/freshtechbro/Vibe-Coder-MCP/compare/v0.2.5...v0.2.6
+[0.2.5]: https://github.com/freshtechbro/Vibe-Coder-MCP/compare/v0.2.4...v0.2.5
+[0.2.4]: https://github.com/freshtechbro/Vibe-Coder-MCP/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/freshtechbro/Vibe-Coder-MCP/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/freshtechbro/Vibe-Coder-MCP/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/freshtechbro/Vibe-Coder-MCP/compare/v0.2.0...v0.2.1
