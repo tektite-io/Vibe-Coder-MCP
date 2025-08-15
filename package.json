@@ -1,6 +1,6 @@
 {
   "name": "vibe-coder-mcp",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "Production-ready MCP server with complete agent integration, multi-transport support, and comprehensive development automation tools for AI-assisted workflows.",
   "main": "build/index.js",
   "type": "module",
@@ -173,7 +173,12 @@
     "LICENSE",
     "package.json",
     "llm_config.json",
-    "job-timeout-config.json"
+    "job-timeout-config.json",
+    "mcp-config.json",
+    "workflows.json",
+    "src/config-templates/**/*",
+    "src/tools/fullstack-starter-kit-generator/templates/**/*",
+    "src/config/prompt-optimization.yaml"
   ],
   "repository": {
     "type": "git",
