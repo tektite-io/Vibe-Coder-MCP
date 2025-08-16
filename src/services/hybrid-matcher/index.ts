@@ -1,4 +1,5 @@
-// Removed imports for matchRequest, extractParameters, detectIntent, and extractContextParameters
+// Reconnecting pattern matching for improved NLP accuracy
+import { matchRequest, extractParameters } from "../matching-service/index.js";
 import { MatchResult } from "../../types/tools.js";
 import { processWithSequentialThinking } from "../../tools/sequential-thinking.js";
 import { OpenRouterConfig } from "../../types/workflow.js";
@@ -21,9 +22,10 @@ export interface EnhancedMatchResult extends MatchResult {
 
 /**
  * Main hybrid matching function that implements the fallback flow
- * 1. Try Semantic Matching
- * 2. Fall back to Sequential Thinking
- * 3. Default Fallback
+ * 1. Try Pattern Matching (fastest, most accurate for defined patterns)
+ * 2. Try Semantic Matching (embeddings-based similarity)
+ * 3. Fall back to Sequential Thinking (LLM-based)
+ * 4. Default Fallback
  *
  * @param request The user request to match
  * @param config OpenRouter configuration for sequential thinking
@@ -35,12 +37,62 @@ export async function hybridMatch(
 ): Promise<EnhancedMatchResult> {
   let matchResult: MatchResult | null = null;
   let parameters: Record<string, string> = {};
-  // Default to sequential, semantic will override if successful
-  let matchMethod: "semantic" | "sequential" = "sequential";
-  let requiresConfirmation = true; // Default to true, semantic match might override
+  // Default to sequential, will be overridden if pattern or semantic match succeeds
+  let matchMethod: "rule" | "semantic" | "sequential" = "sequential";
+  let requiresConfirmation = true; // Default to true, pattern/semantic match might override
 
-  // Step 1: Try Semantic Matching
-  logger.debug('Trying semantic matching...');
+  // Step 0: Try Keyword Prefiltering (ultra-fast path for obvious matches)
+  const lowerRequest = request.toLowerCase();
+  const toolKeywords: Record<string, string[]> = {
+    'prd-generator': ['prd', 'product requirement'],
+    'user-stories-generator': ['user stor', 'acceptance criteria'],
+    'task-list-generator': ['task list', 'todo', 'tasks'],
+    'vibe-task-manager': ['vibe', 'task manager', 'decompose', 'atomic'],
+    'map-codebase': ['map', 'codebase', 'structure', 'architecture'],
+    'research-manager': ['research', 'investigate', 'explore'],
+    'curate-context': ['curate', 'context', 'meta-prompt'],
+    'run-workflow': ['workflow', 'run workflow'],
+    'rules-generator': ['rules', 'standards', 'guidelines', 'style guide'],
+    'fullstack-starter-kit-generator': ['starter kit', 'scaffold', 'boilerplate'],
+    'get-job-result': ['job result', 'job status', 'check job'],
+    'register-agent': ['register agent', 'add agent'],
+    'get-agent-tasks': ['agent tasks', 'poll tasks'],
+    'submit-task-response': ['submit response', 'task completion'],
+    'process-request': ['process request', 'route request']
+  };
+
+  for (const [tool, keywords] of Object.entries(toolKeywords)) {
+    if (keywords.some(kw => lowerRequest.includes(kw))) {
+      logger.info(`Keyword match for ${tool}`);
+      return {
+        toolName: tool,
+        confidence: 0.85,
+        matchedPattern: 'keyword_match',
+        parameters: {},
+        matchMethod: 'rule' as const,
+        requiresConfirmation: false
+      };
+    }
+  }
+
+  // Step 1: Try Pattern Matching (fastest, most accurate for defined patterns)
+  logger.debug('No keyword match found. Trying pattern matching...');
+  const patternMatch = matchRequest(request);
+  if (patternMatch && patternMatch.confidence >= 0.8) {
+    logger.info(`Pattern match found: ${patternMatch.toolName} (${patternMatch.confidence})`);
+    const extractedParams = patternMatch.matchedPattern 
+      ? extractParameters(request, patternMatch.matchedPattern)
+      : {};
+    return {
+      ...patternMatch,
+      parameters: extractedParams,
+      matchMethod: 'rule' as const,
+      requiresConfirmation: patternMatch.confidence < 0.9
+    };
+  }
+
+  // Step 2: Try Semantic Matching (if pattern matching didn't succeed)
+  logger.debug('Pattern matching did not yield a confident result. Trying semantic matching...');
   const semanticMatchResult = await findBestSemanticMatch(request);
 
   if (semanticMatchResult) {
@@ -65,13 +117,13 @@ export async function hybridMatch(
      logger.debug('Semantic matching did not yield a confident result. Falling back to sequential thinking...');
   }
 
-  // Step 2: Fall back to sequential thinking for ambiguous requests (Only if semantic match failed)
-  // Note: matchMethod remains 'sequential' if semantic match failed
+  // Step 3: Fall back to sequential thinking for ambiguous requests (Only if pattern and semantic match failed)
+  // Note: matchMethod remains 'sequential' if both pattern and semantic match failed
   try {
     // Use sequential thinking to determine the most likely tool
     const sequentialResult = await performSequentialThinking(
       request,
-      "What tool should I use for this request? Options are: research-manager, prd-generator, user-stories-generator, task-list-generator, rules-generator, workflow-manager.",
+      "What tool should I use for this request? Options are: research-manager, prd-generator, user-stories-generator, task-list-generator, rules-generator, run-workflow, get-job-result, map-codebase, vibe-task-manager, curate-context, fullstack-starter-kit-generator, register-agent, get-agent-tasks, submit-task-response, process-request.",
       config
     );
 
@@ -81,7 +133,15 @@ export async function hybridMatch(
       .split("\n")[0]
       .replace(/^.*?: /, "");
 
-    if (toolName && (toolName.includes("generator") || toolName.includes("manager"))) {
+    // Check if the tool name is valid (exists in our tool list)
+    const validTools = [
+      "research-manager", "prd-generator", "user-stories-generator", "task-list-generator", 
+      "rules-generator", "run-workflow", "get-job-result", "map-codebase", 
+      "vibe-task-manager", "curate-context", "fullstack-starter-kit-generator", 
+      "register-agent", "get-agent-tasks", "submit-task-response", "process-request"
+    ];
+    
+    if (toolName && validTools.includes(toolName)) {
       matchResult = {
         toolName: toolName,
         confidence: 0.5, // Medium confidence for sequential thinking
