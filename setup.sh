@@ -1,5 +1,5 @@
 #!/bin/bash
-# Setup script for Vibe Coder MCP Server (Production Ready v2.8)
+# Setup script for Vibe Coder MCP Server (Production Ready v0.3.0)
 set -e # Exit immediately if a command exits with a non-zero status.
 
 # Color codes for better output
@@ -26,7 +26,7 @@ print_info() {
     echo -e "${BLUE}ℹ${NC} $1"
 }
 
-echo "Setting up Vibe Coder MCP Server v2.8..."
+echo "Setting up Vibe Coder MCP Server v0.3.0..."
 echo "=================================================="
 echo "Production-ready MCP server with complete agent integration"
 echo "Multi-transport support • Real-time notifications • Dynamic port allocation"
