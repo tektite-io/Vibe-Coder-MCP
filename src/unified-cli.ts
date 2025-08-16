@@ -3,8 +3,9 @@
  * Unified Vibe CLI - Combines MCP Server and Natural Language CLI
  * 
  * Usage:
- *   vibe                    - Start MCP server
+ *   vibe                    - Start interactive REPL mode
  *   vibe "request"          - Process natural language request
+ *   vibe --server           - Start MCP server
  *   vibe --help            - Show help
  *   vibe --setup           - Run setup wizard
  */
@@ -39,14 +40,23 @@ function detectMode(): 'server' | 'cli' | 'help' | 'setup' | 'interactive' {
     return 'setup';
   }
   
+  // Check for explicit server mode
+  if (args.includes('--server') || args.includes('--stdio')) {
+    return 'server';
+  }
+  
   // Check for interactive mode
   if (args.includes('--interactive') || args.includes('-i')) {
     return 'interactive';
   }
   
-  // If no arguments or only server-related flags, start server
-  if (args.length === 0 || 
-      args.every(arg => ['--sse', '--port', '--stdio'].includes(arg.split('=')[0]))) {
+  // If no arguments, default to interactive mode for better UX
+  if (args.length === 0) {
+    return 'interactive';
+  }
+  
+  // If only server-related flags (SSE, port), start server
+  if (args.every(arg => ['--sse', '--port'].includes(arg.split('=')[0]))) {
     return 'server';
   }
   
@@ -74,8 +84,9 @@ function displayHelp(): void {
 
   console.log(chalk.yellow('\n📋 Usage:\n'));
   
-  console.log(chalk.green('  vibe                    ') + chalk.gray('Start MCP server (default)'));
-  console.log(chalk.green('  vibe --interactive      ') + chalk.gray('Start interactive CLI mode'));
+  console.log(chalk.green('  vibe                    ') + chalk.gray('Start interactive REPL mode (default)'));
+  console.log(chalk.green('  vibe --server           ') + chalk.gray('Start MCP server'));
+  console.log(chalk.green('  vibe --stdio            ') + chalk.gray('Start MCP server in stdio mode'));
   console.log(chalk.green('  vibe "your request"     ') + chalk.gray('Process natural language request'));
   console.log(chalk.green('  vibe --setup            ') + chalk.gray('Run setup wizard'));
   console.log(chalk.green('  vibe --help             ') + chalk.gray('Show this help message'));
@@ -176,13 +187,6 @@ async function main() {
       
       // Continue with the originally requested mode
       console.log();
-      
-      // If no specific mode was requested (just 'vibe'), default to interactive
-      if (args.length === 0 && mode === 'server') {
-        // Change to interactive mode for better first-time experience
-        await runInteractive();
-        return;
-      }
     }
     
     switch (mode) {
