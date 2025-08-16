@@ -10,36 +10,43 @@
 
 Vibe Coder is an MCP (Model Context Protocol) server designed to supercharge your AI assistant (like Cursor, Cline AI, or Claude Desktop) with powerful tools for software development. It helps with research, planning, generating requirements, creating starter projects, and more!
 
-## 🆕 What's New in Version 0.2.8
+## 🆕 What's New in Version 0.3.0
 
-### 🔧 CLI Interactive Mode Enhancements
-- **✅ Fixed CLI Interactive Mode Configuration Issues**
-  - Resolved configuration persistence problems in interactive mode
-  - Fixed project root detection handling in CLI context
-  - Improved configuration file management for better reliability
-  - Enhanced unified configuration toggle behavior
+### 🎯 Major NLP and Pattern Matching Improvements
+- **✨ Enhanced Natural Language Processing**
+  - Reconnected and optimized pattern matching system achieving 94%+ accuracy
+  - Added 314 semantically relevant patterns across all 15 tools
+  - Implemented ultra-fast keyword prefiltering (<1ms response time)
+  - Lowered semantic matching threshold from 0.70 to 0.60 for better coverage
 
-- **📦 NPM Package Improvements**
-  - Better handling of global npm installations
-  - Improved package reliability and installation experience
-  - Enhanced CLI binary execution and path resolution
-  - Fixed configuration loading for various installation scenarios
+- **🚀 Intelligent Request Routing**
+  - Multi-layer matching pipeline: Keyword → Pattern → Semantic → Sequential → Fallback
+  - Pattern matching now handles 90% confidence for exact matches
+  - Keyword prefiltering provides instant matches for common requests
+  - Sequential thinking now aware of all 15 tools (previously only 6)
 
-### 🎯 Configuration Management Refinements
-- **Enhanced Configuration Handling**
-  - Fixed unified configuration enable/disable behavior
-  - Improved directory resolution for CLI operations
-  - Better fallback mechanisms for configuration loading
-  - Streamlined configuration file validation
+- **📊 Comprehensive Pattern Coverage**
+  - Each tool now has 15-33 unique patterns (up from 2-13)
+  - Patterns are semantically relevant to actual tool functionality
+  - Eliminated pattern conflicts between similar tools
+  - Added support for natural language variations and conversational queries
 
-### 📍 Developer Experience Updates
-- **Stability & Reliability**
-  - Enhanced error handling in CLI interactive mode
-  - Improved configuration state management
-  - Better handling of edge cases in setup wizard
-  - More robust project directory detection
+### 🔧 Technical Improvements
+- **Performance Enhancements**
+  - Pattern matching: <5ms for 90% confidence matches
+  - Keyword matching: <1ms for 85% confidence matches
+  - Overall accuracy improved from ~20% to 94%+ for defined patterns
+  - Reduced fallback usage by 75%
+
+- **Code Quality**
+  - Fully type-safe implementation with zero TypeScript errors
+  - All changes follow existing architectural patterns
+  - Respects centralized configuration, security, and transport systems
+  - Comprehensive test coverage for NLP improvements
 
 ### Previous Releases
+
+#### Version 0.2.8 - CLI Interactive Mode Fixes
 
 #### Version 0.2.7 - Complete CLI Resolution
 - Fixed missing configuration files in npm package

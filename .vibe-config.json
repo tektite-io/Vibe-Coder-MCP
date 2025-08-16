@@ -1,15 +1,13 @@
 {
   "version": "1.0.0",
-  "setupDate": "2025-08-14T18:25:58.699Z",
+  "setupDate": "2025-08-15T13:08:59.215Z",
   "unified": {
-    "enabled": true,
-    "projectRoot": "/tmp/cli-files-test",
-    "autoDetection": "true"
+    "enabled": false
   },
   "directories": {
     "output": "./VibeCoderOutput",
-    "codeMap": "/tmp/cli-files-test",
-    "taskManager": "/tmp/cli-files-test"
+    "codeMap": ".",
+    "taskManager": "."
   },
   "security": {
     "mode": "strict"
