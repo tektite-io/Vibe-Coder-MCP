@@ -8,13 +8,15 @@
 
 import { executeTool } from '../services/routing/toolRegistry.js';
 import { ToolExecutionContext } from '../services/routing/toolRegistry.js';
+import { OpenRouterConfig } from '../types/workflow.js';
 import { CLIConfig } from './types/index.js';
 import { EnhancedCLIUtils } from './utils/cli-formatter.js';
 import { 
   parseCliArgs, 
   extractRequestArgs, 
   generateSessionId,
-  validateEnvironment
+  validateEnvironment,
+  hasForceFlag
 } from './utils/config-loader.js';
 import { UnifiedCommandGateway } from './gateway/unified-command-gateway.js';
 import { appInitializer } from './core/app-initializer.js';
@@ -71,18 +73,51 @@ async function main(): Promise<void> {
  * Start interactive REPL mode
  */
 async function startInteractiveMode(): Promise<void> {
+  let repl: { start: (config: OpenRouterConfig, resumeSessionId?: string) => Promise<void>; waitForExit: () => Promise<void>; stop: () => void } | null = null;
+  
   try {
     // Initialize core services first
     const openRouterConfig = await appInitializer.initializeCoreServices();
     
     // Dynamic import to avoid circular dependencies
     const { VibeInteractiveREPL } = await import('./interactive/repl.js');
-    const repl = new VibeInteractiveREPL();
+    repl = new VibeInteractiveREPL();
+    
+    // Start REPL with timeout protection
     await repl.start(openRouterConfig);
+    
+    // Log successful start
+    logger.info('REPL started successfully, waiting for user input');
+    
+    // Wait for REPL to exit with safeguards
+    try {
+      await repl.waitForExit();
+      logger.info('REPL exited normally');
+    } catch (waitError) {
+      logger.error({ err: waitError }, 'REPL wait error, attempting graceful shutdown');
+      
+      // Attempt graceful shutdown
+      if (repl !== null) {
+        repl.stop();
+      }
+      
+      // Give it a moment to clean up
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
     
   } catch (error) {
     logger.error({ err: error }, 'Failed to start interactive mode');
     console.error(chalk.red('Failed to start interactive mode:'), error instanceof Error ? error.message : 'Unknown error');
+    
+    // Cleanup attempt
+    if (repl !== null) {
+      try {
+        repl.stop();
+      } catch (cleanupError) {
+        logger.error({ err: cleanupError }, 'Error during REPL cleanup');
+      }
+    }
+    
     await gracefulExit(1);
   }
 }
@@ -94,6 +129,13 @@ async function processOneShot(args: string[]): Promise<void> {
   // Parse CLI configuration
   const cliConfig: CLIConfig = parseCliArgs(args);
   const requestArgs: ReadonlyArray<string> = extractRequestArgs(args);
+  const forceExecution = hasForceFlag(args);
+  
+  logger.debug({ 
+    args, 
+    forceExecution, 
+    hasForceInArgs: args.includes('--force') || args.includes('-f') 
+  }, 'CLI arguments parsing');
   
   if (requestArgs.length === 0) {
     // No request provided, show interactive prompt hint
@@ -161,14 +203,22 @@ async function processOneShot(args: string[]): Promise<void> {
     // Use UnifiedCommandGateway for enhanced accuracy (DRY compliant)
     const processingResult = await unifiedGateway.processUnifiedCommand(request, unifiedContext);
     
+    logger.debug({
+      success: processingResult.success,
+      requiresConfirmation: processingResult.metadata?.requiresConfirmation,
+      forceExecution,
+      willExecute: processingResult.success && (!processingResult.metadata?.requiresConfirmation || forceExecution)
+    }, 'CLI processing decision');
+    
     let result;
     
-    if (processingResult.success && !processingResult.metadata?.requiresConfirmation) {
-      // High confidence - execute directly
+    if (processingResult.success && (!processingResult.metadata?.requiresConfirmation || forceExecution)) {
+      // High confidence or force flag - execute directly
+      logger.info({ tool: processingResult.selectedTool }, 'Executing tool with force flag or high confidence');
       const executionResult = await unifiedGateway.executeUnifiedCommand(request, unifiedContext);
       result = executionResult.result;
-    } else if (processingResult.success && processingResult.metadata?.requiresConfirmation) {
-      // Requires confirmation - display processing result for user review
+    } else if (processingResult.success && processingResult.metadata?.requiresConfirmation && !forceExecution) {
+      // Requires confirmation and no force flag - display processing result for user review
       result = {
         content: [{
           type: 'text',
