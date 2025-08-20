@@ -1,12 +1,15 @@
 {
   "name": "vibe-coder-mcp",
-  "version": "0.3.1",
+  "version": "0.3.5",
   "description": "Production-ready MCP server with complete agent integration, multi-transport support, and comprehensive development automation tools for AI-assisted workflows.",
   "main": "build/index.js",
   "type": "module",
   "scripts": {
     "build": "tsc && npm run copy-assets && npm run fix-permissions",
-    "copy-assets": "mkdir -p build/tools/vibe-task-manager && cp -r src/tools/vibe-task-manager/prompts build/tools/vibe-task-manager/",
+    "copy-assets": "npm run copy-prompts && npm run copy-grammars && npm run copy-templates",
+    "copy-prompts": "mkdir -p build/tools/vibe-task-manager && cp -r src/tools/vibe-task-manager/prompts build/tools/vibe-task-manager/",
+    "copy-grammars": "mkdir -p build/tools/code-map-generator && cp -r src/tools/code-map-generator/grammars build/tools/code-map-generator/",
+    "copy-templates": "mkdir -p build/tools/context-curator && cp -r src/tools/context-curator/templates build/tools/context-curator/",
     "fix-permissions": "chmod +x build/unified-cli.js",
     "start": "cross-env NODE_ENV=production LOG_LEVEL=info node build/index.js",
     "start:sse": "cross-env NODE_ENV=production LOG_LEVEL=info node build/index.js --sse",
@@ -178,6 +181,7 @@
     "workflows.json",
     "src/config-templates/**/*",
     "src/tools/fullstack-starter-kit-generator/templates/**/*",
+    "src/tools/context-curator/templates/**/*",
     "src/config/prompt-optimization.yaml"
   ],
   "repository": {
