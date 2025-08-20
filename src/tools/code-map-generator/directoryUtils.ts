@@ -7,15 +7,22 @@ import fs from 'fs/promises';
 import path from 'path';
 import logger from '../../logger.js';
 import { DirectoryStructure, CodeMapGeneratorConfig } from './types.js';
+import { getToolOutputDirectory } from '../vibe-task-manager/security/unified-security-config.js';
 
 /**
  * Gets the base output directory using the project's standard pattern.
  * @returns The base output directory path
  */
 export function getBaseOutputDir(): string {
-  return process.env.VIBE_CODER_OUTPUT_DIR
-    ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
-    : path.join(process.cwd(), 'VibeCoderOutput');
+  try {
+    // Try to use centralized security config
+    return getToolOutputDirectory();
+  } catch {
+    // Fallback for backward compatibility
+    return process.env.VIBE_CODER_OUTPUT_DIR
+      ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
+      : path.join(process.cwd(), 'VibeCoderOutput');
+  }
 }
 
 /**

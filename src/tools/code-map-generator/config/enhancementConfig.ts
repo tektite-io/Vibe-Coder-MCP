@@ -6,6 +6,7 @@
  */
 
 import { UniversalOptimizationConfig, QualityThresholds, PatternConsolidationConfig } from '../types.js';
+import logger from '../../../logger.js';
 
 /**
  * Enhanced configuration interface for code map optimization.
@@ -257,8 +258,8 @@ export class EnhancementConfigManager {
    * Gets the current configuration.
    */
   getConfig(): CodeMapEnhancementConfig {
-    console.warn(`🔍 DEBUG: getConfig called - skipFunctionCallGraph: ${this.config.universalOptimization?.skipFunctionCallGraph}`);
-    console.warn(`🔍 DEBUG: Full universalOptimization in getConfig: ${JSON.stringify(this.config.universalOptimization)}`);
+    logger.debug(`getConfig called - skipFunctionCallGraph: ${this.config.universalOptimization?.skipFunctionCallGraph}`);
+    logger.debug(`Full universalOptimization in getConfig: ${JSON.stringify(this.config.universalOptimization)}`);
     return { ...this.config };
   }
 
@@ -284,15 +285,15 @@ export class EnhancementConfigManager {
   applyPreset(preset: 'conservative' | 'balanced' | 'maximum'): void {
     const presetConfig = QUALITY_FIRST_PRESETS[preset];
     
-    console.warn(`🔍 DEBUG: Applying preset '${preset}'`);
-    console.warn(`🔍 DEBUG: Preset universalOptimization.skipFunctionCallGraph: ${presetConfig.universalOptimization?.skipFunctionCallGraph}`);
+    logger.debug(`Applying preset '${preset}'`);
+    logger.debug(`Preset universalOptimization.skipFunctionCallGraph: ${presetConfig.universalOptimization?.skipFunctionCallGraph}`);
 
     this.config.maxOptimizationLevel = presetConfig.maxOptimizationLevel;
     this.config.qualityThresholds = { ...presetConfig.qualityThresholds };
     this.config.universalOptimization = { ...presetConfig.universalOptimization };
     this.config.contentDensity = { ...this.config.contentDensity, ...presetConfig.contentDensity };
     
-    console.warn(`🔍 DEBUG: After applying preset, config.universalOptimization.skipFunctionCallGraph: ${this.config.universalOptimization?.skipFunctionCallGraph}`);
+    logger.debug(`After applying preset, config.universalOptimization.skipFunctionCallGraph: ${this.config.universalOptimization?.skipFunctionCallGraph}`);
 
     // Apply pattern consolidation settings if available in preset
     if ('patternConsolidation' in presetConfig) {

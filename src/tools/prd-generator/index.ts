@@ -12,12 +12,39 @@ import { AppError, ToolExecutionError } from '../../utils/errors.js'; // Import 
 import { jobManager, JobStatus } from '../../services/job-manager/index.js'; // Import job manager & status
 import { sseNotifier } from '../../services/sse-notifier/index.js'; // Import SSE notifier
 import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js'; // Import the new formatter
-import { getToolOutputDirectory, ensureToolOutputDirectory } from '../vibe-task-manager/security/unified-security-config.js';
+import { getUnifiedSecurityConfig, ensureToolOutputDirectory } from '../vibe-task-manager/security/unified-security-config.js';
+import type { TransportContext } from '../../index-with-setup.js';
 
 // Helper function to get the base output directory using centralized security
-function getBaseOutputDir(): string {
+function getBaseOutputDir(context?: ToolExecutionContext): string {
   try {
-    return getToolOutputDirectory();
+    const unifiedConfig = getUnifiedSecurityConfig();
+    if (!unifiedConfig.isInitialized()) {
+      // Try to initialize with transport context if available
+      if (context?.transportType) {
+        // Map the transport type from ToolExecutionContext to TransportContext
+        const validTransportTypes = ['cli', 'stdio', 'sse', 'http', 'websocket'] as const;
+        type ValidTransportType = typeof validTransportTypes[number];
+        const transportType = validTransportTypes.includes(context.transportType as ValidTransportType) 
+          ? context.transportType as ValidTransportType
+          : 'cli'; // Default to CLI if unknown
+        
+        const transportContext: TransportContext = {
+          sessionId: context.sessionId || 'default-session',
+          transportType,
+          timestamp: Date.now(),
+          workingDirectory: process.cwd()
+        };
+        const emptyConfig: OpenRouterConfig = {
+          baseUrl: '',
+          apiKey: '',
+          geminiModel: '',
+          perplexityModel: ''
+        };
+        unifiedConfig.initializeFromMCPConfig(emptyConfig, transportContext);
+      }
+    }
+    return unifiedConfig.getToolOutputDirectory();
   } catch {
     // Fallback for backward compatibility during migration
     return process.env.VIBE_CODER_OUTPUT_DIR
@@ -27,7 +54,7 @@ function getBaseOutputDir(): string {
 }
 
 // Initialize directories if they don't exist
-export async function initDirectories(): Promise<string> {
+export async function initDirectories(context?: ToolExecutionContext): Promise<string> {
   try {
     const toolDir = await ensureToolOutputDirectory('prd-generator');
     logger.debug(`Ensured PRD directory exists: ${toolDir}`);
@@ -35,7 +62,7 @@ export async function initDirectories(): Promise<string> {
   } catch (error) {
     logger.error({ err: error }, `Failed to ensure base output directory exists for prd-generator.`);
     // Fallback to original implementation for backward compatibility
-    const baseOutputDir = getBaseOutputDir();
+    const baseOutputDir = getBaseOutputDir(context);
     try {
       await fs.ensureDir(baseOutputDir);
       const toolDir = path.join(baseOutputDir, 'prd-generator');
@@ -186,7 +213,7 @@ export const generatePRD: ToolExecutor = async (
       logs.push(`[${new Date().toISOString()}] Starting PRD generation for: ${productDescription.substring(0, 50)}...`);
 
       // Ensure directories are initialized before writing
-      const prdDir = await initDirectories();
+      const prdDir = await initDirectories(context);
 
     // Generate a filename for storing the PRD
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');

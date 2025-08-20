@@ -167,8 +167,9 @@ export const codeMapExecutor: ToolExecutor = async (params: Record<string, unkno
 
   // For long-running operations, return a job initiation response immediately
   // This allows the client to poll for updates using get-job-result
-  if (transportType === 'stdio' || sessionId === 'stdio-session') {
-    // For stdio transport, return a job initiation response
+  if (transportType === 'stdio' || transportType === 'cli' || transportType === 'interactive' || sessionId === 'stdio-session') {
+    logger.debug(`Code-map-generator: Background mode detected (${transportType}), will run in background`);
+    // For stdio/cli/interactive transport, return a job initiation response
     const initiationResponse = formatBackgroundJobInitiationResponse(
       jobId,
       'map-codebase',
@@ -177,14 +178,31 @@ export const codeMapExecutor: ToolExecutor = async (params: Record<string, unkno
     );
 
     // Execute the actual work in the background
-    setTimeout(() => {
-      executeCodeMapGeneration(params, _config, context, jobId)
-        .catch(error => {
-          logger.error({ err: error, jobId }, 'Error in background code map generation');
-          jobManager.updateJobStatus(jobId, JobStatus.FAILED, `Error: ${error instanceof Error ? error.message : String(error)}`);
-          sseNotifier.sendProgress(sessionId, jobId, JobStatus.FAILED, `Error: ${error instanceof Error ? error.message : String(error)}`);
-        });
-    }, 0);
+    // Using a combination of Promise.resolve().then() and setImmediate for better compatibility
+    // This ensures the callback gets scheduled properly in both STDIO and REPL modes
+    logger.debug(`Scheduling background execution with Promise.resolve().then() + setImmediate`);
+    
+    // First, yield control to allow the response to be sent
+    Promise.resolve().then(() => {
+      logger.debug(`Promise.resolve().then() fired! Now scheduling with setImmediate`);
+      
+      // Use setImmediate for the actual execution to ensure it runs after I/O events
+      setImmediate(() => {
+        logger.debug(`setImmediate callback fired! Starting executeCodeMapGeneration`);
+        logger.debug({ jobId, sessionId }, 'Background execution started for code-map-generator');
+        
+        // Execute the code map generation
+        executeCodeMapGeneration(params, _config, context, jobId)
+          .catch(error => {
+            logger.error({ err: error, jobId }, 'Error in background code map generation');
+            jobManager.updateJobStatus(jobId, JobStatus.FAILED, `Error: ${error instanceof Error ? error.message : String(error)}`);
+            sseNotifier.sendProgress(sessionId, jobId, JobStatus.FAILED, `Error: ${error instanceof Error ? error.message : String(error)}`);
+          });
+      });
+    }).catch(error => {
+      logger.error(`Error in Promise chain: ${error}`);
+      logger.error({ err: error, jobId }, 'Error scheduling background execution');
+    });
 
     return initiationResponse;
   }
@@ -222,6 +240,7 @@ const adaptiveEngine = new AdaptiveOptimizationEngine();
 try {
   try {
     // Send initial progress update
+    logger.info({ jobId, sessionId }, 'Transitioning job from PENDING to RUNNING');
     jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Starting code map generation...');
     sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Starting code map generation...');
 
@@ -235,7 +254,7 @@ try {
     // Extract and validate configuration
     let config: CodeMapGeneratorConfig;
     try {
-      config = await extractCodeMapConfig(_config);
+      config = await extractCodeMapConfig(_config, context);
       logger.info('Enhanced Code Map Generator initialized with maximum aggressive optimization');
     } catch (error) {
       logger.error({ err: error }, 'Failed to extract configuration');
@@ -495,7 +514,7 @@ try {
                 imports,
                 {
                   allowedDir: config.allowedMappingDirectory,
-                  outputDir: config.output?.outputDir || path.join(process.env.VIBE_CODER_OUTPUT_DIR || '.', 'code-map-generator'),
+                  outputDir: config.output?.outputDir,  // Use value from extractCodeMapConfig which gets it from UnifiedSecurityConfig
                   maxDepth: config.importResolver.importMaxDepth || 3,
                   tsConfig: config.importResolver.tsConfig,
                   pythonPath: config.importResolver.pythonPath,
@@ -983,7 +1002,7 @@ try {
     // Close incremental processor if it was created
     try {
       // Extract the validated config
-      const validatedConfig = await extractCodeMapConfig(_config);
+      const validatedConfig = await extractCodeMapConfig(_config, context);
       if (validatedConfig?.processing?.incremental) {
         const incrementalProcessor = await createIncrementalProcessor(validatedConfig);
         if (incrementalProcessor) {

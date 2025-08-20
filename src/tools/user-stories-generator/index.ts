@@ -11,12 +11,39 @@ import { AppError, ToolExecutionError } from '../../utils/errors.js';
 import { jobManager, JobStatus } from '../../services/job-manager/index.js';
 import { sseNotifier } from '../../services/sse-notifier/index.js';
 import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js';
-import { getToolOutputDirectory, ensureToolOutputDirectory } from '../vibe-task-manager/security/unified-security-config.js';
+import { getUnifiedSecurityConfig, ensureToolOutputDirectory } from '../vibe-task-manager/security/unified-security-config.js';
+import type { TransportContext } from '../../index-with-setup.js';
 
 // Helper function to get the base output directory using centralized security
-function getBaseOutputDir(): string {
+function getBaseOutputDir(context?: ToolExecutionContext): string {
   try {
-    return getToolOutputDirectory();
+    const unifiedConfig = getUnifiedSecurityConfig();
+    if (!unifiedConfig.isInitialized()) {
+      // Try to initialize with transport context if available
+      if (context?.transportType) {
+        // Map the transport type from ToolExecutionContext to TransportContext
+        const validTransportTypes = ['cli', 'stdio', 'sse', 'http', 'websocket'] as const;
+        type ValidTransportType = typeof validTransportTypes[number];
+        const transportType = validTransportTypes.includes(context.transportType as ValidTransportType) 
+          ? context.transportType as ValidTransportType
+          : 'cli'; // Default to CLI if unknown
+        
+        const transportContext: TransportContext = {
+          sessionId: context.sessionId || 'default-session',
+          transportType,
+          timestamp: Date.now(),
+          workingDirectory: process.cwd()
+        };
+        const emptyConfig: OpenRouterConfig = {
+          baseUrl: '',
+          apiKey: '',
+          geminiModel: '',
+          perplexityModel: ''
+        };
+        unifiedConfig.initializeFromMCPConfig(emptyConfig, transportContext);
+      }
+    }
+    return unifiedConfig.getToolOutputDirectory();
   } catch {
     // Fallback for backward compatibility during migration
     return process.env.VIBE_CODER_OUTPUT_DIR
@@ -25,18 +52,15 @@ function getBaseOutputDir(): string {
   }
 }
 
-// Define tool-specific directory using the helper
-const USER_STORIES_DIR = path.join(getBaseOutputDir(), 'user-stories-generator');
-
 // Initialize directories if they don't exist
-export async function initDirectories() {
+export async function initDirectories(context?: ToolExecutionContext) {
   try {
     const toolDir = await ensureToolOutputDirectory('user-stories-generator');
     logger.debug(`Ensured user stories directory exists: ${toolDir}`);
   } catch (error) {
     logger.error({ err: error }, `Failed to ensure base output directory exists for user-stories-generator.`);
     // Fallback to original implementation for backward compatibility
-    const baseOutputDir = getBaseOutputDir();
+    const baseOutputDir = getBaseOutputDir(context);
     try {
       await fs.ensureDir(baseOutputDir);
       const toolDir = path.join(baseOutputDir, 'user-stories-generator');
@@ -162,12 +186,13 @@ export const generateUserStories: ToolExecutor = async (
       sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Starting user stories generation process...');
       logs.push(`[${new Date().toISOString()}] Starting user stories generation for: ${productDescription.substring(0, 50)}...`);
 
-      await initDirectories();
+      await initDirectories(context);
 
+      const userStoriesDir = path.join(getBaseOutputDir(context), 'user-stories-generator');
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const sanitizedName = productDescription.substring(0, 30).toLowerCase().replace(/[^a-z0-9]+/g, '-');
       const filename = `${timestamp}-${sanitizedName}-user-stories.md`;
-      filePath = path.join(USER_STORIES_DIR, filename);
+      filePath = path.join(userStoriesDir, filename);
 
       logger.info({ jobId, inputs: { productDescription: productDescription.substring(0, 50) } }, "User Stories Generator: Starting pre-generation research...");
       jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Performing pre-generation research...');

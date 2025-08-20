@@ -6,7 +6,9 @@
  */
 
 import { promises as fs } from 'fs';
-import path from 'path';
+import path, { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+import { existsSync } from 'fs';
 import yaml from 'js-yaml';
 import logger from '../../../logger.js';
 import { XMLFormatter } from '../utils/xml-formatter.js';
@@ -19,6 +21,10 @@ import {
   ContextCuratorConfig
 } from '../types/context-curator.js';
 import { ContextPackage } from '../types/output-package.js';
+
+// Get the directory of the current module
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 /**
  * Template variable substitution interface
@@ -269,13 +275,28 @@ export class OutputFormatterService {
     }
 
     try {
-      // Use proper path resolution for templates relative to the project root
-      const projectRoot = process.cwd();
-      const templatePath = path.join(
-        projectRoot,
-        'src/tools/context-curator/templates',
-        `${taskType}-template.${format}`
-      );
+      // Try multiple possible paths for templates directory
+      const possiblePaths = [
+        join(__dirname, '..', 'templates'),  // Normal case: src/tools/context-curator/services -> src/tools/context-curator/templates
+        join(__dirname, '..', '..', '..', '..', 'src', 'tools', 'context-curator', 'templates'), // Test case: build/tools/context-curator/services -> src/tools/context-curator/templates
+        join(process.cwd(), 'src', 'tools', 'context-curator', 'templates'), // Fallback: from project root
+        join(process.cwd(), 'build', 'tools', 'context-curator', 'templates') // Build directory
+      ];
+      
+      let templatePath: string | null = null;
+      const templateFile = `${taskType}-template.${format}`;
+      
+      for (const basePath of possiblePaths) {
+        const candidatePath = join(basePath, templateFile);
+        if (existsSync(candidatePath)) {
+          templatePath = candidatePath;
+          break;
+        }
+      }
+      
+      if (!templatePath) {
+        throw new Error(`Template not found: ${templateFile} in any of the expected locations`);
+      }
       
       const template = await fs.readFile(templatePath, 'utf-8');
       this.templateCache.set(cacheKey, template);

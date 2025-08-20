@@ -220,7 +220,9 @@ export const vibeTaskManagerExecutor: ToolExecutor = async (
 
     // Initialize unified security config with transport context
     const unifiedConfig = getUnifiedSecurityConfig();
-    unifiedConfig.initializeFromMCPConfig(config, transportContext);
+    if (!unifiedConfig.isInitialized()) {
+      unifiedConfig.initializeFromMCPConfig(config, transportContext);
+    }
 
     // Initialize configuration and timeout manager before any service usage
     await initializeVibeTaskManagerConfig();

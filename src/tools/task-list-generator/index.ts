@@ -12,15 +12,42 @@ import { AppError, ToolExecutionError } from '../../utils/errors.js';
 import { jobManager, JobStatus } from '../../services/job-manager/index.js';
 import { sseNotifier } from '../../services/sse-notifier/index.js';
 import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js';
-import { getToolOutputDirectory, ensureToolOutputDirectory } from '../vibe-task-manager/security/unified-security-config.js';
+import { getUnifiedSecurityConfig, ensureToolOutputDirectory } from '../vibe-task-manager/security/unified-security-config.js';
+import type { TransportContext } from '../../index-with-setup.js';
 
 // --- Constants ---
 const TASK_LIST_DIR_NAME = 'generated_task_lists';
 
 // Helper function to get the base output directory using centralized security
-function getBaseOutputDir(): string {
+function getBaseOutputDir(context?: ToolExecutionContext): string {
   try {
-    return getToolOutputDirectory();
+    const unifiedConfig = getUnifiedSecurityConfig();
+    if (!unifiedConfig.isInitialized()) {
+      // Try to initialize with transport context if available
+      if (context?.transportType) {
+        // Map the transport type from ToolExecutionContext to TransportContext
+        const validTransportTypes = ['cli', 'stdio', 'sse', 'http', 'websocket'] as const;
+        type ValidTransportType = typeof validTransportTypes[number];
+        const transportType = validTransportTypes.includes(context.transportType as ValidTransportType) 
+          ? context.transportType as ValidTransportType
+          : 'cli'; // Default to CLI if unknown
+        
+        const transportContext: TransportContext = {
+          sessionId: context.sessionId || 'default-session',
+          transportType,
+          timestamp: Date.now(),
+          workingDirectory: process.cwd()
+        };
+        const emptyConfig: OpenRouterConfig = {
+          baseUrl: '',
+          apiKey: '',
+          geminiModel: '',
+          perplexityModel: ''
+        };
+        unifiedConfig.initializeFromMCPConfig(emptyConfig, transportContext);
+      }
+    }
+    return unifiedConfig.getToolOutputDirectory();
   } catch {
     // Fallback for backward compatibility during migration
     return process.env.VIBE_CODER_OUTPUT_DIR
@@ -29,18 +56,15 @@ function getBaseOutputDir(): string {
   }
 }
 
-// Define tool-specific directory using the helper
-const TASK_LIST_DIR = path.join(getBaseOutputDir(), TASK_LIST_DIR_NAME);
-
 // Ensure directories exist
-export async function initDirectories() {
+export async function initDirectories(context?: ToolExecutionContext) {
   try {
     const toolDir = await ensureToolOutputDirectory(TASK_LIST_DIR_NAME);
     logger.debug(`Ensured task list directory exists: ${toolDir}`);
   } catch (error) {
     logger.error({ err: error }, `Failed to ensure base output directory exists for task-list-generator.`);
     // Fallback to original implementation for backward compatibility
-    const baseOutputDir = getBaseOutputDir();
+    const baseOutputDir = getBaseOutputDir(context);
     try {
       await fs.ensureDir(baseOutputDir);
       const toolDir = path.join(baseOutputDir, TASK_LIST_DIR_NAME);
@@ -377,7 +401,7 @@ export const generateTaskList: ToolExecutor = async (
     const decomposedTasks = new Map<string, string>(); // Store decomposed tasks <ParentID, SubTasksMarkdown>
     try {
       // Ensure directories are initialized before writing
-      await initDirectories();
+      await initDirectories(context);
 
       // --- Step 1: Generate High-Level Tasks ---
       jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Starting high-level task generation...');
@@ -473,10 +497,11 @@ export const generateTaskList: ToolExecutor = async (
       sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Reconstruction complete. Saving file...');
 
       // --- Step 4: Save and Set Final Result ---
+      const taskListDir = path.join(getBaseOutputDir(context), TASK_LIST_DIR_NAME);
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const sanitizedName = productDescription.substring(0, 30).toLowerCase().replace(/[^a-z0-9]+/g, '-');
       const filename = `${timestamp}-${sanitizedName}-task-list-detailed.md`;
-      const filePath = path.join(TASK_LIST_DIR, filename);
+      const filePath = path.join(taskListDir, filename);
 
       try {
         await fs.writeFile(filePath, finalMarkdown, 'utf8');

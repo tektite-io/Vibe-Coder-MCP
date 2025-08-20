@@ -1,6 +1,7 @@
 // Fix for CommonJS module import in ESM
 import ParserFromPackage from 'web-tree-sitter';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import os from 'os';
@@ -59,9 +60,40 @@ export let processLifecycleManager: ProcessLifecycleManager | null = null;
 let fileContentManager: FileContentManager | null = null;
 
 // Path to the directory where .wasm grammar files are expected to be.
-// Grammar files are located in the 'grammars' directory relative to the source module.
-// Use project root to ensure we find the files in src/ even when running from build/
-const GRAMMARS_BASE_DIR = resolveProjectPath('src/tools/code-map-generator/grammars');
+// CRITICAL: DO NOT use fs.realpathSync for npm global installations!
+// It resolves symlinks back to the development directory which breaks global installs
+const GRAMMARS_BASE_DIR = (() => {
+  // ALWAYS try __dirname/grammars first WITHOUT resolving symlinks
+  // This is the correct path for npm global installations
+  const directGrammarsPath = path.join(__dirname, 'grammars');
+  
+  if (fs.existsSync(directGrammarsPath)) {
+    logger.debug(`Using grammars from direct path: ${directGrammarsPath}`);
+    return directGrammarsPath;
+  }
+  
+  // Fallback: try using project paths for development environments
+  const buildGrammarsPath = resolveProjectPath('build/tools/code-map-generator/grammars');
+  const srcGrammarsPath = resolveProjectPath('src/tools/code-map-generator/grammars');
+  
+  if (fs.existsSync(buildGrammarsPath)) {
+    logger.debug('Using grammars from build directory (development fallback)');
+    return buildGrammarsPath;
+  } else if (fs.existsSync(srcGrammarsPath)) {
+    logger.debug('Using grammars from src directory (development fallback)');
+    return srcGrammarsPath;
+  }
+  
+  // Error case - log details for debugging
+  logger.error('Grammar files directory not found in any expected location');
+  logger.error(`Direct path tried: ${directGrammarsPath}`);
+  logger.error(`Build path tried: ${buildGrammarsPath}`);
+  logger.error(`Src path tried: ${srcGrammarsPath}`);
+  logger.error(`__dirname: ${__dirname}`);
+  
+  // Return the direct path anyway - will fail with clear error
+  return directGrammarsPath;
+})();
 
 logger.info(`Grammar files directory: ${GRAMMARS_BASE_DIR}`);
 // Also log the project root and current working directory to help with debugging

@@ -22,12 +22,39 @@ import { sseNotifier } from '../../services/sse-notifier/index.js';
 import { AppError, ValidationError, ParsingError, ToolExecutionError } from '../../utils/errors.js';
 import { formatBackgroundJobInitiationResponse } from '../../services/job-response-formatter/index.js';
 import { YAMLComposer } from './yaml-composer.js';
-import { getToolOutputDirectory, ensureToolOutputDirectory } from '../vibe-task-manager/security/unified-security-config.js';
+import { getUnifiedSecurityConfig, ensureToolOutputDirectory } from '../vibe-task-manager/security/unified-security-config.js';
+import type { TransportContext } from '../../index-with-setup.js';
 
 // Helper function to get the base output directory using centralized security
-function getBaseOutputDir(): string {
+function getBaseOutputDir(context?: ToolExecutionContext): string {
   try {
-    return getToolOutputDirectory();
+    const unifiedConfig = getUnifiedSecurityConfig();
+    if (!unifiedConfig.isInitialized()) {
+      // Try to initialize with transport context if available
+      if (context?.transportType) {
+        // Map the transport type from ToolExecutionContext to TransportContext
+        const validTransportTypes = ['cli', 'stdio', 'sse', 'http', 'websocket'] as const;
+        type ValidTransportType = typeof validTransportTypes[number];
+        const transportType = validTransportTypes.includes(context.transportType as ValidTransportType) 
+          ? context.transportType as ValidTransportType
+          : 'cli'; // Default to CLI if unknown
+        
+        const transportContext: TransportContext = {
+          sessionId: context.sessionId || 'default-session',
+          transportType,
+          timestamp: Date.now(),
+          workingDirectory: process.cwd()
+        };
+        const emptyConfig: OpenRouterConfig = {
+          baseUrl: '',
+          apiKey: '',
+          geminiModel: '',
+          perplexityModel: ''
+        };
+        unifiedConfig.initializeFromMCPConfig(emptyConfig, transportContext);
+      }
+    }
+    return unifiedConfig.getToolOutputDirectory();
   } catch {
     // Fallback for backward compatibility during migration
     return process.env.VIBE_CODER_OUTPUT_DIR
@@ -35,8 +62,6 @@ function getBaseOutputDir(): string {
       : path.join(process.cwd(), 'VibeCoderOutput');
   }
 }
-
-const STARTER_KIT_DIR = path.join(getBaseOutputDir(), 'fullstack-starter-kit-generator');
 
 export interface FullstackStarterKitInput {
   use_case: string;
@@ -53,14 +78,14 @@ export interface FullstackStarterKitInput {
   include_optional_features?: string[];
 }
 
-export async function initDirectories() {
+export async function initDirectories(context?: ToolExecutionContext) {
   try {
     const toolDir = await ensureToolOutputDirectory('fullstack-starter-kit-generator');
     logger.debug(`Ensured starter kit directory exists: ${toolDir}`);
   } catch (error) {
     logger.error({ err: error }, `Failed to ensure base output directory exists for fullstack-starter-kit-generator.`);
     // Fallback to original implementation for backward compatibility
-    const baseOutputDir = getBaseOutputDir();
+    const baseOutputDir = getBaseOutputDir(context);
     try {
       await fs.ensureDir(baseOutputDir);
       const toolDir = path.join(baseOutputDir, 'fullstack-starter-kit-generator');
@@ -228,7 +253,7 @@ export const generateFullstackStarterKit: ToolExecutor = async (
         sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Comprehensive research complete.');
       }
 
-      await initDirectories();
+      await initDirectories(context);
 
       const moduleSelectionPrompt = `
 You are an expert Full-Stack Software Architect AI. Based on the user's request and comprehensive research context, select the appropriate YAML module templates and provide necessary parameters to compose a full-stack starter kit.
@@ -403,7 +428,8 @@ RESPOND WITH ONLY THE JSON OBJECT - NO OTHER TEXT OR FORMATTING.`;
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const sanitizedName = (validatedDefinition.projectName || input.use_case.substring(0, 30)).toLowerCase().replace(/[^a-z0-9]+/g, '-');
       const definitionFilename = `${timestamp}-${sanitizedName}-definition.json`;
-      const definitionFilePath = path.join(STARTER_KIT_DIR, definitionFilename);
+      const starterKitDir = path.join(getBaseOutputDir(context), 'fullstack-starter-kit-generator');
+      const definitionFilePath = path.join(starterKitDir, definitionFilename);
 
       sseNotifier.sendProgress(sessionId, jobId, JobStatus.RUNNING, 'Saving kit definition file...');
       jobManager.updateJobStatus(jobId, JobStatus.RUNNING, 'Saving kit definition file...');
@@ -416,12 +442,12 @@ RESPOND WITH ONLY THE JSON OBJECT - NO OTHER TEXT OR FORMATTING.`;
       const scripts: ScriptOutput = generateSetupScripts(validatedDefinition, definitionFilename);
       const scriptShFilename = `${timestamp}-${sanitizedName}-setup.sh`;
       const scriptBatFilename = `${timestamp}-${sanitizedName}-setup.bat`;
-      const scriptShFilePath = path.join(STARTER_KIT_DIR, scriptShFilename);
-      const scriptBatFilePath = path.join(STARTER_KIT_DIR, scriptBatFilename);
+      const scriptShFilePath = path.join(starterKitDir, scriptShFilename);
+      const scriptBatFilePath = path.join(starterKitDir, scriptBatFilename);
       await fs.writeFile(scriptShFilePath, scripts.sh, { mode: 0o755 });
       await fs.writeFile(scriptBatFilePath, scripts.bat);
       logs.push(`[${new Date().toISOString()}] Saved setup scripts: ${scriptShFilename}, ${scriptBatFilename}`);
-      logger.info({ jobId }, `Saved setup scripts to ${STARTER_KIT_DIR}`);
+      logger.info({ jobId }, `Saved setup scripts to ${starterKitDir}`);
 
       const responseText = `
 # Fullstack Starter Kit Generator (YAML Composed)

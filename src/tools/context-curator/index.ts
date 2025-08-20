@@ -16,7 +16,8 @@ import { validateContextPackage, ProcessedFile, FileReference } from './types/ou
 import logger from '../../logger.js';
 import fs from 'fs-extra';
 import path from 'path';
-import { getToolOutputDirectory, ensureToolOutputDirectory } from '../vibe-task-manager/security/unified-security-config.js';
+import { getUnifiedSecurityConfig, ensureToolOutputDirectory } from '../vibe-task-manager/security/unified-security-config.js';
+import type { TransportContext } from '../../index-with-setup.js';
 
 // Type-safe helper functions to extract properties from unknown context packages
 function getPackageId(pkg: unknown): string | undefined {
@@ -211,9 +212,35 @@ function getMetaPromptGuidelinesCount(pkg: unknown): number {
 }
 
 // Helper function to get the base output directory using centralized security
-function getBaseOutputDir(): string {
+function getBaseOutputDir(context?: ToolExecutionContext): string {
   try {
-    return getToolOutputDirectory();
+    const unifiedConfig = getUnifiedSecurityConfig();
+    if (!unifiedConfig.isInitialized()) {
+      // Try to initialize with transport context if available
+      if (context?.transportType) {
+        // Map the transport type from ToolExecutionContext to TransportContext
+        const validTransportTypes = ['cli', 'stdio', 'sse', 'http', 'websocket'] as const;
+        type ValidTransportType = typeof validTransportTypes[number];
+        const transportType = validTransportTypes.includes(context.transportType as ValidTransportType) 
+          ? context.transportType as ValidTransportType
+          : 'cli'; // Default to CLI if unknown
+        
+        const transportContext: TransportContext = {
+          sessionId: context.sessionId || 'default-session',
+          transportType,
+          timestamp: Date.now(),
+          workingDirectory: process.cwd()
+        };
+        const emptyConfig: OpenRouterConfig = {
+          baseUrl: '',
+          apiKey: '',
+          geminiModel: '',
+          perplexityModel: ''
+        };
+        unifiedConfig.initializeFromMCPConfig(emptyConfig, transportContext);
+      }
+    }
+    return unifiedConfig.getToolOutputDirectory();
   } catch {
     // Fallback for backward compatibility during migration
     return process.env.VIBE_CODER_OUTPUT_DIR
@@ -330,7 +357,7 @@ export const contextCuratorExecutor: ToolExecutor = async (
     );
 
     // Start background processing
-    processContextCurationJob(jobId, validatedParams, config).catch(error => {
+    processContextCurationJob(jobId, validatedParams, config, context).catch(error => {
       logger.error({ jobId, error: error.message }, 'Background context curation job failed');
       jobManager.updateJobStatus(
         jobId,
@@ -392,13 +419,32 @@ export const contextCuratorExecutor: ToolExecutor = async (
 async function processContextCurationJob(
   jobId: string,
   input: ReturnType<typeof validateContextCuratorInput>,
-  config: OpenRouterConfig
+  config: OpenRouterConfig,
+  context?: ToolExecutionContext
 ): Promise<void> {
   try {
     logger.info({ jobId }, 'Starting background Context Curator job processing');
 
     // Get the Context Curator service instance
     const contextCuratorService = ContextCuratorService.getInstance();
+
+    // Pass transport context to the service if available
+    if (context?.transportType) {
+      // Map the transport type from ToolExecutionContext to TransportContext
+      const validTransportTypes = ['cli', 'stdio', 'sse', 'http', 'websocket'] as const;
+      type ValidTransportType = typeof validTransportTypes[number];
+      const transportType = validTransportTypes.includes(context.transportType as ValidTransportType) 
+        ? context.transportType as ValidTransportType
+        : 'cli'; // Default to CLI if unknown
+      
+      const transportContext: TransportContext = {
+        sessionId: context.sessionId || 'default-session',
+        transportType,
+        timestamp: Date.now(),
+        workingDirectory: process.cwd()
+      };
+      contextCuratorService.setTransportContext(transportContext);
+    }
 
     // Execute the complete workflow
     const contextPackage = await contextCuratorService.executeWorkflow(jobId, input, config);
@@ -419,7 +465,7 @@ async function processContextCurationJob(
               averageRelevanceScore: getAverageRelevanceScore(contextPackage),
               cacheHitRate: getCacheHitRate(contextPackage),
               processingTimeMs: getProcessingTimeMs(contextPackage),
-              outputPath: `VibeCoderOutput/context-curator/context-package-${jobId}.xml`
+              outputPath: path.join(path.basename(getBaseOutputDir(context)), 'context-curator', `context-package-${jobId}.xml`)
             },
             message: 'Context curation completed successfully',
             files: getPackageFiles(contextPackage).map((file) => ({
@@ -486,14 +532,14 @@ const contextCuratorToolDefinition: ToolDefinition = {
  * Initialize directories for Context Curator output
  * Creates the necessary directory structure for storing context packages
  */
-export async function initDirectories() {
+export async function initDirectories(context?: ToolExecutionContext) {
   try {
     const toolDir = await ensureToolOutputDirectory('context-curator');
     logger.debug(`Ensured context-curator directory exists: ${toolDir}`);
   } catch (error) {
     logger.error({ err: error }, `Failed to ensure base output directory exists for context-curator.`);
     // Fallback to original implementation for backward compatibility
-    const baseOutputDir = getBaseOutputDir();
+    const baseOutputDir = getBaseOutputDir(context);
     try {
       await fs.ensureDir(baseOutputDir);
       const toolDir = path.join(baseOutputDir, 'context-curator');

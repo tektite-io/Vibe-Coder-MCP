@@ -387,14 +387,17 @@ export function validateDebugConfig(config?: Partial<DebugConfig>): DebugConfig 
  * Extracts and validates the Code-Map Generator configuration from the client config.
  * Uses unified security config with transport context for directory resolution.
  * @param config The OpenRouter configuration object
+ * @param context Optional execution context with transport information
  * @returns The validated Code-Map Generator configuration
  * @throws Error if the configuration is invalid
  */
-export async function extractCodeMapConfig(config?: OpenRouterConfig): Promise<CodeMapGeneratorConfig> {
+export async function extractCodeMapConfig(config?: OpenRouterConfig, context?: { sessionId?: string; transportType?: string }): Promise<CodeMapGeneratorConfig> {
   // Create transport context for unified security config
+  // Use provided context if available, otherwise detect
+  const transportType = (context?.transportType as TransportContext['transportType']) || detectTransportType();
   const transportContext: TransportContext = {
-    sessionId: 'code-map-session',
-    transportType: detectTransportType(),
+    sessionId: context?.sessionId || 'code-map-session',
+    transportType,
     timestamp: Date.now(),
     workingDirectory: process.cwd(), // For CLI auto-detection
     mcpClientConfig: config // For STDIO configuration
@@ -403,27 +406,30 @@ export async function extractCodeMapConfig(config?: OpenRouterConfig): Promise<C
   // Use unified security config instead of manual extraction
   const unifiedConfig = getUnifiedSecurityConfig();
   
-  // Create a mock config if none provided (for backward compatibility)
-  const mcpConfig = config || {
-    apiKey: '',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    geminiModel: 'google/gemini-2.5-flash-lite',
-    perplexityModel: 'perplexity/sonar'
-  };
+  // Only initialize if not already initialized (e.g., by CLI or server startup)
+  if (!unifiedConfig.isInitialized()) {
+    // Create a mock config if none provided (for backward compatibility)
+    const mcpConfig = config || {
+      apiKey: '',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      geminiModel: 'google/gemini-2.5-flash-lite',
+      perplexityModel: 'perplexity/sonar'
+    };
+    
+    unifiedConfig.initializeFromMCPConfig(mcpConfig, transportContext);
+  }
   
-  unifiedConfig.initializeFromMCPConfig(mcpConfig, transportContext);
+  // Get configuration from the (now initialized) UnifiedSecurityConfig
   const securityConfig = unifiedConfig.getCodeMapGeneratorConfig();
 
   // Create base configuration using unified directory resolution
   let codeMapConfig: Partial<CodeMapGeneratorConfig> = {
-    allowedMappingDirectory: securityConfig.allowedDir // ✅ Now uses unified directory!
+    allowedMappingDirectory: securityConfig.allowedDir,
+    // Use the output directory from security config with tool-specific subdirectory
+    output: {
+      outputDir: path.join(securityConfig.outputDir, 'code-map-generator')
+    }
   };
-
-  // Extract output directory (maintains existing logic for output)
-  if (config?.env?.VIBE_CODER_OUTPUT_DIR) {
-    codeMapConfig.output = codeMapConfig.output || {};
-    codeMapConfig.output.outputDir = path.join(config.env.VIBE_CODER_OUTPUT_DIR, 'code-map-generator');
-  }
 
   // Fallback: Try to extract from tools['map-codebase'] (legacy support for other config)
   const toolConfig = config?.tools?.['map-codebase'] as Partial<CodeMapGeneratorConfig>;

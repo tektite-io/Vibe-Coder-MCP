@@ -9,7 +9,7 @@ import { createJobStatusMessage } from '../../services/job-manager/jobStatusMess
 
 // --- Zod Schema ---
 const getJobResultInputSchemaShape = {
-  jobId: z.string().uuid({ message: "Invalid Job ID format. Must be a UUID." }).describe("The unique identifier of the job to retrieve."),
+  jobId: z.string().min(1).describe("The unique identifier of the job to retrieve."),
   includeDetails: z.boolean().default(true).optional().describe("Whether to include detailed diagnostic information in the response. Defaults to true.")
 };
 

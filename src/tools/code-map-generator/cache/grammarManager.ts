@@ -4,19 +4,36 @@
  */
 
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
+import { fileURLToPath } from 'url';
 import ParserFromPackage from 'web-tree-sitter';
 import logger from '../../../logger.js';
 import { LanguageConfig } from '../parser.js';
 import { resolveProjectPath } from '../utils/pathUtils.enhanced.js';
 
 // Get the directory name of the current module
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // Path to the directory where .wasm grammar files are expected to be.
 // Grammar files are located in the 'grammars' directory relative to the source module.
-// Use project root to ensure we find the files in src/ even when running from build/
-const GRAMMARS_BASE_DIR = resolveProjectPath('src/tools/code-map-generator/grammars');
+// IMPORTANT: Do NOT resolve symlinks for global npm installations
+// When installed globally via npm, the package structure must be preserved
+const GRAMMARS_BASE_DIR = (() => {
+  // Use the non-resolved __dirname to stay within the npm installation directory
+  // This ensures grammar files are found in the correct location for both
+  // local development and global npm installations
+  const grammarsPath = path.join(path.dirname(__dirname), 'grammars');
+  
+  if (fsSync.existsSync(grammarsPath)) {
+    return grammarsPath;
+  }
+  
+  // Fallback to project root resolution for development environments
+  return resolveProjectPath('build/tools/code-map-generator/grammars');
+})();
 
 /**
  * Options for the GrammarManager.

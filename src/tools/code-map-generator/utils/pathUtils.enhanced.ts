@@ -4,6 +4,7 @@
  */
 
 import * as path from 'path';
+import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import logger from '../../../logger.js';
 
@@ -12,7 +13,24 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Determine the project root directory (3 levels up from this file)
-const PROJECT_ROOT = path.resolve(__dirname, '../../../..');
+// IMPORTANT: Do NOT resolve symlinks for global npm installations
+// When installed globally via npm, the package is symlinked and we need
+// to use the symlinked location, not the original source
+const PROJECT_ROOT = (() => {
+  // Use the non-resolved path to stay within the npm installation directory
+  // This ensures grammar files are found in the correct location for both
+  // local development and global npm installations
+  const root = path.resolve(__dirname, '../../../..');
+  
+  // Verify this is a valid project root
+  if (fs.existsSync(path.join(root, 'package.json'))) {
+    return root;
+  }
+  
+  // If not found, log warning and return anyway
+  logger.warn(`Package.json not found at expected root: ${root}`);
+  return root;
+})();
 
 /**
  * Gets the project root directory.

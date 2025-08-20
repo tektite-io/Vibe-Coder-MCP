@@ -183,6 +183,7 @@ export class ContextCuratorService {
   private llmService: ContextCuratorLLMService;
   private configLoader: ContextCuratorConfigLoader;
   private outputFormatter: OutputFormatterService;
+  private transportContext?: TransportContext;
 
   private constructor() {
     this.llmService = ContextCuratorLLMService.getInstance();
@@ -196,8 +197,8 @@ export class ContextCuratorService {
 
   private async initializeWithUnifiedConfig(): Promise<void> {
     try {
-      // Create transport context for unified security config
-      const transportContext: TransportContext = {
+      // Use provided transport context or create default
+      const transportContext: TransportContext = this.transportContext || {
         sessionId: 'context-curator-session',
         transportType: detectTransportType(),
         timestamp: Date.now(),
@@ -206,6 +207,18 @@ export class ContextCuratorService {
 
       // Use unified security config
       const unifiedConfig = getUnifiedSecurityConfig();
+      
+      // Initialize with transport context if not already initialized
+      if (!unifiedConfig.isInitialized()) {
+        const emptyConfig: OpenRouterConfig = {
+          baseUrl: '',
+          apiKey: '',
+          geminiModel: '',
+          perplexityModel: ''
+        };
+        unifiedConfig.initializeFromMCPConfig(emptyConfig, transportContext);
+      }
+      
       const securityConfig = unifiedConfig.getContextCuratorConfig();
 
       logger.info({ 
@@ -228,6 +241,17 @@ export class ContextCuratorService {
       ContextCuratorService.instance = new ContextCuratorService();
     }
     return ContextCuratorService.instance;
+  }
+
+  /**
+   * Set transport context for the service
+   */
+  setTransportContext(context: TransportContext): void {
+    this.transportContext = context;
+    // Re-initialize with the new context
+    this.initializeWithUnifiedConfig().catch(error => {
+      logger.error({ err: error }, 'Failed to re-initialize Context Curator with transport context');
+    });
   }
 
   /**
@@ -367,9 +391,11 @@ export class ContextCuratorService {
         mcpClientConfig: context.config
       };
 
-      // Initialize unified security config
+      // Initialize unified security config only if not already initialized
       const unifiedConfig = getUnifiedSecurityConfig();
-      unifiedConfig.initializeFromMCPConfig(context.config, transportContext);
+      if (!unifiedConfig.isInitialized()) {
+        unifiedConfig.initializeFromMCPConfig(context.config, transportContext);
+      }
       context.securityConfig = unifiedConfig.getConfig();
 
       logger.info({
@@ -3386,9 +3412,27 @@ export class ContextCuratorService {
       const outputFormat: OutputFormat = (configRecord.outputFormat as { format?: OutputFormat })?.format || 'xml';
 
       // Create output directory using the proper base output directory function
-      const baseOutputDir = process.env.VIBE_CODER_OUTPUT_DIR
-        ? path.resolve(process.env.VIBE_CODER_OUTPUT_DIR)
-        : path.join(process.cwd(), 'VibeCoderOutput');
+      let baseOutputDir: string;
+      try {
+        const unifiedConfig = getUnifiedSecurityConfig();
+        
+        // Ensure initialized with transport context if available
+        if (!unifiedConfig.isInitialized() && this.transportContext) {
+          const emptyConfig: OpenRouterConfig = {
+            baseUrl: '',
+            apiKey: '',
+            geminiModel: '',
+            perplexityModel: ''
+          };
+          unifiedConfig.initializeFromMCPConfig(emptyConfig, this.transportContext);
+        }
+        
+        baseOutputDir = unifiedConfig.getToolOutputDirectory();
+      } catch (error) {
+        // UnifiedSecurityConfig must be initialized
+        logger.error({ err: error }, 'Failed to get tool output directory from UnifiedSecurityConfig');
+        throw new Error('Security configuration not properly initialized. Please ensure UnifiedSecurityConfig is initialized before using context-curator.');
+      }
       const outputDir = path.join(baseOutputDir, 'context-curator');
       await fs.mkdir(outputDir, { recursive: true });
 
@@ -4145,7 +4189,14 @@ export class ContextCuratorService {
       const { resolveSecurePath } = await import('../../code-map-generator/pathUtils.js');
 
       // Look for recent codemap files in the output directory
-      const outputDir = process.env.VIBE_CODER_OUTPUT_DIR || path.join(process.cwd(), 'VibeCoderOutput');
+      let outputDir: string;
+      try {
+        const { getToolOutputDirectory } = await import('../../vibe-task-manager/security/unified-security-config.js');
+        outputDir = getToolOutputDirectory();
+      } catch {
+        // Fallback
+        outputDir = process.env.VIBE_CODER_OUTPUT_DIR || path.join(process.cwd(), 'VibeCoderOutput');
+      }
       const codemapDir = path.join(outputDir, 'code-map-generator');
 
       // Add environment detection and graceful fallback for fs.readdir operations
