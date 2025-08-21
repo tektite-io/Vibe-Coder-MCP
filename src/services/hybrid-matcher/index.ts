@@ -1,5 +1,5 @@
 // Reconnecting pattern matching for improved NLP accuracy
-import { matchRequest, extractParameters } from "../matching-service/index.js";
+import { matchRequest } from "../matching-service/index.js";
 import { MatchResult } from "../../types/tools.js";
 import { processWithSequentialThinking } from "../../tools/sequential-thinking.js";
 import { OpenRouterConfig } from "../../types/workflow.js";
@@ -14,7 +14,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Confidence thresholds
-const HIGH_CONFIDENCE = 0.8;
+// const HIGH_CONFIDENCE = 0.8; // Currently unused but may be needed for future confidence checks
 // const MEDIUM_CONFIDENCE = 0.6; // Removed unused variable
 // const LOW_CONFIDENCE = 0.4; // Removed unused variable
 
@@ -25,7 +25,7 @@ let toolDescriptionsCache: Record<string, string> | null = null;
  * Hybrid matching result with additional metadata
  */
 export interface EnhancedMatchResult extends MatchResult {
-  parameters: Record<string, string>;
+  parameters: Record<string, unknown>;
   matchMethod: "rule" | "intent" | "semantic" | "sequential"; // Added "semantic"
   requiresConfirmation: boolean;
 }
@@ -44,9 +44,14 @@ function loadToolDescriptions(): Record<string, string> {
     const configContent = readFileSync(configPath, 'utf-8');
     const config = JSON.parse(configContent);
     
+    interface ToolConfig {
+      description?: string;
+      [key: string]: unknown;
+    }
+    
     const descriptions: Record<string, string> = {};
     for (const [name, tool] of Object.entries(config.tools)) {
-      const toolData = tool as any;
+      const toolData = tool as ToolConfig;
       descriptions[name] = toolData.description || '';
     }
     
@@ -267,7 +272,8 @@ function combineResults(
   }
   
   // Extract parameters based on the tool
-  let parameters: Record<string, any> = {};
+  // Using 'unknown' for parameters as they vary by tool and will be validated by each tool's schema
+  let parameters: Record<string, unknown> = {};
   
   // For research-manager: requires 'query'
   if (bestTool === 'research-manager') {
@@ -343,7 +349,7 @@ function combineResults(
     parameters = { 
       productDescription,
       userStories: '', // Optional
-      ruleCategories: [] // Optional array
+      ruleCategories: [] as string[] // Optional array
     };
   }
   // For context curator: requires 'prompt' or 'task_type'
@@ -357,9 +363,21 @@ function combineResults(
       prompt = request;
     }
     
+    // Detect task type based on keywords in the request
+    let task_type: string = 'auto_detect'; // Default to auto_detect
+    if (request.match(/\b(bug|fix|error|issue|problem)\b/i)) {
+      task_type = 'bug_fix';
+    } else if (request.match(/\b(refactor|clean|improve|restructure)\b/i)) {
+      task_type = 'refactoring';
+    } else if (request.match(/\b(performance|optimize|speed|faster)\b/i)) {
+      task_type = 'performance_optimization';
+    } else if (request.match(/\b(feature|add|implement|create|new)\b/i)) {
+      task_type = 'feature_addition';
+    }
+    
     parameters = { 
       prompt,
-      task_type: 'general' // Default task type
+      task_type
     };
   }
   // For fullstack starter kit generator: requires 'use_case'
@@ -378,7 +396,7 @@ function combineResults(
   // For map-codebase: optional 'directory' parameter
   else if (bestTool === 'map-codebase') {
     // Check if a specific directory is mentioned
-    const dirMatch = request.match(/(?:for|in|of|at)\s+([\/\w\-\.]+)/i);
+    const dirMatch = request.match(/(?:for|in|of|at)\s+([\w\-./]+)/i);
     if (dirMatch) {
       parameters = { directory: dirMatch[1] };
     } else {
@@ -405,7 +423,7 @@ function combineResults(
     if (workflowMatch) {
       parameters = { 
         workflowName: workflowMatch[1],
-        workflowInput: {} // Empty object as default
+        workflowInput: {} as Record<string, unknown> // Empty object as default
       };
     } else {
       // If no specific workflow mentioned, look for "run workflow" pattern
@@ -415,13 +433,13 @@ function combineResults(
         const nameMatch = request.match(/\b([a-zA-Z0-9-_]+)\b/);
         parameters = {
           workflowName: nameMatch ? nameMatch[1] : 'default',
-          workflowInput: {}
+          workflowInput: {} as Record<string, unknown>
         };
       } else {
         // Fallback - use the full request
         parameters = {
           workflowName: 'default',
-          workflowInput: { request }
+          workflowInput: { request } as Record<string, unknown>
         };
       }
     }

@@ -8,6 +8,7 @@ import chalk from 'chalk';
 import { OpenRouterConfig } from '../../types/workflow.js';
 import { executeTool } from '../../services/routing/toolRegistry.js';
 import { ToolExecutionContext } from '../../services/routing/toolRegistry.js';
+import { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { getBanner, getSessionStartMessage, getPrompt } from './ui/banner.js';
 import { progress } from './ui/progress.js';
 import { ResponseFormatter } from './ui/formatter.js';
@@ -73,7 +74,11 @@ export class VibeInteractiveREPL {
     // Override stderr.write to filter out JSON log entries while preserving normal output
     // This ensures clean interactive experience while maintaining full file logging
     const originalStderrWrite = process.stderr.write.bind(process.stderr);
-    process.stderr.write = function(chunk: any, ...args: any[]): boolean {
+    // Type-safe stderr write override
+    type WriteCallback = (error?: Error | null) => void;
+    type WriteArgs = [encoding?: BufferEncoding, callback?: WriteCallback] | [callback?: WriteCallback];
+    
+    process.stderr.write = function(chunk: string | Buffer | Uint8Array, ...args: WriteArgs): boolean {
       const str = chunk?.toString() || '';
       // Filter out JSON log entries (they start with {" and contain "level":)
       if (str.startsWith('{"level":') && str.includes('"pid":') && str.includes('"hostname":')) {
@@ -81,8 +86,9 @@ export class VibeInteractiveREPL {
         return true;
       }
       // Allow all other output (prompts, responses, etc.)
-      return originalStderrWrite(chunk, ...args);
-    } as any;
+      // Cast to the original function's parameters safely
+      return originalStderrWrite.apply(process.stderr, [chunk, ...args] as Parameters<typeof originalStderrWrite>);
+    } as typeof process.stderr.write;
     // Note: File logging continues at info level to capture all activity in vibe-session.log
     
     // Initialize configuration manager
@@ -1081,8 +1087,9 @@ export class VibeInteractiveREPL {
       logger.info('Waiting for confirmation via existing handler');
       
       // CRITICAL: Resume the stream to ensure readline continues listening
-      if ((this.rl as any).input && typeof (this.rl as any).input.resume === 'function') {
-        (this.rl as any).input.resume();
+      const rlWithInput = this.rl as readline.Interface & { input?: NodeJS.ReadableStream };
+      if (rlWithInput.input && typeof rlWithInput.input.resume === 'function') {
+        rlWithInput.input.resume();
       }
       
       // Show prompt to keep readline active
@@ -1111,8 +1118,9 @@ export class VibeInteractiveREPL {
     // Ensure readline is active and listening
     if (this.rl && this.isRunning) {
       // Resume the input stream if it was paused
-      if ((this.rl as any).input && typeof (this.rl as any).input.resume === 'function') {
-        (this.rl as any).input.resume();
+      const rlWithInput = this.rl as readline.Interface & { input?: NodeJS.ReadableStream };
+      if (rlWithInput.input && typeof rlWithInput.input.resume === 'function') {
+        rlWithInput.input.resume();
       }
       
       // Clear the line and show a fresh prompt
@@ -1157,8 +1165,9 @@ export class VibeInteractiveREPL {
       }
       
       // Also check for jobStatus field if present
-      if ((result as any).jobStatus) {
-        responseText += `\nJob Status: ${(result as any).jobStatus.status}`;
+      const resultWithJobStatus = result as CallToolResult & { jobStatus?: { status: string } };
+      if (resultWithJobStatus.jobStatus) {
+        responseText += `\nJob Status: ${resultWithJobStatus.jobStatus.status}`;
       }
       
       return responseText.trim() || null;

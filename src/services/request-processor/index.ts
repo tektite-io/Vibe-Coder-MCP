@@ -46,8 +46,9 @@ export const processUserRequest: ToolExecutor = async (
     // Step 1: Use the hybrid matcher to determine the appropriate tool
     matchResult = await hybridMatch(request, config);
 
-    // Step 2: Check if confirmation is needed
-    if (matchResult.requiresConfirmation) {
+    // Step 2: Check if confirmation is needed (unless force flag is set)
+    const forceExecution = (context?.metadata as { forceExecution?: boolean })?.forceExecution === true;
+    if (matchResult.requiresConfirmation && !forceExecution) {
       logger.info(`Tool execution requires confirmation: ${matchResult.toolName}`);
       const explanation = getMatchExplanation(matchResult);
       return {

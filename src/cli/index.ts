@@ -212,12 +212,33 @@ async function processOneShot(args: string[]): Promise<void> {
     
     let result;
     
-    if (processingResult.success && (!processingResult.metadata?.requiresConfirmation || forceExecution)) {
-      // High confidence or force flag - execute directly
-      logger.info({ tool: processingResult.selectedTool }, 'Executing tool with force flag or high confidence');
+    // When using --force, bypass UnifiedCommandGateway and use process-request directly for proper parameter extraction
+    if (forceExecution) {
+      // Force flag - use process-request tool directly for better parameter extraction
+      logger.info('Using process-request tool directly with --force flag');
+      const context: ToolExecutionContext = {
+        sessionId,
+        transportType: 'cli',
+        metadata: {
+          startTime: Date.now(),
+          cliVersion: '1.0.0',
+          cliConfig: cliConfig,
+          forceExecution: true
+        }
+      };
+      
+      result = await executeTool(
+        'process-request',
+        { request },
+        openRouterConfig,
+        context
+      );
+    } else if (processingResult.success && !processingResult.metadata?.requiresConfirmation) {
+      // High confidence - execute directly using UnifiedCommandGateway
+      logger.info({ tool: processingResult.selectedTool }, 'Executing tool with high confidence');
       const executionResult = await unifiedGateway.executeUnifiedCommand(request, unifiedContext);
       result = executionResult.result;
-    } else if (processingResult.success && processingResult.metadata?.requiresConfirmation && !forceExecution) {
+    } else if (processingResult.success && processingResult.metadata?.requiresConfirmation) {
       // Requires confirmation and no force flag - display processing result for user review
       result = {
         content: [{
