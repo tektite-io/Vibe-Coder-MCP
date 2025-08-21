@@ -10,104 +10,56 @@
 
 Vibe Coder is an MCP (Model Context Protocol) server designed to supercharge your AI assistant (like Cursor, Cline AI, or Claude Desktop) with powerful tools for software development. It helps with research, planning, generating requirements, creating starter projects, and more!
 
-## 🆕 What's New in Version 0.3.1
+## 🆕 What's New in Version 0.3.5
 
-### 🔧 Installation & Version Synchronization
-- **✨ Global Installation Alignment**
-  - Fixed global and local version synchronization issues
-  - Enhanced clean build process for both local and global installations
-  - Improved global package installation workflow using proper tarball builds
-  - Better version consistency across all project files
+### 🎉 Latest Release - Enhanced CLI, REPL, and Parameter Extraction
 
-- **📝 Documentation Updates**
-  - Updated all version references across configuration files
-  - Synchronized setup scripts (setup.sh, setup.bat) to reflect new version
-  - Updated README, CHANGELOG, and system instructions
-  - Enhanced .vibe-config.json version alignment
+**Major Improvements:**
+- **✨ Complete Hybrid Matcher Overhaul**: All 15 MCP tools now have comprehensive parameter extraction
+- **🚀 CLI/REPL Experience**: Interactive confirmations, job status polling with visual progress
+- **🔧 Fixed Critical Bugs**: Task-list-generator auto-generates user stories, multi-turn conversations work flawlessly
+- **📊 Better Tool Matching**: Multi-strategy approach (keyword 35%, pattern 30%, semantic 15%, LLM 20%)
+- **⚡ TypeScript Strict Mode**: Zero `any` types, all explicit typing, production-grade code quality
 
-- **🏗️ Build Process Improvements**
-  - Streamlined clean build workflow for release preparation
-  - Enhanced global installation process to avoid symlink issues
-  - Better CI/CD preparation with proper version management
-  - Improved packaging workflow for NPM publication
+**User Experience Enhancements:**
+- Low-confidence matches now prompt for user confirmation
+- Visual progress indicators for long-running jobs
+- Cleaner output with JSON log filtering in interactive mode
+- Session persistence across commands
+- Enhanced error messages and validation feedback
 
-### Latest Release
+### Previous Notable Releases
 
-#### Version 0.3.5 - Enhanced CLI and Parameter Extraction
-- **Major Hybrid Matcher Enhancements**: Complete parameter extraction logic for all 15 tools
-- **CLI/REPL Improvements**: Interactive confirmation for low-confidence matches, improved input handling
-- **Fixed Task-List-Generator**: Now auto-generates user stories when not provided
-- **Enhanced Tool Matching**: Multi-strategy approach (keyword, pattern, semantic, LLM fallback)
-- **Better User Experience**: Clear validation messages and job status polling
+#### Version 0.3.1 - Global Installation & Synchronization
+- Fixed global/local version synchronization issues
+- Enhanced clean build process for installations
+- Improved packaging workflow for NPM publication
 
-### Previous Releases
+#### Version 0.2.8 - CLI Interactive Mode
+- Fixed configuration persistence in interactive mode
+- Enhanced project root detection for CLI users
+- Improved context-aware configuration
 
-#### Version 0.2.8 - CLI Interactive Mode Fixes
+#### Version 0.2.3 - Interactive REPL & Setup Wizard
 
-#### Version 0.2.7 - Complete CLI Resolution
-- Fixed missing configuration files in npm package
-- Added `llm_config.json` and `job-timeout-config.json` to package files
-- Resolved configuration loading errors
+- **Interactive REPL Mode** with chat-style interface and session persistence
+- **Enhanced Setup Wizard** with automatic first-run detection
+- **Configuration Templates** in `src/config-templates/`
+- **Performance Improvements** with optimized memory usage
+- **Unified CLI Binary** - single `vibe` command for all operations
 
-#### Version 0.2.6 - Runtime Dependencies
-- Fixed runtime dependency issues with `@xenova/transformers`
-- Resolved semantic matching functionality errors
 
-#### Version 0.2.5 - CLI Onboarding Fix
-- Fixed critical CLI onboarding loop bug
-- Implemented context-aware configuration system
-- Enhanced auto-detection improvements
-
-## 🆕 What's New in Version 0.2.3
-
-### Major Features
-- **🎯 Interactive REPL Mode** (`vibe --interactive`)
-  - Chat-style conversation interface with context retention
-  - Session persistence and resume capabilities
-  - Markdown rendering and multiple themes
-  - Slash commands for quick actions
-  
-- **🚀 Enhanced Setup Wizard**
-  - Automatic first-run detection
-  - OS-specific configuration paths
-  - Non-interactive mode for CI/CD environments
-  - Configuration validation and backup system
-
-- **📋 Configuration Templates**
-  - Pre-configured `.env.template` with documentation
-  - Complete `llm_config.template.json` 
-  - Tool-specific `mcp-config.template.json`
-  - Located in `src/config-templates/`
-
-- **⚡ Performance Improvements**
-  - CI/CD pipeline 70% faster (~3 min, essential checks only)
-  - Streamlined validation: type-check, lint, build
-  - Unit tests run locally for faster developer feedback
-  - Optimized memory usage for large codebases
-  
-- **🔧 Unified CLI Binary**
-  - Single `vibe` command for all operations
-  - Consistent interface across all modes
-  - Better resource management
-
-### Quick Upgrade
-```bash
-# For existing users - fully backward compatible!
-npm update -g vibe-coder-mcp
-
-# Try the new interactive mode
-vibe --interactive
-```
-
-## 🚀 Quick Start for New Users (v0.2.3+)
+## 🚀 Quick Start
 
 ```bash
-# Install and run in one command
-npx vibe-coder-mcp --setup
+# Install globally (recommended)
+npm install -g vibe-coder-mcp@latest
 
-# Or install globally for the 'vibe' command
-npm install -g vibe-coder-mcp
+# Run setup wizard on first use
 vibe --setup
+
+# Or use instantly with npx (no installation)
+npx vibe-coder-mcp@latest --setup
 ```
 
 **The setup wizard will:**
@@ -117,105 +69,74 @@ vibe --setup
 4. ✅ Validate your environment
 5. ✅ Get you ready to use all features!
 
-## 📦 NPM Package
+## 📦 Installation
 
-**Available on npm**: [`vibe-coder-mcp`](https://www.npmjs.com/package/vibe-coder-mcp)
+[![npm version](https://img.shields.io/npm/v/vibe-coder-mcp)](https://www.npmjs.com/package/vibe-coder-mcp)
+[![npm downloads](https://img.shields.io/npm/dm/vibe-coder-mcp)](https://www.npmjs.com/package/vibe-coder-mcp)
 
 ```bash
-# Run instantly with npx (recommended)
-npx vibe-coder-mcp
+# Recommended: Install globally for the 'vibe' command
+npm install -g vibe-coder-mcp@latest
 
-# Or install globally
-npm install -g vibe-coder-mcp
+# Or run instantly without installation
+npx vibe-coder-mcp@latest
 ```
 
-## 📋 Installation Options
+### Installation Methods
 
-**The easiest way to get started:**
-
-### Option 1: Run with npx (No Installation Required)
+**Global Installation (Recommended)**
 ```bash
-# Start MCP server
-npx vibe-coder-mcp
+npm install -g vibe-coder-mcp@latest
 
-# Or use the CLI directly
-npx vibe-coder-mcp "research React best practices"
-```
-
-### Option 2: Install Globally
-```bash
-# Install globally
-npm install -g vibe-coder-mcp
-
-# Use the unified 'vibe' command
+# Use the 'vibe' command anywhere
 vibe                                    # Start MCP server
 vibe "create a PRD for a todo app"     # CLI mode
-vibe --interactive                     # Interactive REPL mode (NEW!)
-vibe --setup                           # Interactive setup wizard
+vibe --interactive                     # Interactive REPL mode
+vibe --setup                           # Setup wizard
 ```
 
-### Option 3: Install Locally in Your Project
+**Quick Run with npx**
 ```bash
-# Install in your project
-npm install vibe-coder-mcp
+# No installation needed
+npx vibe-coder-mcp@latest
+npx vibe-coder-mcp@latest "research React best practices"
+```
 
-# Run via npx
-npx vibe-coder-mcp
+**Local Project Installation**
+```bash
+npm install vibe-coder-mcp
 npx vibe-coder-mcp "map the codebase structure"
 ```
 
-### Command Line Options
+### Command Line Usage
 
-#### MCP Server Mode
 ```bash
-# Default stdio transport (for MCP clients like Claude Desktop)
-vibe-coder-mcp
+# MCP Server Mode (for Claude Desktop, Cursor, etc.)
+vibe                                    # Start with stdio transport
+vibe --sse                             # Start with Server-Sent Events
 
-# Server-Sent Events transport (for web clients)
-vibe-coder-mcp --sse
-```
+# CLI Mode - Natural Language Commands
+vibe "research modern JavaScript frameworks"
+vibe "create a PRD for an e-commerce platform"
+vibe "map the codebase structure" --json
+vibe "generate user stories for auth system"
 
-#### CLI Mode
-```bash
-# Interactive setup wizard (runs automatically on first use)
-vibe-coder-mcp --setup
+# Interactive REPL Mode
+vibe --interactive                     # Chat interface with context retention
 
-# Natural language commands
-vibe-coder-mcp "research modern JavaScript frameworks"
-vibe-coder-mcp "create a PRD for an e-commerce platform"
-vibe-coder-mcp "map the codebase structure" --json
-
-# Interactive REPL mode (NEW in v0.2.3!)
-vibe-coder-mcp --interactive
-# Features:
-# • Chat-style conversation interface
-# • Live tool execution with progress indicators
-# • Session persistence and history
-# • Markdown rendering support
-# • Multiple themes and customization
-
-# Help and options
-vibe-coder-mcp --help
-```
-
-#### Global Installation Benefits
-After global installation (`npm install -g vibe-coder-mcp`), use the shorter `vibe` command:
-```bash
-vibe                                    # Start MCP server
-vibe "your request here"               # CLI mode
-vibe --interactive                     # Interactive REPL mode
-vibe --setup                           # Setup wizard
+# Configuration
+vibe --setup                           # Run setup wizard
 vibe --help                            # Show all options
+vibe --version                         # Show version
 ```
 
-**First-time setup (v0.2.3+):**
-- **Automatic setup wizard** runs on first use with smart detection
-- **OS-specific config paths** automatically configured:
-  - Windows: `%APPDATA%\vibe-coder`
-  - macOS: `~/Library/Application Support/vibe-coder`
-  - Linux: `~/.config/vibe-coder`
-- **Configuration templates** provided in `src/config-templates/`
-- Run `vibe --setup` manually to reconfigure at any time
+**Interactive Mode Features:**
+- Chat-style conversation with context retention
+- Live tool execution with progress indicators
+- Session persistence and history
+- Markdown rendering support
+- Multiple themes and customization
+- Slash commands for quick actions
 
 ## 🎯 MCP Client Integration (Claude Desktop, Cursor, Cline AI)
 
@@ -294,16 +215,14 @@ After configuration, test by asking your AI assistant:
 
 ## 🆕 Unified Project Root Configuration
 
-**New in v0.2.4+**: Simplified configuration with automatic project detection!
-
-### For CLI Users (Zero Configuration)
+### Zero Configuration for CLI Users
 ```bash
-# Just run from your project directory - automatic detection enabled!
+# Automatic project detection - just run from your project!
 cd /path/to/your/project
 vibe "map the codebase structure"
 ```
 
-### For MCP Clients (Single Variable)
+### Simple Configuration for MCP Clients
 ```json
 {
   "env": {
@@ -313,11 +232,9 @@ vibe "map the codebase structure"
 }
 ```
 
-**Benefits:**
-- **One Variable**: `VIBE_PROJECT_ROOT` replaces 3 separate directory configurations  
-- **Auto-Detection**: CLI users get zero-configuration project detection
-- **Context Aware**: Different behavior for CLI vs MCP client usage
-- **Backward Compatible**: Legacy variables still work as fallbacks
+- **One Variable**: `VIBE_PROJECT_ROOT` replaces multiple directory configs
+- **Auto-Detection**: CLI automatically detects project root
+- **Backward Compatible**: Legacy variables still supported
 
 ## 🔧 Environment Configuration
 
@@ -1909,6 +1826,35 @@ If issues persist:
    - Operating system
    - Error messages
    - Steps to reproduce
+
+## 📅 Changelog
+
+### Version 0.3.5 (Latest)
+- **Enhanced Hybrid Matcher**: Complete parameter extraction for all 15 tools
+- **CLI/REPL Improvements**: Interactive confirmations, job polling with progress
+- **Bug Fixes**: Task-list-generator auto-generates user stories, multi-turn conversations fixed
+- **TypeScript Strict Mode**: Zero `any` types, production-grade code quality
+
+### Version 0.3.1
+- Global installation synchronization fixes
+- Enhanced clean build process
+- Improved NPM packaging workflow
+
+### Version 0.2.8
+- CLI interactive mode configuration persistence
+- Enhanced project root detection
+
+### Version 0.2.7
+- Added missing configuration files to npm package
+- Resolved configuration loading errors
+
+### Version 0.2.3
+- Interactive REPL mode with chat interface
+- Enhanced setup wizard with auto-detection
+- Configuration templates
+- Unified CLI binary
+
+For full release history, see [GitHub Releases](https://github.com/freshtechbro/vibe-coder-mcp/releases)
 
 ## License
 
