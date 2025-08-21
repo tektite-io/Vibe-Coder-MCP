@@ -82,6 +82,19 @@ export class ProgressIndicator {
   }
   
   /**
+   * Show message without spinner (for job polling)
+   */
+  showMessage(message: string): void {
+    if (this.spinner && this.spinner.isSpinning) {
+      this.spinner.stop();
+      console.log(message);
+      this.spinner.start();
+    } else {
+      console.log(message);
+    }
+  }
+  
+  /**
    * Check if running
    */
   isRunning(): boolean {

@@ -46,7 +46,7 @@
       "timeout": 180000
     }
   },
-  "version": "0.3.1",
+  "version": "0.3.2",
   "created_at": "{{timestamp}}",
   "last_modified": "{{timestamp}}"
 }

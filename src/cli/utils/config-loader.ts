@@ -112,7 +112,8 @@ export function extractRequestArgs(args: ReadonlyArray<string>): ReadonlyArray<s
     '--no-color',
     '--json',
     '--yaml',
-    '--help', '-h'
+    '--help', '-h',
+    '--force', '-f'
   ]);
 
   const result: string[] = [];
@@ -148,6 +149,13 @@ export function shouldDisplayHelp(args: ReadonlyArray<string>): boolean {
   return args.length === 0 || 
          args.includes('--help') || 
          args.includes('-h');
+}
+
+/**
+ * Check if force flag is present
+ */
+export function hasForceFlag(args: ReadonlyArray<string>): boolean {
+  return args.includes('--force') || args.includes('-f');
 }
 
 /**

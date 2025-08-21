@@ -3,7 +3,7 @@ import { toolEmbeddingStore } from './embeddingStore.js'; // Removed unused Tool
 import { MatchResult } from '../../types/tools.js';
 import logger from '../../logger.js';
 
-const SEMANTIC_MATCH_THRESHOLD = 0.60; // Lowered threshold for better coverage (was 0.70)
+const SEMANTIC_MATCH_THRESHOLD = 0.45; // Lowered from 0.60 to 0.45 for better coverage
 const DESCRIPTION_WEIGHT = 0.6; // Weight for description similarity
 const USE_CASE_WEIGHT = 0.4; // Weight for the best use case similarity
 

@@ -32,8 +32,9 @@ export function formatBackgroundJobInitiationResponse(
     Date.now()
   );
 
-  // Create a human-readable response message
-  let responseText = `Job started: ${jobId} (${toolName})\n\n${message}\n\n`;
+  // Create a human-readable response message with embedded job ID for reliable extraction
+  let responseText = `JOB_ID:${jobId}\n`;
+  responseText += `Job started: ${jobId} (${toolName})\n\n${message}\n\n`;
 
   // Add polling instructions based on transport type
   if (transportType === 'stdio' || sessionId === 'stdio-session') {

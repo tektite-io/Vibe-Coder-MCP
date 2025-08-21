@@ -1,10 +1,10 @@
 # Vibe Coder MCP System Instructions
 
-**Version**: 0.3.1 (Production Ready)
+**Version**: 0.3.5 (Production Ready)
 **NPM Package**: `vibe-coder-mcp`
 **Purpose**: Comprehensive system prompt for AI agents and MCP clients consuming the Vibe Coder MCP server
 **Target Clients**: Claude Desktop, Augment, Cursor, Windsurf, Roo Code, Cline, and other MCP-compatible clients
-**Last Updated**: August 2025 (NPM publication ready)
+**Last Updated**: August 2025 (Enhanced CLI and Parameter Extraction)
 
 ## Installation
 
@@ -59,6 +59,13 @@ You are an AI assistant with access to the Vibe Coder MCP server, a comprehensiv
 - **Workflow Automation**: Predefined sequences and custom workflow execution
 - **Agent Coordination and Communication**: Multi-agent task distribution and response handling
 - **Asynchronous Job Processing**: Intelligent polling with adaptive intervals and rate limiting
+
+**New in v0.3.5:**
+- **Enhanced Hybrid Matcher**: Complete parameter extraction for all 15 tools with intelligent defaults
+- **CLI/REPL Major Improvements**: Interactive confirmation for low-confidence matches, job status polling, enhanced input handling
+- **Parameter Validation Fixes**: Task-list-generator now generates default user stories when not provided
+- **Improved Tool Matching**: Multi-strategy approach with keyword, pattern, semantic, and LLM fallback
+- **Better Error Handling**: Clear validation messages and user-friendly feedback
 
 **Architecture Evolution (v2.4.0):**
 - **Testing Framework**: Complete migration from Jest to Vitest with @vitest/coverage-v8
@@ -841,22 +848,22 @@ This section provides detailed instructions, examples, and natural language comm
 **Input Parameters**:
 ```json
 {
-  "description": "string (required) - Project or feature description",
-  "userStories": "string (optional) - User stories to break down into tasks"
+  "productDescription": "string (required) - Project or feature description (min 10 chars)",
+  "userStories": "string (required, auto-generated if not provided) - User stories to break down into tasks (min 20 chars)"
 }
 ```
 
 **Usage Examples**:
 ```json
-// From feature description
+// From feature description (userStories auto-generated)
 {
-  "description": "Implement user authentication system with OAuth 2.0, JWT tokens, and role-based access control"
+  "productDescription": "Implement user authentication system with OAuth 2.0, JWT tokens, and role-based access control"
 }
 
-// From user stories
+// With explicit user stories
 {
-  "description": "E-commerce checkout process",
-  "userStories": "User stories for cart management, payment processing, and order confirmation"
+  "productDescription": "E-commerce checkout process",
+  "userStories": "As a customer, I want to review my cart before checkout. As a customer, I want multiple payment options. As a customer, I want to receive order confirmation."
 }
 ```
 

@@ -31,6 +31,15 @@ Vibe Coder is an MCP (Model Context Protocol) server designed to supercharge you
   - Better CI/CD preparation with proper version management
   - Improved packaging workflow for NPM publication
 
+### Latest Release
+
+#### Version 0.3.5 - Enhanced CLI and Parameter Extraction
+- **Major Hybrid Matcher Enhancements**: Complete parameter extraction logic for all 15 tools
+- **CLI/REPL Improvements**: Interactive confirmation for low-confidence matches, improved input handling
+- **Fixed Task-List-Generator**: Now auto-generates user stories when not provided
+- **Enhanced Tool Matching**: Multi-strategy approach (keyword, pattern, semantic, LLM fallback)
+- **Better User Experience**: Clear validation messages and job status polling
+
 ### Previous Releases
 
 #### Version 0.2.8 - CLI Interactive Mode Fixes
@@ -207,6 +216,81 @@ vibe --help                            # Show all options
   - Linux: `~/.config/vibe-coder`
 - **Configuration templates** provided in `src/config-templates/`
 - Run `vibe --setup` manually to reconfigure at any time
+
+## 🎯 MCP Client Integration (Claude Desktop, Cursor, Cline AI)
+
+### Quick Integration Guide
+
+Vibe-Coder MCP integrates seamlessly with any MCP-compatible client. Here's how to configure it:
+
+#### Option 1: Using NPX (Recommended)
+In your MCP client's server configuration dialog:
+- **Server Name**: `vibe-coder-mcp`
+- **Command/URL**: `npx`
+- **Arguments**: `vibe-coder-mcp`
+- **Environment Variables**:
+  - `OPENROUTER_API_KEY`: Your OpenRouter API key (required)
+  - `VIBE_PROJECT_ROOT`: `/path/to/your/project` (required)
+  - `LOG_LEVEL`: `info` (optional)
+  - `NODE_ENV`: `production` (optional)
+
+#### Option 2: Global Installation
+```bash
+# First install globally
+npm install -g vibe-coder-mcp
+```
+Then configure:
+- **Command/URL**: `vibe`
+- **Arguments**: (leave empty)
+- **Environment Variables**: Same as Option 1
+
+#### Option 3: Node with Full Path
+- **Command/URL**: `node`
+- **Arguments**: `/path/to/node_modules/vibe-coder-mcp/build/index.js`
+- **Environment Variables**: Same as Option 1
+
+### Claude Desktop Specific Configuration
+
+For Claude Desktop users, add this to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "vibe-coder-mcp": {
+      "command": "npx",
+      "args": ["vibe-coder-mcp"],
+      "env": {
+        "OPENROUTER_API_KEY": "your-openrouter-api-key",
+        "VIBE_PROJECT_ROOT": "/path/to/your/project",
+        "LOG_LEVEL": "info",
+        "NODE_ENV": "production"
+      }
+    }
+  }
+}
+```
+
+See `example_claude_desktop_config.json` for a complete example.
+
+### Available Tools After Integration
+
+Once configured, your MCP client will have access to:
+- **vibe-task-manager**: AI-native task management with RDD methodology
+- **research-manager**: Deep research using Perplexity integration
+- **map-codebase**: Advanced codebase analysis (35+ languages)
+- **curate-context**: Intelligent context curation for AI development
+- **generate-prd**: Product requirements document generator
+- **generate-user-stories**: User story generator  
+- **generate-task-list**: Task list generator
+- **generate-fullstack-starter-kit**: Project scaffolding tool
+- **run-workflow**: Multi-step workflow execution
+
+### Testing Your Integration
+
+After configuration, test by asking your AI assistant:
+- "Use vibe to research React best practices"
+- "Map the codebase for this project"
+- "Generate a PRD for a task management app"
 
 ## 🆕 Unified Project Root Configuration
 

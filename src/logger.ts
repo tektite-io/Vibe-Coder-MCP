@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 
 const isDevelopment = process.env.NODE_ENV === 'development';
 const isStdioTransport = process.env.MCP_TRANSPORT === 'stdio' || process.argv.includes('--stdio');
+const isInteractiveMode = process.argv.includes('--interactive');
 const effectiveLogLevel = process.env.LOG_LEVEL || (isDevelopment ? 'debug' : 'info');
 
 /**
@@ -57,20 +58,33 @@ function getProcessArgs(): string[] {
 // --- Calculate paths ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// Log file in the project root directory (one level up from src)
-const logFilePath = path.resolve(__dirname, '../server.log');
+
+// Transport-aware log file path
+// For CLI: use current working directory with session log name
+// For other transports: use package directory with server log name
+const transportType = detectTransportType();
+const logFilePath = transportType === 'cli' 
+  ? path.join(process.cwd(), 'vibe-session.log')
+  : path.resolve(__dirname, '../server.log');
 
 // --- Create streams with graceful shutdown support ---
 // Store references to destinations for cleanup
-const fileDestination = pino.destination(logFilePath);
+// For CLI: overwrite log file each session (append: false)
+// For other transports: append to existing log file (default behavior)
+const fileDestination = pino.destination({
+  dest: logFilePath,
+  append: transportType !== 'cli'  // CLI overwrites, others append
+});
 const consoleStream = (isDevelopment && !isStdioTransport) ? process.stdout : process.stderr;
 
 // Log to file and also to the original console stream
+// In interactive mode, keep file logging at info level but suppress console output
 const streams = [
   { level: effectiveLogLevel, stream: fileDestination },
   // Always use stderr when stdio transport is detected to avoid interfering with MCP JSON-RPC protocol
   // In development, only use stdout if NOT using stdio transport
-  { level: effectiveLogLevel, stream: consoleStream }
+  // In interactive mode, suppress most console output by setting level to 'error'
+  { level: isInteractiveMode ? 'error' : effectiveLogLevel, stream: consoleStream }
 ];
 
 

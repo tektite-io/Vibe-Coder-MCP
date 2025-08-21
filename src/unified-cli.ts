@@ -30,10 +30,14 @@ const envPath = path.join(projectRoot, '.env');
 const args = process.argv.slice(2);
 
 // Detect mode based on arguments
-function detectMode(): 'server' | 'cli' | 'help' | 'setup' | 'interactive' {
+function detectMode(): 'server' | 'cli' | 'help' | 'setup' | 'interactive' | 'version' {
   // Check for special flags first
   if (args.includes('--help') || args.includes('-h')) {
     return 'help';
+  }
+  
+  if (args.includes('--version') || args.includes('-v')) {
+    return 'version';
   }
   
   if (args.includes('--setup') || args.includes('--reconfigure')) {
@@ -68,6 +72,20 @@ function detectMode(): 'server' | 'cli' | 'help' | 'setup' | 'interactive' {
   return 'server';
 }
 
+// Display version information
+async function displayVersion(): Promise<void> {
+  try {
+    // Read package.json using fs for ESM compatibility
+    const fs = await import('fs/promises');
+    const packageJsonPath = path.join(projectRoot, 'package.json');
+    const packageJsonContent = await fs.readFile(packageJsonPath, 'utf-8');
+    const packageJson = JSON.parse(packageJsonContent);
+    console.log(`vibe-coder-mcp v${packageJson.version}`);
+  } catch {
+    console.log('vibe-coder-mcp (version unknown)');
+  }
+}
+
 // Display unified help
 function displayHelp(): void {
   console.log(boxen(
@@ -89,6 +107,7 @@ function displayHelp(): void {
   console.log(chalk.green('  vibe --stdio            ') + chalk.gray('Start MCP server in stdio mode'));
   console.log(chalk.green('  vibe "your request"     ') + chalk.gray('Process natural language request'));
   console.log(chalk.green('  vibe --setup            ') + chalk.gray('Run setup wizard'));
+  console.log(chalk.green('  vibe --version          ') + chalk.gray('Show version information'));
   console.log(chalk.green('  vibe --help             ') + chalk.gray('Show this help message'));
   
   console.log(chalk.yellow('\n🚀 Server Options:\n'));
@@ -141,6 +160,9 @@ async function main() {
   try {
     const mode = detectMode();
     
+    // Enable auto-detection for CLI mode to use working directory
+    process.env.VIBE_USE_PROJECT_ROOT_AUTO_DETECTION = 'true';
+    
     // Create CLI transport context for context-aware configuration
     const cliTransportContext: TransportContext = {
       sessionId: `cli-${Date.now()}`,
@@ -150,6 +172,17 @@ async function main() {
       mcpClientConfig: undefined // Will be loaded by context-aware config manager
     };
 
+    // Handle version and help immediately without any setup
+    if (mode === 'version') {
+      await displayVersion();
+      return;
+    }
+    
+    if (mode === 'help') {
+      displayHelp();
+      return;
+    }
+    
     // Load environment variables BEFORE checking first run
     // This ensures .env file is loaded so isFirstRun() can properly detect existing config
     dotenv.config({ path: envPath });
@@ -157,8 +190,8 @@ async function main() {
     // Create context-aware setup wizard instance
     const contextAwareSetupWizard = createSetupWizard(cliTransportContext);
     
-    // Always check for first run (except in help mode)
-    if (mode !== 'help' && await contextAwareSetupWizard.isFirstRun()) {
+    // Always check for first run (except in help/version modes)
+    if (await contextAwareSetupWizard.isFirstRun()) {
       console.log(chalk.cyan.bold('\n🚀 Welcome to Vibe!\n'));
       console.log(chalk.yellow('First-time setup required...\n'));
       
@@ -190,10 +223,6 @@ async function main() {
     }
     
     switch (mode) {
-      case 'help':
-        displayHelp();
-        break;
-        
       case 'setup':
         await runSetup();
         break;
@@ -281,7 +310,7 @@ async function runCLI() {
   try {
     // Remove any CLI-specific flags to get just the request
     const cliArgs = args.filter(arg => !arg.startsWith('-') || 
-      ['--verbose', '--quiet', '--json', '--yaml', '--format', '--no-color', '-v', '-q'].includes(arg));
+      ['--verbose', '--quiet', '--json', '--yaml', '--format', '--no-color', '--force', '-v', '-q', '-f'].includes(arg));
     
     // Set process.argv for the CLI module
     process.argv = [process.argv[0], process.argv[1], ...cliArgs];

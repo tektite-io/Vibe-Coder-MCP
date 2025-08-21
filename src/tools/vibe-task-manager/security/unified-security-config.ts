@@ -103,6 +103,7 @@ export class UnifiedSecurityConfigManager {
   private static instance: UnifiedSecurityConfigManager | null = null;
   private config: UnifiedSecurityConfiguration | null = null;
   private mcpConfig: OpenRouterConfig | null = null;
+  private initialized: boolean = false;
 
   private constructor() {
     logger.info('Unified Security Configuration Manager initialized');
@@ -196,29 +197,68 @@ export class UnifiedSecurityConfigManager {
   }
 
   /**
+   * Resolve unified write directory based on transport context
+   * For CLI with auto-detection: uses working directory
+   * For others: uses MCP config write directory
+   */
+  private resolveUnifiedWriteDirectory(mcpConfig: OpenRouterConfig, context?: TransportContext): string {
+    const securityConfig = extractVibeTaskManagerSecurityConfig(mcpConfig);
+    
+    // Priority 1: CLI transport with auto-detection uses working directory
+    if (context?.transportType === 'cli' && this.shouldUseAutoDetection()) {
+      const workingDir = context.workingDirectory || process.cwd();
+      const cliWriteDir = path.join(workingDir, 'VibeCoderOutput');
+      logger.info({
+        transport: 'cli',
+        originalWriteDir: securityConfig.allowedWriteDirectory,
+        overriddenWriteDir: cliWriteDir
+      }, 'CLI transport detected - using working directory for writes');
+      return cliWriteDir;
+    }
+    
+    // Priority 2: Use MCP config write directory
+    return securityConfig.allowedWriteDirectory;
+  }
+
+  /**
    * Initialize the security configuration from MCP client config
    * This should be called during server startup
    */
   initializeFromMCPConfig(mcpConfig: OpenRouterConfig, transportContext?: TransportContext): void {
+    // Allow re-initialization for CLI transport to update working directory
+    if (this.initialized && transportContext?.transportType !== 'cli') {
+      logger.debug('UnifiedSecurityConfig already initialized, skipping re-initialization');
+      return;
+    }
+    
+    // For CLI transport, always re-initialize to get correct working directory
+    if (transportContext?.transportType === 'cli') {
+      logger.info({ 
+        workingDirectory: transportContext.workingDirectory,
+        previouslyInitialized: this.initialized 
+      }, 'Re-initializing UnifiedSecurityConfig for CLI transport');
+    }
+
     this.mcpConfig = mcpConfig;
 
     try {
-      // Use unified directory resolution for read directory
+      // Use unified directory resolution for both read and write directories
       const unifiedReadDirectory = this.resolveUnifiedReadDirectory(transportContext);
+      const unifiedWriteDirectory = this.resolveUnifiedWriteDirectory(mcpConfig, transportContext);
       
-      // Extract security configuration using the same pattern as Code Map Generator
+      // Extract security configuration for mode settings
       const securityConfig = extractVibeTaskManagerSecurityConfig(mcpConfig);
 
-      // Create unified configuration with resolved unified read directory
+      // Create unified configuration with resolved directories
       this.config = {
         allowedReadDirectory: unifiedReadDirectory,
-        allowedWriteDirectory: securityConfig.allowedWriteDirectory,
+        allowedWriteDirectory: unifiedWriteDirectory,
         securityMode: securityConfig.securityMode,
 
         // Derived configurations
         allowedDirectories: [
           unifiedReadDirectory,
-          securityConfig.allowedWriteDirectory
+          unifiedWriteDirectory
         ],
 
         // Performance settings aligned with Epic 6.2 targets
@@ -232,21 +272,21 @@ export class UnifiedSecurityConfigManager {
 
         // Code-map-generator compatibility aliases
         allowedDir: unifiedReadDirectory,
-        outputDir: securityConfig.allowedWriteDirectory,
+        outputDir: unifiedWriteDirectory,
 
         // Service-specific boundaries for all services
         serviceBoundaries: {
           vibeTaskManager: {
             readDir: unifiedReadDirectory,
-            writeDir: securityConfig.allowedWriteDirectory
+            writeDir: unifiedWriteDirectory
           },
           codeMapGenerator: {
             allowedDir: unifiedReadDirectory,
-            outputDir: securityConfig.allowedWriteDirectory
+            outputDir: unifiedWriteDirectory
           },
           contextCurator: {
             readDir: unifiedReadDirectory,
-            outputDir: securityConfig.allowedWriteDirectory
+            outputDir: unifiedWriteDirectory
           }
         }
       };
@@ -258,6 +298,9 @@ export class UnifiedSecurityConfigManager {
         allowedDirectories: this.config.allowedDirectories
       }, 'Unified security configuration initialized from MCP client config');
 
+      // Mark as initialized after successful configuration
+      this.initialized = true;
+
     } catch (error) {
       logger.error({ err: error }, 'Failed to initialize security configuration from MCP client config');
       throw error;
@@ -268,7 +311,7 @@ export class UnifiedSecurityConfigManager {
    * Check if the security configuration has been initialized
    */
   isInitialized(): boolean {
-    return this.config !== null;
+    return this.initialized && this.config !== null;
   }
 
   /**

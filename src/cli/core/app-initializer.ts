@@ -66,13 +66,9 @@ export class VibeAppInitializer {
       logger.debug('Step 3: Initializing ToolRegistry with config');
       ToolRegistry.getInstance(openRouterConfig);
       
-      // Step 4: Import tools to trigger self-registration
-      logger.debug('Step 4: Importing tools for registration');
-      await import('../../tools/index.js');
-      await import('../../services/request-processor/index.js');
-      
-      // Step 5: Initialize unified security configuration with CLI transport context
-      logger.debug('Step 5: Initializing UnifiedSecurityConfig with CLI context');
+      // Step 4: Initialize unified security configuration with CLI transport context
+      // MUST happen BEFORE importing tools so they get correct output directories
+      logger.debug('Step 4: Initializing UnifiedSecurityConfig with CLI context');
       const securityConfig = getUnifiedSecurityConfig();
       
       // Create CLI transport context (ALWAYS CLI for app initializer)
@@ -85,6 +81,12 @@ export class VibeAppInitializer {
       };
       
       securityConfig.initializeFromMCPConfig(openRouterConfig, cliTransportContext);
+      
+      // Step 5: Import tools to trigger self-registration
+      // MUST happen AFTER UnifiedSecurityConfig is initialized
+      logger.debug('Step 5: Importing tools for registration');
+      await import('../../tools/index.js');
+      await import('../../services/request-processor/index.js');
       logger.info({ 
         workingDirectory: cliTransportContext.workingDirectory,
         autoDetection: process.env.VIBE_USE_PROJECT_ROOT_AUTO_DETECTION 
